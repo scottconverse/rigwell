@@ -141,3 +141,30 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
     over `settings.env`; an unset variable invalidates the entry.
 56. **Not built:** the SQLite session index (the spec makes it a cache; `listSessions` scans files),
     `fileEditToolProfile` (Create + Edit for every model), the keychain (keys come from settings or env).
+
+## Phase 10: Local automations
+
+57. **Folders:** `$RIGWELL_HOME/automations/<slug>/` and `<project>/.rigwell/automations/<slug>/`. The folder name is a slug of
+    the name; the id is the UUID in `memory/state.json`. `state.json` also holds `createdAt`, `health` (`degraded`) and the
+    pending `retry`. Extra frontmatter beyond the spec: `timezone` (IANA, default machine zone), `autonomy` (default `high`),
+    `payloadRegex`, `maxRunsPerHour`. A webhook automation needs no `schedule`.
+58. **Schedules:** presets, 5-field cron (ranges, steps, names, 7 = Sunday, day-of-month OR day-of-week) and
+    `every <n><m|h|d>` intervals counted from `createdAt`. Natural language is not parsed. Zone offsets are re-read every 15
+    minutes of scan time. A local time that does not exist (spring-forward gap) never matches; a repeated one (fall back) can
+    match twice.
+59. **Scheduler:** `tick()` is explicit and the clock is injected; the daemon calls it every 60 s. Due and catch-up are one
+    rule: the first slot after `lastRunAt` (else `createdAt`) that is `<= now` runs once; `catchUp` is true when it is a minute
+    or more late, `missedSlots` counts the others. Sleep = a gap over 150 s between ticks, then dispatch is held 150 s. Retries
+    are due when `retry.at <= now` and count toward the same caps (2 dispatches per tick, 3 concurrent).
+60. **Runs:** headless in-process connection (`canPrompt` false), autonomy from the automation (never skip-all). An unresolved
+    model falls back to the default and records `modelFallback`; with no default the run fails `dispatch_exception`. The session
+    closes as soon as the turn ends (no 15 s grace). `targetSessionId` loads that session and adds the prompt.
+61. **Not built:** auto-pause after 10 days, `mcp_unavailable` flagging, `host_slept` reason, agent tools
+    (`CreateAutomation` etc., `Loop`), the `/loop` slash command, natural-language schedules. Project automation folders are
+    scanned only for `projectDirs` given to the service or used by `create_automation` with `projectDir` (not persisted).
+62. **Webhook:** `POST /hooks/<id>` on `127.0.0.1`, default port 47821 (`settings.automations.webhookPort`, host via
+    `webhookHost`). The listener exists only while some valid automation has `trigger: webhook`. Auth: `Authorization: Bearer
+    <secret>` or `X-Rigwell-Signature: sha256=<hmac of body>`. Responses: 202 `{runId}`, 200 `{status: filtered|deduped}`,
+    401, 404, 409 (paused or running), 413 (256 KB), 429 capped. Dedupe window 60 s. Deliveries go to `memory/deliveries.json`.
+63. **Crons:** `$RIGWELL_HOME/crons/<scope>/<sessionId>/<id>.json`, with the prompt stored in the record. The "previous prompt
+    still queued" check is `session.isRunning`. Methods are `rigwell.*` (listed in `src/automations/index.ts`), not `daemon.*`.
