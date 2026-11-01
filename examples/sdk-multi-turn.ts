@@ -17,17 +17,19 @@ function onPermission(req: PermissionRequest) {
   return { selectedOption: req.options.some((o) => o.value === "proceed_once") ? "proceed_once" : "cancel" };
 }
 
+// A custom MCP server attached to the session (initialize_session mcpServers). Its tools are deferred: the model
+// loads them with load_tools and calls them with call_tool, or inside a Script as tools.my_tools.<name>(...).
+// Replace the command with your own server; this one is the fake used by the tests.
+const mcpServers = [{ name: "my-tools", command: "bun", args: [new URL("../test/fakes/fake-mcp-server.ts", import.meta.url).pathname] }];
+
 const common = {
   cwd: process.cwd(),
   modelId: arg("--model"),
   autonomyLevel: "low" as const,
   onPermission,
+  initParams: { mcpServers },
   // ask_user and pick_options default to "cancelled" unless you pass onAskUser / onPickOptions.
 };
-
-// TODO(MCP): when the MCP phase lands, attach the custom MCP tool here, e.g. through
-// `initParams: { mcpServers: [{ name: "my-tools", command: "bun", args: ["my-mcp-server.ts"] }] }`
-// and have the second prompt below call it. Nothing is stubbed in this example.
 
 const url = arg("--daemon-url");
 const session: RigwellSession = url ? await connectToDaemon({ ...common, url }) : await createSession(common);
@@ -44,6 +46,7 @@ async function turn(prompt: string) {
 
 await turn("List the files in this folder using a command, then summarise what the project is.");
 await turn("Which of those files would you read first, and why?");
+await turn("Load the my-tools__echo tool and call it with the text \"hello\", then tell me what it returned.");
 
 console.log("\ncontext:", await session.getContextStats());
 await session.close();
