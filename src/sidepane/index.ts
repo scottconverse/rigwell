@@ -19,6 +19,7 @@ import { DEFAULT_COMMAND_LISTS } from "../permissions/lists.ts";
 import { ErrorCodes, RpcError } from "../protocol/rpc.ts";
 import { findModel, resolveModels } from "../storage/models.ts";
 import { loadSettings } from "../storage/settings.ts";
+import { listSessions } from "../storage/transcript.ts";
 import { toolsForSession } from "../tools/registry.ts";
 import { BrowserRegistry, createBrowserTool } from "./browser.ts";
 import { listFiles, readWorkspaceFile, searchFiles, writeWorkspaceFile } from "./files.ts";
@@ -115,6 +116,8 @@ export function createSidePane(opts: SidePaneOptions = {}) {
 
   function methodsFor(ctx: ConnCtx): Record<string, (p: Params) => unknown> {
     return {
+      // Sidebar: every stored session, newest first (no session needed on the connection).
+      "daemon.list_sessions": () => ({ sessions: listSessions().map((s) => ({ id: s.id, title: s.title, cwd: s.cwd, updatedAt: s.mtimeMs })) }),
       "daemon.list_files": (p) => listFiles(session(ctx, p).cwd, p),
       "daemon.search_files": (p) => searchFiles(session(ctx, p).cwd, p),
       "daemon.get_workspace_file_content": (p) => readWorkspaceFile(session(ctx, p).cwd, p),
