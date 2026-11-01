@@ -6,11 +6,12 @@ import { rigwellHome } from "../storage/paths.ts";
 import { createAutomationService, type ServiceOptions } from "../automations/index.ts";
 import { loadSettings } from "../storage/settings.ts";
 import { METHOD_PREFIX } from "../protocol/rpc.ts";
+import { createSidePane, type ConnCtx, type SidePaneOptions } from "../sidepane/index.ts";
 import { DEFAULT_WS_PORT, removeDaemonInfo, startWsServer, writeDaemonInfo } from "./ws.ts";
 
 export const defaultSocketPath = () => join(rigwellHome(), "daemon.sock");
 
-export async function startDaemon(opts: { socketPath: string; log?: (m: string) => void; retryBaseDelayMs?: number; automations?: false | ServiceOptions; ws?: false | { port?: number; token?: string } }) {
+export async function startDaemon(opts: { socketPath: string; log?: (m: string) => void; retryBaseDelayMs?: number; automations?: false | ServiceOptions; ws?: false | { port?: number; token?: string }; sidepane?: false | SidePaneOptions }) {
   mkdirSync(dirname(opts.socketPath), { recursive: true });
   if (existsSync(opts.socketPath)) unlinkSync(opts.socketPath);
   const conns = new Set<ReturnType<typeof createConnection>>();
@@ -41,12 +42,37 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
     });
   })();
   auto?.start();
+  // Side pane (spec §17): files, terminals, browser control and side chat. The app's CDP proxy port and endpoint
+  // arrive through the environment (RIGWELL_BROWSER_CDP_PORT / RIGWELL_BROWSER_CDP_URL) or `daemon.browser_attach`.
+  const sidepane = opts.sidepane === false ? undefined : createSidePane({
+    log: opts.log,
+    browserPort: Number(process.env.RIGWELL_BROWSER_CDP_PORT) || undefined,
+    browserDefaultUrl: process.env.RIGWELL_BROWSER_CDP_URL,
+    ...opts.sidepane,
+  });
+  const ctxs = new Map<ReturnType<typeof createConnection>, ConnCtx>();
   const mkConn = (write: (line: string) => void) => {
-    const conn = createConnection(write, {
-      canPrompt: true, log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs, extraMethods: auto?.methods,
+    let conn!: ReturnType<typeof createConnection>;
+    const ctx: ConnCtx = {
+      id: crypto.randomUUID(),
+      session: () => conn.session,
+      notify: (n) => conn.peer.notify(METHOD_PREFIX + "session_notification", { ...(conn.session ? { sessionId: conn.session.id } : {}), notification: n }),
+    };
+    conn = createConnection(write, {
+      canPrompt: true, log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs,
+      extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx) },
+      extraTools: sidepane ? () => sidepane.tools() : undefined,
     });
     conns.add(conn);
+    ctxs.set(conn, ctx);
     return conn;
+  };
+  const dropConn = (conn: ReturnType<typeof createConnection>) => {
+    conns.delete(conn);
+    const ctx = ctxs.get(conn);
+    if (ctx) sidepane?.connectionClosed(ctx);
+    ctxs.delete(conn);
+    void conn.shutdown();
   };
   const server = Bun.listen<Data>({
     unix: opts.socketPath,
@@ -58,8 +84,7 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
       drain(sock) { flush(sock); },
       data(sock, chunk) { sock.data.conn.peer.feed(dec.decode(chunk, { stream: true })); },
       close(sock) {
-        conns.delete(sock.data.conn);
-        void sock.data.conn.shutdown();
+        dropConn(sock.data.conn);
       },
     },
   });
@@ -74,7 +99,7 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
           const conn = mkConn((line) => write(line));
           return {
             feed: (m) => conn.peer.feed(m + "\n"),
-            close: () => { conns.delete(conn); void conn.shutdown(); },
+            close: () => dropConn(conn),
           };
         },
       });
@@ -99,6 +124,7 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
     get sessionCount() { return [...conns].filter((c) => c.session).length; },
     stop() {
       auto?.stop();
+      sidepane?.closeAll();
       for (const c of conns) void c.shutdown();
       server.stop(true);
       wsServer?.stop();

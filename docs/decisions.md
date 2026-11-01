@@ -473,3 +473,74 @@ them into the loop. Each index.ts starts with an "Integration" comment.
     fallback is tried (the cache monitor logs "router fallback"). Cleared on compaction. Tool mode is decided for the session model
     ("auto" is direct_only unless overridden), not per routed model, so the tool list does not flip. The classifier prompt is Rigwell's own.
     No image handling (images are not supported in this build).
+
+## Phase 8: Desktop app
+
+133. **Stack:** Electron 42.3.3 (spec §14), in `desktop/` with its own `package.json`. Renderer is React 19 plus xterm.js only. TanStack Router and
+    Query, Jotai, tiptap, shiki, mermaid and KaTeX from §14.7 are not used (the brief says keep dependencies few): routing is a hash
+    router, state is a small external store, markdown and syntax highlighting are small in-repo modules (`renderer/lib/markdown.ts`,
+    `highlight.ts`; output is escaped before any tag is added). Build is `bun run build.ts` (Bun.build, CommonJS main and preload, ESM
+    renderer) instead of Vite and Electron Forge; no installers or makers. `ws` is the only other runtime dependency (the CDP proxy).
+134. **Daemon transport is the WebSocket mode:** the daemon is a Bun program, so the app starts `rigwell daemon --socket <home>/daemon.sock
+    --ws-port 0` and talks to its token-protected loopback WebSocket (the debugging mode §14.1 allows) instead of Node child IPC.
+    The main process owns the sockets (one per session view) and relays strings over `daemon:sendMessage` (strings only, sender frame
+    checked). Command override: `RIGWELL_DAEMON_CMD` (JSON array); default `bun <repo>/src/cli/main.ts`. A packaged build must bundle the bun
+    binary; packaging is not built.
+135. **Supervisor:** `desktop/main/supervisor.ts`. Ready means daemon.json carries the child's own pid and token and the WebSocket port answers
+    HTTP 401 within 30 s (the daemon has no `/health` route; a 401 without a token proves the listener). Auto-restart 3 times with 2 s, 4 s,
+    8 s; the count resets on ready; manual restart; stderr log rotates at 1 MB to `.old`; crash breadcrumb in
+    `logs/daemon-critical-error.json`; after the third failed restart the app shows a dialog naming the likely causes. "Port held by an old
+    process" handling is not needed because the port is 0 (picked by the OS). Windows' `--parent-pid` and the liveness fd are not built:
+    the daemon is stopped with SIGTERM then SIGKILL when the app quits.
+136. **Files:** `daemon.list_files`, `search_files`, `get_workspace_file_content`, `write_workspace_file_content` as in §17.1. Fingerprint is the
+    sha256 of the bytes; a mismatching `baseFingerprint` fails with -32006 and the current fingerprint in `data`. Writes go through a temp
+    file and rename and keep the mode. Reads may use an absolute path outside the working folder (session owner); writes may not, and
+    symlinks are resolved first so they cannot escape. Writes refuse binary files, files over 15 MB and missing files (no create).
+    Listing uses ripgrep when installed, else a directory walk; `.git` and `node_modules` are skipped in the fallback only.
+137. **Terminals:** PTY through `Bun.spawn(..., { terminal })`, so there is no native module. Scrollback is the raw output as a capped string
+    (1,000,000 chars) that the renderer writes back into xterm.js, instead of a headless xterm with 50,000 lines; `plainText` strips escape
+    codes. Ids are scoped by session. Ownership, 30 s grace timer, adoption through `daemon.list_terminals` and the 30 minute orphan sweep
+    follow §17.2. Shell allow-list and protected environment keys follow §17.2.
+138. **Browser pane:** the app's webviews register with the main process, which exposes them as one browser through a loopback CDP proxy
+    (`desktop/main/cdp-proxy.ts`, path `/devtools/browser/<random id>`, so the URL is a capability). The renderer attaches that URL with
+    `daemon.browser_attach`; the daemon accepts only ws, 127.0.0.1, the port in `RIGWELL_BROWSER_CDP_PORT` (set by the supervisor), a
+    `/devtools/browser/<id>` path, no credentials, query or hash (§17.3). The daemon side is its own small CDP client
+    (`src/sidepane/browser.ts`), not Playwright, so no extra dependency; it works against any CDP browser, which is how the tests use headless
+    Chromium. The agent gets one tool, `Browser` (tabs, open, select_tab, close_tab, navigate, back, forward, snapshot, click, type, press,
+    screenshot, evaluate). `snapshot` numbers interactive elements; refs are valid until the page changes. Screenshots are saved under
+    `$RIGWELL_HOME/browser-screenshots` and the path is returned (tool results are text). No agent-browser skill is shipped (on the approval
+    list). Idle connections close after 30 minutes.
+139. **Where the Browser tool is registered:** `createConnection` got an optional `extraTools` option (3 lines in `src/daemon/connection.ts`);
+    the daemon passes the side pane's tools. `src/permissions/gate.ts` got a `Browser` case: tabs, snapshot and screenshot are allowed; other
+    actions are allowed at autonomy low or higher and ask at off. Chrome cookie import (ask Scott) is not built.
+140. **Side chat is a fork, not a fresh session.** On a question the main conversation is copied up to its last settled point (an assistant message
+    with no open tool call) into a second in-memory session with the main session's model; a fork of a busy main session therefore never sees
+    the running turn. The fork has read tools only (Edit and Create removed) and permission requests are auto-rejected, so it cannot change
+    anything; the spec's "unless the user turns writes on" switch is not built. Earlier exchanges (up to 10, question 1000 chars, answer 4000)
+    are carried into a new fork as possibly stale context. The fork is closed when no question is pending. Nothing is written to disk or to
+    the main transcript, so the spec's `btw` folder, tags and Promote are not built. Methods: `daemon.side_chat_ask`, `side_chat_list`,
+    `side_chat_cancel`; notification `daemon.side_chat_entry`.
+141. **Attention events** (§19.1) are computed by `src/sidepane/attention.ts` and fed by the main-process broker, which sees both the daemon's
+    notifications and requests and the window's answers. The daemon's connection layer belongs to another phase, so the mapping is not
+    inside the daemon yet; the events are the same. Notification, badge and sound rules are pure functions in `desktop/main/alerts.ts`:
+    toast skipped when the window is focused on that session; completion sound off by default; awaiting-input sound `ack`; focus mode,
+    volume and subagent quiet mode as in §19.3. Sound settings live in the desktop settings file (`sounds`), not in the agent settings.
+    Built-in sounds are generated in code (`desktop/main/sounds.ts`), so no audio files ship. The BEL and OSC progress output of the TUI
+    is not part of this phase.
+142. **Appearance before first paint:** the main process reads `desktop-settings.json` synchronously before it creates a window, sets
+    `nativeTheme.themeSource`, creates the window with the resolved theme's startup background (defaults `#161413` and `#f2f0f0`) and the
+    title-bar overlay colors, and passes the boot values to the preload as a process argument. `boot.js` (a blocking script in `<head>`) applies
+    `data-theme` and the CSS variables with the same pure function the tests cover (`applyBoot`). A theme change updates the page first, then
+    saves, then the main process updates the window background and overlay. The theme file format is JSON tokens per theme, importable and
+    exportable on the Appearance page.
+143. **Desktop settings keys** (§14.4): `keepAwakeEnabled`, `desktopAutoUpdateEnabled`, `locale`, `windowZoomLevel`,
+    `automationQuitWarningDismissed`, plus `autoOpenFilePreviews`, `appearance`, `notifications`, `sounds`, `disabledShortcuts` and
+    `windowBounds`. Updates have no feed in this build: Check for Updates says so. Single instance, deep links (`rigwell://sessions/<id>`,
+    `mcp-callback` claimed by a window for 10 minutes), menus, deny-all `window.open`, the external-link allow-list, CSP (meta tag and header),
+    `contextIsolation`, `sandbox`, no `nodeIntegration` and webview limits follow §14.2 and §14.6; Electron fuses are not flipped (that needs a
+    packaging step).
+144. **Not built in the shell:** tray icon (ask Scott), Mission Control and Automations pages (their phases), Session Defaults, Missions,
+    Custom Models, Worktrees, Connectors, Session Management and Usage settings pages, per-session Pin, Rename and Archive (no daemon
+    methods exist yet), Share (hosted), model cost multipliers, the Connectors and Skills dialogs, per-window zoom file, image attachments,
+    voice dictation, API keys, secrets and environments pages (approval list). Settings pages built: General, Appearance, Notifications and
+    sounds, Support.
