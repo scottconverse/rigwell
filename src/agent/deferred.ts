@@ -109,6 +109,24 @@ export class DeferredRegistry {
 
   takeNotices(): string[] { return this.notices.splice(0); }
 
+  /**
+   * One reminder for the first message after a compaction: the loaded tools with their signatures (they stay loaded) and
+   * the names still deferred. Marks everything announced so later reminders are deltas. Null when there are none.
+   */
+  reinjection(): string | null {
+    const loaded = this.loadedTools();
+    const rest = this.names().filter((n) => !this.loaded.has(n));
+    this.announced = new Set(this.tools.keys());
+    this.notices = [];
+    if (!loaded.length && !rest.length) return null;
+    const parts: string[] = [];
+    if (loaded.length) {
+      parts.push(`Tools loaded earlier in this session (still loaded). Call them with call_tool({ name, args }), or inside a Script as tools.<name>(args):\n${loaded.map((t) => `- ${signatureOf(t)}: ${firstLine(t.description)}`).join("\n")}`);
+    }
+    if (rest.length) parts.push(`Deferred tools (names only, load with load_tools): ${rest.join(", ")}`);
+    return `<system-reminder>\n${parts.join("\n")}\n</system-reminder>`;
+  }
+
   /** The load_tools tool (direct tool in direct_only, binding inside a Script). */
   loadToolsTool(): Tool {
     return {

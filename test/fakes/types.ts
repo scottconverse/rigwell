@@ -11,6 +11,10 @@ export interface FakeTurnSpec {
   headers?: Record<string, string>;
   /** Send a partial stream, then drop the connection before the final event. */
   breakMidStream?: boolean;
+  /** Accept the request, then send no bytes at all until the client gives up (silent stream). */
+  hang?: boolean;
+  /** Send only SSE comment pings every 10 ms, never a message: bytes flow, so only the hard time limit ends it. */
+  trickle?: boolean;
   usage?: { input?: number; output?: number; cacheRead?: number; cacheCreation?: number };
 }
 
@@ -120,6 +124,15 @@ export async function startFake(
       if (cache && turn.usage?.cacheRead === undefined) {
         const u = cache.sim.lookup(cache.model(body));
         shown = { ...turn, usage: { output: 5, ...turn.usage, input: u.input, cacheRead: u.cacheRead, cacheCreation: u.cacheCreation } };
+      }
+      if (turn.hang || turn.trickle) {
+        const enc0 = new TextEncoder();
+        let timer: ReturnType<typeof setInterval> | undefined;
+        const body = new ReadableStream({
+          start(c) { if (turn.trickle) { c.enqueue(enc0.encode(": ping\n\n")); timer = setInterval(() => { try { c.enqueue(enc0.encode(": ping\n\n")); } catch { /* closed */ } }, 10); } },
+          cancel() { if (timer) clearInterval(timer); },
+        });
+        return new Response(body, { headers: { "content-type": "text/event-stream", ...(turn.headers ?? {}) } });
       }
       const frames = render(shown, idx);
       const send = turn.breakMidStream ? frames.slice(0, Math.max(2, Math.ceil(frames.length / 2))) : frames;

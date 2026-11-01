@@ -4,12 +4,12 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createConnection } from "../../src/daemon/connection.ts";
 import type { Tool } from "../../src/core/types.ts";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import { startFakeOpenAI } from "../fakes/fake-openai.ts";
 import { PrefixCache, type FakeServer, type FakeTurn } from "../fakes/types.ts";
 import { makeRepo } from "./helpers.ts";
+import { inproc } from "./inproc.ts";
 
 const servers: FakeServer[] = [];
 afterAll(() => servers.forEach((s) => s.stop()));
@@ -29,38 +29,6 @@ const mail: Tool = {
   inputSchema: { type: "object", properties: { to: { type: "string" } }, required: ["to"] },
   run: async () => ({ content: "sent" }),
 };
-
-/** An in-process connection driven with the real protocol methods. */
-function inproc() {
-  const out: any[] = [];
-  const conn = createConnection((line) => { for (const l of line.split("\n")) if (l.trim()) out.push(JSON.parse(l)); }, { canPrompt: false, retryBaseDelayMs: 1 });
-  let n = 0;
-  const until = async (pred: () => any, ms = 20_000) => {
-    const t0 = Date.now();
-    for (;;) {
-      const v = pred();
-      if (v) return v;
-      if (Date.now() - t0 > ms) throw new Error("timeout");
-      await Bun.sleep(2);
-    }
-  };
-  return {
-    conn, out,
-    async call(method: string, params: Record<string, unknown>) {
-      const id = `c${++n}`;
-      conn.peer.feed(JSON.stringify({ jsonrpc: "2.0", type: "request", id, method: `rigwell.${method}`, params }) + "\n");
-      const r = await until(() => out.find((m) => m.type === "response" && m.id === id));
-      if (r.error) throw new Error(`${method}: ${r.error.message}`);
-      return r.result;
-    },
-    async turn(text: string) {
-      const before = out.filter((m) => m.params?.notification?.type === "agent_turn_completed").length;
-      await this.call("add_user_message", { text });
-      await until(() => out.filter((m) => m.params?.notification?.type === "agent_turn_completed").length > before);
-    },
-    notes: () => out.filter((m) => m.method === "rigwell.session_notification").map((m) => m.params.notification),
-  };
-}
 
 /** Strict extension of one request body by the next, per provider wire shape (cache markers ignored). */
 function extendsPrev(provider: "anthropic" | "openai", a: any, b: any): string | null {

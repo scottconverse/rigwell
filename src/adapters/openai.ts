@@ -127,7 +127,7 @@ export class OpenAIResponsesAdapter implements ModelAdapter {
     };
 
     const events = sseRequest(
-      url, { headers, body: JSON.stringify(buildOpenAIBody(req)) }, req.signal, this.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      url, { headers, body: JSON.stringify(buildOpenAIBody(req)) }, req.signal, req.limits?.hardLimitMs ?? this.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, req.limits?.idleTimeoutMs,
     );
     outer: for await (const sse of events) {
       const data = safeJson(sse.data);

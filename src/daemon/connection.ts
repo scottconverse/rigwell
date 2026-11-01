@@ -3,10 +3,12 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { AutonomyLevel, CommandLists, InteractionMode, Message, ReasoningEffort } from "../core/types.ts";
 import { ErrorCodes, METHOD_PREFIX, RpcError, RpcPeer } from "../protocol/rpc.ts";
-import { Session, type SessionSettings } from "../agent/session.ts";
+import { Session, SessionBusyError, type SessionSettings } from "../agent/session.ts";
+import { applyCompaction } from "../agent/compaction.ts";
+import { AUTO_MODEL_ID, type RouterConfig } from "../agent/router.ts";
 import { loadSettings } from "../storage/settings.ts";
 import { findModel, listModelInfo, resolveModels } from "../storage/models.ts";
-import { appendMessage, appendTurnOutcome, createSession, findSession, loadTranscript, type SessionFiles } from "../storage/transcript.ts";
+import { appendCompaction, appendMessage, appendTurnOutcome, createSession, findSession, loadTranscript, type SessionFiles } from "../storage/transcript.ts";
 import { readSessionSettings, updateSessionSettings } from "../storage/session-settings.ts";
 import { hostId, isValidSessionId } from "../storage/paths.ts";
 import { createAdapter } from "../adapters/index.ts";
@@ -71,7 +73,14 @@ export function createConnection(write: (line: string) => void, opts: Connection
     return { s, models, lists };
   }
 
-  function build(id: string, cwd: string, settings: SessionSettings, p: Record<string, unknown>, env: ReturnType<typeof environment>, override: ToolExecutionMode | undefined, restored?: { messages: Message[]; tokenUsage?: any; deferred?: { loaded: string[]; announced: string[] } }) {
+  function routerOf(env: ReturnType<typeof environment>): RouterConfig | undefined {
+    const r = env.s.autoRouter as RouterConfig | undefined;
+    return r && Array.isArray(r.candidates) && r.candidates.length && typeof r.classifierModel === "string" ? r : undefined;
+  }
+
+  const modelOk = (env: ReturnType<typeof environment>, id: string) => !!findModel(env.models, id) || (id === AUTO_MODEL_ID && !!routerOf(env));
+
+  function build(id: string, cwd: string, settings: SessionSettings, p: Record<string, unknown>, env: ReturnType<typeof environment>, override: ToolExecutionMode | undefined, restored?: { messages: Message[]; tokenUsage?: any; deferred?: { loaded: string[]; announced: string[] }; archived?: Message[]; anchor?: string }) {
     const skip = opts.forced?.skipPermissions ?? p.skipPermissionsUnsafe === true;
     const f = files!;
     return new Session({
@@ -85,9 +94,14 @@ export function createConnection(write: (line: string) => void, opts: Connection
       autoRejectPermissionRequests: p.autoRejectPermissionRequests === true,
       shell: SHELL, retryBaseDelayMs: opts.retryBaseDelayMs,
       messages: restored?.messages, tokenUsage: restored?.tokenUsage, deferred: restored?.deferred, log: opts.log,
+      archived: restored?.archived, compactionAnchorId: restored?.anchor,
+      guardSettings: { llmRequestTimeout: env.s.llmRequestTimeout as number | undefined, loopGuards: env.s.loopGuards as any },
+      compaction: env.s.compaction as any, compactionTokenLimit: env.s.compactionTokenLimit,
+      compactionThresholdCheckEnabled: env.s.compactionThresholdCheckEnabled, router: routerOf(env),
       persistence: {
         appendMessage: async (msg, parent) => { await appendMessage(f, msg, parent); },
         appendTurnOutcome: (o) => appendTurnOutcome(f, o),
+        appendCompaction: (rec) => appendCompaction(f, rec),
         saveSettings: async (patch) => { updateSessionSettings(f, patch); },
       },
     }, {
@@ -102,7 +116,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
     const s = need();
     return {
       sessionId: s.id, hostId: hostId(),
-      session: { messages: s.messages.filter((m) => m.visibility !== "llm_only") },
+      session: { messages: s.uiMessages().filter((m) => m.visibility !== "llm_only") },
       settings: s.settingsSnapshot(),
     };
   }
@@ -120,7 +134,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
         const env = environment(cwd);
         const d = env.s.sessionDefaultSettings ?? {};
         const modelId = opts.forced?.modelId ?? (p.modelId as string | undefined) ?? d.model ?? env.models[0]?.id;
-        if (!modelId || !findModel(env.models, modelId)) {
+        if (!modelId || !modelOk(env, modelId)) {
           throw new RpcError(ErrorCodes.INVALID_PARAMS, modelId ? `Unknown model: ${modelId}` : "No models configured: add customModels to settings.json");
         }
         const settings: SessionSettings = {
@@ -128,6 +142,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
           reasoningEffort: pick<ReasoningEffort>(p.reasoningEffort, EFFORTS, "reasoningEffort") ?? (d.reasoningEffort as ReasoningEffort) ?? "high",
           interactionMode: pick<InteractionMode>(p.interactionMode, MODES, "interactionMode") ?? (d.interactionMode as InteractionMode) ?? "auto",
           autonomyLevel: opts.forced?.autonomyLevel ?? pick<AutonomyLevel>(p.autonomyLevel, AUTONOMY, "autonomyLevel") ?? (d.autonomyLevel as AutonomyLevel) ?? "off",
+          ...(env.s.compactionModel && findModel(env.models, env.s.compactionModel) ? { compactionModelId: env.s.compactionModel } : {}),
         };
         // Optional git worktree (spec §18): the session's cwd becomes the worktree path.
         worktree = (await startSessionWorktree(p.worktree, cwd, id, env.s, opts.log)) ?? undefined;
@@ -157,6 +172,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
         files = found;
         const loaded = loadTranscript(found);
         const cwd = loaded.start.cwd;
+        const { view, archived } = applyCompaction(loaded.messages, loaded.compaction);
         const saved = readSessionSettings(found) ?? {};
         const env = environment(cwd);
         const settings: SessionSettings = {
@@ -164,12 +180,16 @@ export function createConnection(write: (line: string) => void, opts: Connection
           reasoningEffort: (saved.reasoningEffort as ReasoningEffort) ?? "high",
           interactionMode: (saved.interactionMode as InteractionMode) ?? "auto",
           autonomyLevel: opts.forced?.autonomyLevel ?? (saved.autonomyLevel as AutonomyLevel) ?? "off",
+          ...(typeof saved.compactionModelId === "string" ? { compactionModelId: saved.compactionModelId } : {}),
         };
         const savedOverride = EXEC_MODES.includes(saved.toolExecutionModeOverride as string) ? (saved.toolExecutionModeOverride as ToolExecutionMode) : undefined;
         session = build(id, cwd, settings, p, env, savedOverride, {
-          messages: loaded.messages, tokenUsage: saved.tokenUsage,
+          messages: view, archived, anchor: loaded.compaction?.anchorMessage.id, tokenUsage: saved.tokenUsage,
           deferred: {
-            loaded: Array.isArray(saved.loadedDeferredToolNames) ? (saved.loadedDeferredToolNames as string[]) : [],
+            loaded: [...new Set([
+              ...(Array.isArray(saved.loadedDeferredToolNames) ? (saved.loadedDeferredToolNames as string[]) : []),
+              ...(loaded.compaction?.loadedDeferredToolNames ?? []),
+            ])],
             announced: Array.isArray(saved.announcedDeferredToolNames) ? (saved.announcedDeferredToolNames as string[]) : [],
           },
         });
@@ -206,11 +226,29 @@ export function createConnection(write: (line: string) => void, opts: Connection
           interactionMode: pick<InteractionMode>(p.interactionMode, MODES, "interactionMode"),
           autonomyLevel: pick<AutonomyLevel>(p.autonomyLevel, AUTONOMY, "autonomyLevel"),
         };
-        if (patch.modelId !== undefined && !environment(s.cwd).models.some((m) => m.id === patch.modelId)) {
+        if (patch.modelId !== undefined && !modelOk(environment(s.cwd), patch.modelId)) {
           throw new RpcError(ErrorCodes.INVALID_PARAMS, `Unknown model: ${patch.modelId}`);
+        }
+        if (p.compactionModelId !== undefined) {
+          const cm = p.compactionModelId;
+          if (cm !== null && (typeof cm !== "string" || !findModel(environment(s.cwd).models, cm))) {
+            throw new RpcError(ErrorCodes.INVALID_PARAMS, `Unknown compaction model: ${JSON.stringify(cm)}`);
+          }
+          patch.compactionModelId = cm === null ? undefined : (cm as string);
+          if (cm === null) s.settings.compactionModelId = undefined;
         }
         s.updateSettings(patch);
         return {};
+      }
+      case "compact_session": {
+        const s = need();
+        if (p.mode !== undefined && p.mode !== "handoff") throw new RpcError(ErrorCodes.INVALID_PARAMS, `Invalid mode: ${JSON.stringify(p.mode)}`);
+        try {
+          return await s.compactManual({ customInstructions: typeof p.customInstructions === "string" ? p.customInstructions : undefined, mode: p.mode as "handoff" | undefined });
+        } catch (e) {
+          if (e instanceof SessionBusyError) throw new RpcError(ErrorCodes.CONFLICT, e.message);
+          throw new RpcError(ErrorCodes.INTERNAL_ERROR, `Compaction failed: ${(e as Error).message}`);
+        }
       }
       case "list_tools": {
         const s = need();

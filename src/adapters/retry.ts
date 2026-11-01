@@ -1,4 +1,4 @@
-import { ModelError, type ModelAdapter, type ModelRequest, type StreamEvent } from "../core/types.ts";
+import { ModelError, type ContentBlock, type ModelAdapter, type ModelRequest, type StreamEvent } from "../core/types.ts";
 
 export type RetryReason = "overloaded" | "rate_limited" | "timeout" | "network" | "empty_response" | "unknown";
 
@@ -9,6 +9,13 @@ export interface RetryOptions {
   /** `attempt` is the 1-based number of the attempt that just failed. */
   onRetry?: (attempt: number, reason: RetryReason, delayMs: number) => void;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Session use: an empty or thinking-only answer is retried once, and if it comes back empty again it is passed on
+   * as a normal message so the loop's empty-turn guard sees it (default: throw empty_response).
+   */
+  passEmpty?: boolean;
+  /** Retry a response cut by the hard time limit only when it was cut within limit + this (default 60 s). */
+  hardLimitGraceMs?: number;
 }
 
 const PROFILES = {
@@ -49,11 +56,14 @@ export async function* streamWithRetry(
   const base = opts.baseDelayMs ?? profile.base;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   let emptyRetries = 0;
+  let hardCuts = 0;
+  const noVisible = (c: ContentBlock[]) => !c.some((b) => (b.type === "text" && b.text.trim() !== "") || b.type === "tool_use");
 
   for (let attempt = 1; ; attempt++) {
     try {
       for await (const ev of adapter.stream(req)) {
-        if (ev.type === "message_done" && ev.content.length === 0) {
+        if (ev.type === "message_done" && (opts.passEmpty ? noVisible(ev.content) : ev.content.length === 0)) {
+          if (opts.passEmpty && emptyRetries >= 1) { yield ev; return; }
           throw new ModelError("empty_response", "Model returned an empty response", { retryable: true });
         }
         yield ev;
@@ -61,6 +71,12 @@ export async function* streamWithRetry(
       return;
     } catch (e) {
       if (!(e instanceof ModelError) || !e.retryable || req.signal?.aborted) throw e;
+      if (e.opts.cause === "hard_limit") {
+        // Hard time limit: at most 2 attempts, so only the first cut is retried, and only when it came within limit + 60 s.
+        hardCuts++;
+        const grace = opts.hardLimitGraceMs ?? 60_000;
+        if (hardCuts >= 2 || (e.opts.elapsedMs ?? 0) > (e.opts.limitMs ?? 0) + grace) throw e;
+      }
       const reason = reasonOf(e);
       const max = reason === "rate_limited" ? profile.rateLimitAttempts : profile.attempts;
       if (reason === "empty_response") {

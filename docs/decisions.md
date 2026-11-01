@@ -316,3 +316,67 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
 97. **Fake servers** can simulate prefix caching (`startFakeAnthropic(script, { simulateCache: true })`, same for OpenAI): Anthropic
     reads the longest earlier breakpoint that is a prefix and within 20 blocks of one of its own breakpoints; OpenAI reads the common
     prefix once it is 1,024 tokens or more. Tokens are chars/4. Off by default.
+
+## Phase 4: Guards + compaction
+
+98. **Guard config** (`src/agent/guards.ts`): settings keys `llmRequestTimeout` (ms, default 600,000) and `loopGuards`
+    {streamIdleTimeoutMs, hardResponseLimitMs, emptyTurnStop 3, repeatNudgeAt 3, repeatStopAt 6, cycleMinRepeats 8, cycleMinChars 1200,
+    minCallsBetweenCompactions 2}. Idle limit: `loopGuards.streamIdleTimeoutMs`, else 240,000 when the model's baseUrl host is
+    `api.anthropic.com` (vendor-hosted), else `llmRequestTimeout`. The hard response limit is `loopGuards.hardResponseLimitMs`, else
+    `llmRequestTimeout`. A response header `x-response-time-limit-ms` sets the limit for that one response (spec says "a header"; the name is
+    Rigwell's choice).
+99. **Silent stream and hard limit** (`src/adapters/sse.ts`, `retry.ts`): the idle timer starts with the request and restarts on every received
+    chunk (SSE comment pings count as bytes). Both cuts are retryable `timeout` errors tagged `cause: idle | hard_limit`, so `llm_retry`
+    carries reason `timeout`. Hard limit: a cut is retried once (2 attempts); the second cut is not; a first cut that came later than
+    limit + 60 s is not retried either.
+100. **Mid-stream break**: unchanged from Phase 1 (retryable network error); the session now clears its partial-stream state on retry, and only
+    `message_done` content is stored. Retries reuse the same model, provider, base URL and request, so they hit the cache holder. There is no
+    provider rotation in this build.
+101. **Empty turns**: an answer with no text and no tool call (empty or thinking only) is retried once by the retry layer (`passEmpty`, spec
+    4.6.9), then reaches the loop guard: a user message `continue` after the 1st and 2nd, stop at the 3rd (texts from prompts.md 7.1). Stop and
+    repeat-stop are "completed" turns with a `create_message` notice, like the Script-wait stop. The throwaway `{}` answer is still stored.
+102. **Repeated calls**: a batch is its list of (tool name, canonical arguments) plus the results, with job/Script ids, UUIDs and `durationMs`
+    normalized away. Consecutive equal batches count; new results reset the count (polling is allowed). Nudge text is appended to the tool
+    results message exactly when the count reaches 3; at 6 the turn stops (prompts.md 7.2). Batches containing `script_job wait` skip this guard
+    (they have the 24-wait guard).
+103. **Output cycles**: while streaming, every 400 new characters the tail is checked (KMP smallest period over the last 1,200, 2,400, 4,800
+    or 9,600 characters); a cycle is a period p with window / p at least 8. The stream is cut, nothing of it is stored, the turn ends with an
+    `error` notification "the same N-character block repeated M times in the model output" and an `llm_only` transcript note (text is Rigwell's).
+    Thresholds are not in the spec; these are mine and configurable.
+104. **Todo nudge**: not built; there is no todo tool in this build.
+105. **Compaction** (`src/agent/compaction.ts`): trigger before each model request when the estimated context (last reported call + chars/4 of
+    what was added since; chars/4 of the whole prefix when no call was reported) reaches `compactionTokenLimit`, else the model's
+    `maxContextLimit` (default 200,000) minus the 16,000 reserve. `compactionThresholdCheckEnabled: false` turns it off; after a compaction
+    another automatic one waits `minCallsBetweenCompactions` model calls. Numbers (settings `compaction`): reserve 16,000, target 4,000,
+    headroom 8,192, custom cap 8,000, post ceiling 40,000, keepRecentTurns 2, toolResultCapChars 4,000. Summarizer limit = min(reserve,
+    model maxOutputTokens or 8,000); `max_tokens` = limit + 8,192, clamped to maxOutputTokens when set; both logged. The reserve is not grown
+    for carried items (there are none: no todos). The summarizer runs with reasoning off, no tools, on `compactionModelId` (session setting,
+    default from settings `compactionModel`, else the session model; for "auto", the routed model).
+106. **What is kept**: the recent turns kept verbatim are the last `keepRecentTurns` (2) turns, fewer if they exceed 40,000 minus the target
+    summary minus the re-injected context, and never all turns (something must be summarized; one huge turn is folded entirely). A cut falls on
+    a turn start (a user message without tool results), so tool calls and results are never split. The transcript sent to the summarizer drops
+    `user_only` messages and thinking, caps each tool call and result at 4,000 characters (then 1,500, 400, 100 if the window is too small),
+    and replaces environment, session, todos, project instruction, skills and long `<system-reminder>` blocks by the omission marker.
+    `customInstructions` are appended to the user message as a short paragraph (Rigwell text).
+107. **After compaction**: the history is one `llm_only` message `context-compact-<uuid>` (summary preamble, then the old context blocks as
+    they were, then one reminder with the loaded deferred tools' signatures and the still-deferred names), then the kept turns. System
+    blocks and tools are untouched; the cache monitor names the cause "compaction". Messages replaced are kept in `session.archived` for the
+    UI (`uiMessages()`); `load_session` shows the full conversation.
+108. **compaction_state record** (spec 12.1) is appended to the transcript with the spec's fields plus `reason`, `preambleMessageId`,
+    `preambleBlocks` (the rebuilt first message). `anchorMessage` is the last message the summary covers; on load the latest record gives
+    the preamble, and only messages after the anchor follow. `summaryTokens` is chars/4 of the summary. `loadedDeferredToolNames` is merged
+    with the settings file's list on load. Hooks (PreCompact) belong to Phase 5.
+109. **compact_session** compacts in place: `newSessionId` is the same id (the spec's record lives in the same transcript), `removedCount` the
+    number of messages replaced. It fails with CONFLICT while a turn runs, and with an internal error (history untouched) if there is
+    nothing to compact or the summarizer fails. `mode: "handoff"` (meaning not in the spec) keeps no recent turns: everything goes into the
+    summary. `session_compacted` carries `summaryId` (record id), `removedCount`, and `visibleBoundaryMessageId` = the first message kept
+    verbatim (null when none). Working state `compacting_conversation` is emitted during the summary.
+110. **Routing** (`src/agent/router.ts`): model id `auto`, with settings `autoRouter` {classifierModel, candidates [{model, description,
+    inputCost}], threshold 0.7, timeoutMs 10,000}. Per model request: classifier input = current request, last 8 tool calls, last 6 messages,
+    in that priority within 16,000 tokens (chars/4), long text cut to 2,000 characters at each end; 8,192 max output, low reasoning, no
+    retries. Pick = cheapest candidate with score at least the bar (ties: higher score), else the best, else (all zero) the first;
+    fallbacks by score. Reasons: policy (one candidate), hard, routine (75 percent or more qualify), task_fit, fallback (classifier failed,
+    first candidate). Recorded as `effectiveRouterModel` in the session settings. When the picked model fails after its retries, the next
+    fallback is tried (the cache monitor logs "router fallback"). Cleared on compaction. Tool mode is decided for the session model
+    ("auto" is direct_only unless overridden), not per routed model, so the tool list does not flip. The classifier prompt is Rigwell's own.
+    No image handling (images are not supported in this build).
