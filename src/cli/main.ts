@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 // rigwell CLI: `exec` (stdio JSON-RPC or a one-shot prompt) and `daemon` (many sessions over a Unix socket).
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { rigwellHome } from "../storage/paths.ts";
 import { createConnection, type ConnectionOptions } from "../daemon/connection.ts";
 import { startDaemon, defaultSocketPath } from "../daemon/daemon.ts";
 import type { AutonomyLevel } from "../core/types.ts";
@@ -10,7 +11,8 @@ const log = (m: string) => process.stderr.write(m + "\n");
 const USAGE = `Usage:
   rigwell exec --input-format stream-jsonrpc --output-format stream-jsonrpc [options]
   rigwell exec [options] "<prompt>"
-  rigwell daemon [--socket <path>]
+  rigwell daemon [--socket <path>] [--ws-port <n>] [--no-ws]
+  rigwell [tui] [options]        interactive terminal UI (default when no subcommand is given)
 
 Options for exec:
   --auto <low|medium|high>     autonomy level (default: off, read-only)
@@ -18,7 +20,13 @@ Options for exec:
   -m, --model <id>             model id, e.g. custom:My-Model-0
   --cwd <dir>                  working directory (default: current directory)
   -s, --session-id <id>        continue an existing session (prompt mode)
-  --settings <path>            extra settings file for this process (runtime level)`;
+  --settings <path>            extra settings file for this process (runtime level)
+
+Options for tui (also --auto, -m/--model, --cwd, --skip-permissions-unsafe, --settings):
+  --use-spec                   start in spec mode
+  --daemon                     use the running daemon's Unix socket instead of an in-process session
+  --socket <path>              daemon socket path (implies --daemon)
+  --url <ws://...> --token <t> connect to the daemon over WebSocket (token defaults to daemon.json)`;
 
 interface ExecArgs {
   inputFormat?: string; outputFormat?: string; auto?: AutonomyLevel; skip: boolean;
@@ -130,6 +138,37 @@ async function execPrompt(a: ExecArgs) {
   process.exit(reason === "completed" ? 0 : 1);
 }
 
+/** `rigwell` / `rigwell tui`: the interactive UI, on an in-process session or a daemon connection. */
+async function tui(argv: string[]) {
+  const TUI_ONLY_VALUE = ["--socket", "--url", "--token"];
+  const TUI_ONLY_FLAG = ["--use-spec", "--daemon"];
+  const execArgv: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (TUI_ONLY_VALUE.includes(argv[i])) i++;
+    else if (!TUI_ONLY_FLAG.includes(argv[i])) execArgv.push(argv[i]);
+  }
+  const a = parseExec(execArgv);
+  const val = (k: string) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] ?? fail(`${k} needs a value`) : undefined; };
+  const { runTui } = await import("../tui/app.ts");
+  const { SocketTransport, WebSocketTransport } = await import("../sdk/transport.ts");
+  const { readDaemonInfo } = await import("../sdk/session.ts");
+  const url = val("--url");
+  const socket = val("--socket");
+  const makeTransport = async () => {
+    if (url) return WebSocketTransport.connect(url, val("--token") ?? readDaemonInfo()?.token);
+    if (socket || argv.includes("--daemon")) return SocketTransport.connect(socket ? resolve(socket) : defaultSocketPath());
+    const { inProcessTransport } = await import("../sdk/in-process.ts");
+    return inProcessTransport({ canPrompt: true, runtimeSettingsPath: a.settings, log });
+  };
+  const sessionParams: Record<string, unknown> = {};
+  if (a.model) sessionParams.modelId = a.model;
+  if (a.auto) sessionParams.autonomyLevel = a.auto;
+  if (a.skip) sessionParams.skipPermissionsUnsafe = true;
+  if (argv.includes("--use-spec")) sessionParams.interactionMode = "spec";
+  const code = await runTui({ cwd: a.cwd, makeTransport, sessionParams, homeDir: rigwellHome(), log });
+  process.exit(code);
+}
+
 async function main() {
   const [cmd, ...argv] = process.argv.slice(2);
   if (cmd === "exec") {
@@ -140,15 +179,20 @@ async function main() {
   if (cmd === "daemon") {
     const i = argv.indexOf("--socket");
     const path = i >= 0 ? resolve(argv[i + 1] ?? fail("--socket needs a value")) : defaultSocketPath();
-    const d = await startDaemon({ socketPath: path, log });
+    const w = argv.indexOf("--ws-port");
+    const wsPort = w >= 0 ? Number(argv[w + 1]) : undefined;
+    if (w >= 0 && !Number.isInteger(wsPort)) fail("--ws-port needs a port number");
+    const d = await startDaemon({ socketPath: path, log, ws: argv.includes("--no-ws") ? false : { port: wsPort } });
     log(`[daemon] listening on ${d.socketPath}`);
+    if (d.wsUrl) log(`[daemon] WebSocket on ${d.wsUrl} (token in ${join(rigwellHome(), "daemon.json")})`);
     const stop = () => { d.stop(); process.exit(0); };
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);
     return;
   }
+  if (cmd === undefined || cmd === "tui" || cmd.startsWith("-")) return tui(cmd === "tui" ? argv : cmd === undefined ? [] : [cmd, ...argv]);
   log(USAGE);
-  process.exit(cmd ? 2 : 0);
+  process.exit(2);
 }
 
 main();
