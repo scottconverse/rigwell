@@ -1,0 +1,149 @@
+#!/usr/bin/env bun
+// rigwell CLI: `exec` (stdio JSON-RPC or a one-shot prompt) and `daemon` (many sessions over a Unix socket).
+import { resolve } from "node:path";
+import { createConnection, type ConnectionOptions } from "../daemon/connection.ts";
+import { startDaemon, defaultSocketPath } from "../daemon/daemon.ts";
+import type { AutonomyLevel } from "../core/types.ts";
+
+const log = (m: string) => process.stderr.write(m + "\n");
+
+const USAGE = `Usage:
+  rigwell exec --input-format stream-jsonrpc --output-format stream-jsonrpc [options]
+  rigwell exec [options] "<prompt>"
+  rigwell daemon [--socket <path>]
+
+Options for exec:
+  --auto <low|medium|high>     autonomy level (default: off, read-only)
+  --skip-permissions-unsafe    run every tool call without asking (not with --auto)
+  -m, --model <id>             model id, e.g. custom:My-Model-0
+  --cwd <dir>                  working directory (default: current directory)
+  -s, --session-id <id>        continue an existing session (prompt mode)
+  --settings <path>            extra settings file for this process (runtime level)`;
+
+interface ExecArgs {
+  inputFormat?: string; outputFormat?: string; auto?: AutonomyLevel; skip: boolean;
+  model?: string; cwd: string; sessionId?: string; settings?: string; prompt?: string;
+}
+
+function fail(msg: string): never { log(`rigwell: ${msg}`); process.exit(2); }
+
+function parseExec(argv: string[]): ExecArgs {
+  const a: ExecArgs = { skip: false, cwd: process.cwd() };
+  const rest: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const k = argv[i];
+    const val = () => argv[++i] ?? fail(`${k} needs a value`);
+    switch (k) {
+      case "--input-format": a.inputFormat = val(); break;
+      case "--output-format": a.outputFormat = val(); break;
+      case "--auto": {
+        const v = val();
+        if (!["low", "medium", "high"].includes(v)) fail(`--auto must be low, medium or high`);
+        a.auto = v as AutonomyLevel; break;
+      }
+      case "--skip-permissions-unsafe": a.skip = true; break;
+      case "-m": case "--model": a.model = val(); break;
+      case "--cwd": a.cwd = resolve(val()); break;
+      case "-s": case "--session-id": a.sessionId = val(); break;
+      case "--settings": a.settings = resolve(val()); break;
+      case "-h": case "--help": log(USAGE); process.exit(0);
+      default:
+        if (k.startsWith("-")) fail(`unknown option ${k}\n${USAGE}`);
+        rest.push(k);
+    }
+  }
+  if (a.auto && a.skip) fail("--auto and --skip-permissions-unsafe cannot be used together");
+  if (rest.length) a.prompt = rest.join(" ");
+  return a;
+}
+
+async function readStdin(onChunk: (s: string) => void) {
+  const dec = new TextDecoder();
+  for await (const chunk of Bun.stdin.stream()) onChunk(dec.decode(chunk as Uint8Array, { stream: true }));
+}
+
+async function execJsonRpc(a: ExecArgs) {
+  if (a.inputFormat !== "stream-jsonrpc" || a.outputFormat !== "stream-jsonrpc") {
+    fail("use both --input-format stream-jsonrpc and --output-format stream-jsonrpc, or pass a prompt");
+  }
+  const conn = createConnection((line) => process.stdout.write(line), {
+    canPrompt: true, runtimeSettingsPath: a.settings, log,
+    forced: { autonomyLevel: a.auto, skipPermissions: a.skip || undefined, modelId: a.model },
+  });
+  await readStdin((s) => conn.peer.feed(s));
+  await conn.shutdown();
+  process.exit(0);
+}
+
+/** One-shot prompt: drives a connection in-process and prints the assistant's text. Never prompts (spec §5.5.6). */
+async function execPrompt(a: ExecArgs) {
+  let reqN = 0;
+  const waiters = new Map<string, (m: any) => void>();
+  let turnDone: (reason: string) => void;
+  const finished = new Promise<string>((r) => (turnDone = r));
+  let lastMessageId = "";
+  const opts: ConnectionOptions = {
+    canPrompt: false, runtimeSettingsPath: a.settings, log,
+    forced: { autonomyLevel: a.auto ?? "off", skipPermissions: a.skip || undefined, modelId: a.model },
+  };
+  const conn = createConnection((line) => {
+    const m = JSON.parse(line);
+    if (m.type === "response") return waiters.get(m.id)?.(m);
+    const n = m.params?.notification;
+    if (!n) return;
+    if (n.type === "assistant_text_delta") {
+      if (lastMessageId && n.messageId !== lastMessageId) process.stdout.write("\n");
+      lastMessageId = n.messageId;
+      process.stdout.write(n.textDelta);
+    } else if (n.type === "tool_call" && n.toolUse?.input && Object.keys(n.toolUse.input).length) {
+      // shown once per call when complete input arrives in the final message
+    } else if (n.type === "tool_result") {
+      log(`[tool] ${n.isError ? "error" : "ok"} ${n.toolUseId}`);
+    } else if (n.type === "error") {
+      log(`rigwell: ${n.message}`);
+    } else if (n.type === "agent_turn_completed") {
+      turnDone(n.reason);
+    }
+  }, opts);
+  const call = (method: string, params: Record<string, unknown>) =>
+    new Promise<any>((res) => {
+      const id = `cli-${++reqN}`;
+      waiters.set(id, res);
+      conn.peer.feed(JSON.stringify({ jsonrpc: "2.0", type: "request", id, method: `rigwell.${method}`, params }) + "\n");
+    });
+  const init = a.sessionId
+    ? await call("load_session", { sessionId: a.sessionId, cwd: a.cwd })
+    : await call("initialize_session", { machineId: "default", cwd: a.cwd });
+  if (init.error) fail(init.error.message);
+  log(`[session] ${init.result.sessionId} model=${init.result.settings.modelId} autonomy=${init.result.settings.autonomyLevel}`);
+  const added = await call("add_user_message", { text: a.prompt });
+  if (added.error) fail(added.error.message);
+  const reason = await finished;
+  process.stdout.write("\n");
+  await call("close_session", { reason: "other" });
+  log(`[turn] ${reason}`);
+  process.exit(reason === "completed" ? 0 : 1);
+}
+
+async function main() {
+  const [cmd, ...argv] = process.argv.slice(2);
+  if (cmd === "exec") {
+    const a = parseExec(argv);
+    if (a.prompt !== undefined && !a.inputFormat) return execPrompt(a);
+    return execJsonRpc(a);
+  }
+  if (cmd === "daemon") {
+    const i = argv.indexOf("--socket");
+    const path = i >= 0 ? resolve(argv[i + 1] ?? fail("--socket needs a value")) : defaultSocketPath();
+    const d = await startDaemon({ socketPath: path, log });
+    log(`[daemon] listening on ${d.socketPath}`);
+    const stop = () => { d.stop(); process.exit(0); };
+    process.on("SIGINT", stop);
+    process.on("SIGTERM", stop);
+    return;
+  }
+  log(USAGE);
+  process.exit(cmd ? 2 : 0);
+}
+
+main();
