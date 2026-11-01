@@ -21,8 +21,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
-      - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Install ripgrep, bubblewrap and socat
+        run: sudo apt-get update && sudo apt-get install -y ripgrep bubblewrap socat
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Typecheck
