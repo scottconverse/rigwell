@@ -27,6 +27,8 @@ export interface SandboxHandlers {
   onPrint(text: string): void;
   onImage(data: string, mime: string): void;
   onNotify(text: string): void;
+  /** The runner process died before the program finished (not stopped by us). */
+  onProcessExit?(message: string): void;
 }
 
 export interface SandboxResult {
@@ -55,7 +57,11 @@ export class Sandbox {
     const pumped = this.pump();
     // The child writes its last output and "done", then exits. The exit event can arrive before the pump has handled
     // the buffered stdout, so wait for the pipe to drain (bounded) before treating the exit as a crash.
-    void this.proc.exited.then(() => Promise.race([pumped, new Promise((r) => setTimeout(r, 2000))])).then(() => this.finish({ ok: false, error: { name: "Error", message: "The Script sandbox process exited unexpectedly." } }));
+    void this.proc.exited.then(() => Promise.race([pumped, new Promise((r) => setTimeout(r, 2000))])).then(() => {
+      const message = "The Script sandbox process exited unexpectedly.";
+      if (!this.settled) this.handlers.onProcessExit?.(message);
+      this.finish({ ok: false, error: { name: "Error", message } });
+    });
     this.timer = setTimeout(() => {
       this.finish({ ok: false, timedOut: true, error: { name: "TimeoutError", message: `The Script ran past its time limit (${this.limits.totalMs} ms) and was stopped.` } });
     }, this.limits.totalMs);

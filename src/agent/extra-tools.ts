@@ -80,3 +80,29 @@ export function saveSpec(dir: string, file: string, title: string | undefined, p
   writeFileSync(target, body.endsWith("\n") ? body : body + "\n");
   return target;
 }
+
+export function recommendMissionTool(): Tool {
+  return {
+    name: "RecommendMission",
+    description:
+      "Suggests switching this session to mission mode, for large work that splits into many features and needs planning and validation. The user is asked and may decline.\n" +
+      "- reason: why this work suits a mission (scope, number of parts, need for validation).\n" +
+      "Use it rarely, only for work that is clearly too big for one session. If the user declines, carry on here.",
+    inputSchema: { type: "object", properties: { reason: { type: "string" } }, required: ["reason"], additionalProperties: false },
+    category: "other",
+    run: async () => ({ content: "RecommendMission is handled by the session.", isError: true }),
+  };
+}
+
+export function upgradeModelTool(): Tool {
+  return {
+    name: "UpgradeModel",
+    description:
+      "Asks the user to switch this session to a stronger model, when the current one is not able to do the task (for example after repeated failures on a hard problem). The user is asked and may decline.\n" +
+      "- reason: what the current model could not do and why a stronger one should.\n" +
+      "Use it as a last resort, not for routine work.",
+    inputSchema: { type: "object", properties: { reason: { type: "string" } }, required: ["reason"], additionalProperties: false },
+    category: "other",
+    run: async () => ({ content: "UpgradeModel is handled by the session.", isError: true }),
+  };
+}

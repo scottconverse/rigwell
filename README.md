@@ -48,3 +48,9 @@ rigwell daemon --socket /tmp/rigwell.sock
 
 Run `bun src/cli/main.ts` in place of `rigwell` when it is not installed. Choices made where the spec
 was silent are in [`docs/decisions.md`](docs/decisions.md).
+
+## Attribution
+
+Rigwell's wire protocol shapes (the JSON-RPC message, notification and settings types) are adapted from the
+type definitions of the Apache-2.0 licensed `@factory/droid-sdk` 0.10.0. See [`NOTICE`](NOTICE). This is an
+attribution only: Rigwell is its own product and uses its own names everywhere else.

@@ -10,7 +10,8 @@ import { hasProjectConfig, isFolderTrusted, loadSettings, trustFolder } from "..
 import { findModel, listModelInfo, resolveModels, validateCustomModels } from "../storage/models.ts";
 import { appendCompaction, appendMessage, appendTitle, appendTodoState, appendTurnOutcome, createSession, findSession, loadTranscript, type SessionFiles } from "../storage/transcript.ts";
 import { listSessionEntries } from "../storage/session-list.ts";
-import { outputFormatFrom, systemPromptFrom, toolIdsFrom, userMessageFrom } from "./params.ts";
+import { outputFormatFrom, systemPromptFrom, tagsFrom, toolIdUpdates, toolIdsFrom, userMessageFrom } from "./params.ts";
+import { gitRepoOf } from "./gitrepo.ts";
 import { readSessionSettings, updateSessionSettings } from "../storage/session-settings.ts";
 import { hostId, isValidSessionId } from "../storage/paths.ts";
 import { createAdapter } from "../adapters/index.ts";
@@ -140,6 +141,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
       ...(t.disabled ? { disabledToolIds: t.disabled } : {}), ...(t.additional ? { additionalToolIds: t.additional } : {}),
       ...(saved.systemPrompt ? { systemPrompt: saved.systemPrompt } : {}), ...(saved.structuredOutputFormat ? { structuredOutputFormat: saved.structuredOutputFormat } : {}),
       ...(saved.disableBuiltinSkills ? { disableBuiltinSkills: true } : {}),
+      ...(Array.isArray(saved.tags) ? { tags: saved.tags } : {}),
     };
   }
 
@@ -171,7 +173,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
     };
   }
 
-  function build(id: string, cwd: string, settings: SessionSettings, p: Record<string, unknown>, env: ReturnType<typeof environment>, override: ToolExecutionMode | undefined, restored?: { allowSubagentsInScripts?: boolean; messages: Message[]; tokenUsage?: any; deferred?: { loaded: string[]; announced: string[] }; archived?: Message[]; anchor?: string; todos?: any; title?: { value: string; manual: boolean } }) {
+  function build(id: string, cwd: string, settings: SessionSettings, p: Record<string, unknown>, env: ReturnType<typeof environment>, override: ToolExecutionMode | undefined, restored?: { previousSessionId?: string; callingSessionId?: string; allowSubagentsInScripts?: boolean; messages: Message[]; tokenUsage?: any; deferred?: { loaded: string[]; announced: string[] }; archived?: Message[]; anchor?: string; todos?: any; title?: { value: string; manual: boolean } }) {
     const skip = opts.forced?.skipPermissions ?? p.skipPermissionsUnsafe === true;
     const f = files!;
     const hooksConfig = loadHooksConfig({ cwd, trustProject: env.trusted });
@@ -187,13 +189,17 @@ export function createConnection(write: (line: string) => void, opts: Connection
       shell: SHELL, retryBaseDelayMs: opts.retryBaseDelayMs,
       messages: restored?.messages, tokenUsage: restored?.tokenUsage, deferred: restored?.deferred, log: opts.log,
       todos: restored?.todos, title: restored?.title ?? (typeof p.title === "string" && p.title ? { value: p.title, manual: true } : undefined),
-      toolIds: toolIdsFrom(p), systemPrompt: systemPromptFrom(p), structuredOutputFormat: outputFormatFrom(p.structuredOutputFormat, "structuredOutputFormat"),
+      tags: tagsFrom(p.tags), toolIds: toolIdsFrom(p), systemPrompt: systemPromptFrom(p), structuredOutputFormat: outputFormatFrom(p.structuredOutputFormat, "structuredOutputFormat"),
       disableBuiltinSkills: p.disableBuiltinSkills === true, projectTrusted: env.trusted,
       profileSettings: { modelProfiles: env.s.modelProfiles as any, fileEditToolProfile: env.s.fileEditToolProfile as any },
       compactionTokenLimitPerModel: env.s.compactionTokenLimitPerModel as any, subagentModelSettings: env.s.subagentModelSettings as any,
       autoTitle: env.s.autoSessionTitle !== false, heartbeatMs: typeof env.s.toolHeartbeatMs === "number" ? env.s.toolHeartbeatMs : undefined,
       archived: restored?.archived, compactionAnchorId: restored?.anchor,
       guardSettings: { llmRequestTimeout: env.s.llmRequestTimeout as number | undefined, loopGuards: env.s.loopGuards as any },
+      toolResultModelChars: typeof env.s.toolResultModelChars === "number" && env.s.toolResultModelChars > 0 ? env.s.toolResultModelChars : undefined,
+      previousSessionId: restored?.previousSessionId, callingSessionId: restored?.callingSessionId ?? (typeof p.callingSessionId === "string" && p.callingSessionId ? p.callingSessionId : undefined),
+      enterMissionMode: opts.extraMethods?.enter_mission_mode ? async () => (await opts.extraMethods!.enter_mission_mode!({})) as Record<string, unknown> : undefined,
+      modelUpgradePath: Array.isArray(env.s.modelUpgradePath) ? (env.s.modelUpgradePath as unknown[]).filter((x): x is string => typeof x === "string") : undefined,
       compaction: env.s.compaction as any, compactionTokenLimit: env.s.compactionTokenLimit,
       compactionThresholdCheckEnabled: env.s.compactionThresholdCheckEnabled, router: routerOf(env),
       persistence: persistenceFor(f),
@@ -226,13 +232,25 @@ export function createConnection(write: (line: string) => void, opts: Connection
     };
   }
 
-  function sessionResult() {
+  /** `page` (load_session): messageLimit keeps the newest N visible messages unless loadAllMessages; adds hasOlderMessages. */
+  function sessionResult(page?: { loadAll: boolean; limit?: number }) {
     const s = need();
+    const all = s.uiMessages().filter((m) => m.visibility !== "llm_only");
+    const cut = page && !page.loadAll && page.limit !== undefined && all.length > page.limit;
+    const git = gitRepoOf(s.cwd);
     return {
       sessionId: s.id, hostId: hostId(),
-      session: { messages: s.uiMessages().filter((m) => m.visibility !== "llm_only") },
+      session: { messages: cut ? all.slice(-page!.limit!) : all },
       settings: s.settingsSnapshot(),
+      ...(page ? { hasOlderMessages: !!cut } : {}),
+      ...(git ? { gitRepo: git } : {}),
     };
+  }
+
+  function pageFrom(p: Record<string, unknown>) {
+    if (p.loadAllMessages !== undefined && typeof p.loadAllMessages !== "boolean") throw new RpcError(ErrorCodes.INVALID_PARAMS, "loadAllMessages must be a boolean");
+    if (p.messageLimit !== undefined && (typeof p.messageLimit !== "number" || !Number.isInteger(p.messageLimit) || p.messageLimit < 1)) throw new RpcError(ErrorCodes.INVALID_PARAMS, "messageLimit must be a positive integer");
+    return { loadAll: p.loadAllMessages === true, limit: p.messageLimit as number | undefined };
   }
 
   async function handle(method: string, p: Record<string, unknown>): Promise<unknown> {
@@ -246,7 +264,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
         if (!isValidSessionId(id)) throw new RpcError(ErrorCodes.INVALID_PARAMS, "Invalid sessionId");
         if (findSession(id, cwd)) throw new RpcError(ErrorCodes.CONFLICT, `Session ${id} already exists; use load_session`);
         // Check the structured params before anything is created.
-        toolIdsFrom(p); systemPromptFrom(p); outputFormatFrom(p.structuredOutputFormat, "structuredOutputFormat");
+        toolIdsFrom(p); systemPromptFrom(p); outputFormatFrom(p.structuredOutputFormat, "structuredOutputFormat"); tagsFrom(p.tags);
         await resolveTrust(cwd);
         const env = environment(cwd);
         const d = env.s.sessionDefaultSettings ?? {};
@@ -266,7 +284,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
         worktree = (await startSessionWorktree(p.worktree, cwd, id, env.s, opts.log)) ?? undefined;
         const sessionCwd = worktree?.cwd ?? cwd;
         try {
-          files = createSession({ id, cwd: sessionCwd, title: typeof p.title === "string" ? p.title : undefined });
+          files = createSession({ id, cwd: sessionCwd, title: typeof p.title === "string" ? p.title : undefined, ...(typeof p.callingSessionId === "string" && p.callingSessionId ? { extra: { callingSessionId: p.callingSessionId } } : {}) });
           session = build(id, sessionCwd, settings, p, env, pick<ToolExecutionMode>(p.toolExecutionMode, EXEC_MODES, "toolExecutionMode"));
           if (worktree) updateSessionSettings(files, { worktree: worktreeSettings(worktree) });
           await session.persistSettings();
@@ -286,6 +304,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
         if (session) throw new RpcError(ErrorCodes.CONFLICT, "This connection already has a session");
         const id = p.sessionId;
         if (!isValidSessionId(id)) throw new RpcError(ErrorCodes.INVALID_PARAMS, "Invalid sessionId");
+        const page = pageFrom(p);
         // A session kept alive for a client that went away: adopt it. Its open prompts are listed below; answering
         // one (rigwell.answer_request) resolves the wait the agent is still in.
         const live = parked.get(id);
@@ -300,7 +319,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
           const lenv = environment(session.cwd);
           notify({ type: "settings_updated", settings: session.settingsSnapshot() });
           return {
-            ...sessionResult(), cwd: session.cwd, isAgentLoopInProgress: session.isRunning, workingState: session.workingState,
+            ...sessionResult(page), cwd: session.cwd, isAgentLoopInProgress: session.isRunning, workingState: session.workingState,
             tokenUsage: session.tokenUsage, availableModels: listModelInfo(lenv.models), ...pendingLists(session),
           };
         }
@@ -326,6 +345,8 @@ export function createConnection(write: (line: string) => void, opts: Connection
         };
         const savedOverride = EXEC_MODES.includes(saved.toolExecutionModeOverride as string) ? (saved.toolExecutionModeOverride as ToolExecutionMode) : undefined;
         session = build(id, cwd, settings, merged, env, savedOverride, {
+          previousSessionId: typeof loaded.start.parent === "string" ? loaded.start.parent : id,
+          callingSessionId: typeof loaded.start.callingSessionId === "string" ? loaded.start.callingSessionId : undefined,
           todos: loaded.todos, title: { value: loaded.start.title, manual: loaded.start.isSessionTitleManuallySet === true },
           allowSubagentsInScripts: saved.allowSubagentsInScripts === true || p.allowSubagentsInScripts === true || undefined,
           messages: view, archived, anchor: loaded.compaction?.anchorMessage.id, tokenUsage: saved.tokenUsage,
@@ -340,7 +361,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
         if (typeof saved.providerLock === "string") session.providerLock = saved.providerLock;
         session.start("resume");
         return {
-          ...sessionResult(), cwd, isAgentLoopInProgress: false, workingState: "idle",
+          ...sessionResult(page), cwd, isAgentLoopInProgress: false, workingState: "idle",
           tokenUsage: session.tokenUsage, availableModels: listModelInfo(env.models),
           trusted: env.trusted, updatedAt: Math.floor(Date.now() / 1000), ...pendingLists(session),
         };
@@ -391,7 +412,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
           await session.idle();
           await session.stopBackgroundJobs();
           await session.end(typeof p.reason === "string" ? p.reason : "other");
-          notify({ type: "agent_working_state_changed", newState: "idle" });
+          notify({ type: "agent_working_state_changed", newState: "idle", backgroundWork: session.backgroundWork() });
         }
         if (worktree) releaseWorktree(worktree.info.path);
         closed = true;
@@ -430,6 +451,9 @@ export function createConnection(write: (line: string) => void, opts: Connection
           s.setCompaction({ limit: p.compactionTokenLimit as number | null | undefined, checkEnabled: typeof p.compactionThresholdCheckEnabled === "boolean" ? p.compactionThresholdCheckEnabled : undefined });
         }
         s.updateSettings(patch);
+        if (p.tags !== undefined) s.setTags(tagsFrom(p.tags) ?? []);
+        const idUpdates = toolIdUpdates(p);
+        if (idUpdates) s.setToolIds(idUpdates);
         return {};
       }
       case "compact_session": {
@@ -475,15 +499,22 @@ export function createConnection(write: (line: string) => void, opts: Connection
       }
       case "list_tools": {
         const s = need();
-        const restrict = toolIdsFrom(p);
-        let all = s.tools();
-        if (restrict?.restrict) all = all.filter((t) => restrict.restrict!.includes(t.name));
-        if (restrict?.disabled) all = all.filter((t) => !restrict.disabled!.includes(t.name));
-        if (Array.isArray(p.toolIds)) all = all.filter((t) => (p.toolIds as unknown[]).includes(t.name));
+        const ids = toolIdsFrom(p);
+        const lenv = environment(s.cwd);
+        for (const k of ["modelId", "specModeModelId"] as const) {
+          if (p[k] !== undefined && (typeof p[k] !== "string" || !modelOk(lenv, p[k] as string))) throw new RpcError(ErrorCodes.INVALID_PARAMS, `Unknown model: ${JSON.stringify(p[k])}`);
+        }
+        if (p.depth !== undefined && (typeof p.depth !== "number" || !Number.isInteger(p.depth) || p.depth < 0)) throw new RpcError(ErrorCodes.INVALID_PARAMS, "depth must be an integer of 0 or more");
+        let all = s.listToolInfo({
+          modelId: p.modelId as string | undefined, specModeModelId: p.specModeModelId as string | undefined,
+          interactionMode: pick<InteractionMode>(p.interactionMode, MODES, "interactionMode"), autonomyLevel: pick<AutonomyLevel>(p.autonomyLevel, AUTONOMY, "autonomyLevel"),
+          skipPermissions: p.skipPermissionsUnsafe === true ? true : undefined, depth: p.depth as number | undefined, toolIds: ids,
+        });
+        if (Array.isArray(p.toolIds)) all = all.filter((t) => (p.toolIds as unknown[]).includes(t.tool.name));
         return {
-          tools: all.map((t) => ({
+          tools: all.map(({ tool: t, currentlyAllowed, source }) => ({
             id: t.name, llmId: t.name, displayName: t.name, description: t.description, category: t.category,
-            defaultAllowed: t.category === "read", currentlyAllowed: true, source: "native",
+            defaultAllowed: t.category === "read", currentlyAllowed, source,
             ...(p.includeSchemas ? { schemas: { input: t.inputSchema } } : {}),
           })),
         };

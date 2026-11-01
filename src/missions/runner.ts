@@ -390,6 +390,8 @@ export class MissionRunner {
     }
     // No handoff: the worker exited, crashed or stalled.
     const reason = o.status === "timeout" ? "inactivity_timeout" : o.status === "error" ? `crash: ${o.errorMessage ?? "unknown error"}` : "exited_without_handoff";
+    // A worker session that died on its own is a process exit the clients should hear about (spec 19.1).
+    if (o.status === "error") this.d.notify({ type: "session_process_exited", message: `Worker session ${o.workerId} stopped unexpectedly: ${o.errorMessage ?? "unknown error"}`, timestamp: new Date().toISOString(), workerSessionId: o.workerId });
     const feat = cur();
     s.log("worker_failed", { workerSessionId: o.workerId, featureId: f.id, failureReason: reason });
     if (feat && feat.status === "in_progress") s.updateFeature(f.id, (x) => { x.status = "pending"; delete x.currentWorkerSessionId; });

@@ -18,6 +18,8 @@ const USAGE = `Usage:
   rigwell [tui] [options]        interactive terminal UI (default when no subcommand is given)
   rigwell eval <run|report|tasks> [options]   (see rigwell eval --help)
 
+Credentials: rigwell credential set <name> (value on stdin) | delete <name>; use apiKey "keychain:<name>" in customModels.
+
 Options for exec:
   --auto <low|medium|high>     autonomy level (default: off, read-only)
   --skip-permissions-unsafe    run every tool call without asking (not with --auto)
@@ -234,6 +236,17 @@ async function main() {
     if (a.resume === true && a.prompt === undefined) { printSessionList(a.cwd); process.exit(0); }
     if (a.prompt !== undefined && !a.inputFormat) return execPrompt(a);
     return execJsonRpc(a);
+  }
+  if (cmd === "credential") {
+    // rigwell credential set <name> (the value is read from stdin) | delete <name>. Settings use apiKey: "keychain:<name>".
+    const { storeCredential, removeCredential } = await import("../storage/credentials.ts");
+    const [action, name] = argv;
+    if (!name || (action !== "set" && action !== "delete")) fail("usage: rigwell credential <set|delete> <name>  (set reads the value from stdin)");
+    if (action === "delete") { log(removeCredential(name) ? `deleted ${name}` : `no credential named ${name}`); process.exit(0); }
+    const value = (await Bun.stdin.text()).replace(/\r?\n$/, "");
+    if (!value) fail("no value on stdin");
+    log(`stored ${name} in ${storeCredential(name, value)}`);
+    process.exit(0);
   }
   if (cmd === "eval") return (await import("../eval/cli.ts")).evalMain(argv);
   if (cmd === "daemon") {
