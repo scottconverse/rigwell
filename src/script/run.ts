@@ -24,6 +24,8 @@ export interface ScriptHost {
   cwd: string;
   callTool(name: string, input: Record<string, unknown>, meta: { runId: string; n: number; outerId: string; signal: AbortSignal; foreground: boolean }): Promise<ToolOutput>;
   notify(text: string): void;
+  /** The sandbox process exited unexpectedly (a crash, not a stop or a timeout). */
+  processExited?(message: string): void;
 }
 
 /** Keeps the head and the tail of what was printed, within the 64 KiB budget. */
@@ -125,6 +127,7 @@ export class ScriptRun implements Job {
       onPrint: (t) => this.emitPrint(t),
       onImage: (d, mime) => this.addImage(d, mime),
       onNotify: (t) => this.event(() => this.o.host.notify(t)),
+      onProcessExit: (m) => this.o.host.processExited?.(m),
     }, { ...DEFAULT_LIMITS, ...o.limits });
     this.done = this.sandbox.finished.then((r) => this.finalize(r));
   }

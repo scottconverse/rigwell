@@ -16,6 +16,20 @@ export const ErrorCodes = {
   REQUEST_CANCELLED: -32800,
 } as const;
 
+/** The major part of a version string ("1.2.3" -> 1), or undefined when it does not start with a number. */
+export function majorOf(v: unknown): number | undefined {
+  if (typeof v !== "string") return undefined;
+  const m = /^\s*v?(\d+)(?:\.|$)/.exec(v);
+  return m ? Number(m[1]) : undefined;
+}
+
+/** Minor and patch differences are allowed; a different major is a mismatch (spec 3.1.3). */
+export function versionMismatch(peer: unknown, local: string = PROTOCOL_VERSION): boolean {
+  const a = majorOf(peer);
+  const b = majorOf(local);
+  return a !== undefined && b !== undefined && a !== b;
+}
+
 export class RpcError extends Error {
   constructor(public code: number, message: string, public data?: unknown) {
     super(message);
@@ -117,6 +131,20 @@ export class RpcPeer {
       return;
     }
     const type = msg.type ?? (msg.method ? (msg.id != null ? "request" : "notification") : "response");
+    if (msg.protocolVersion !== undefined && versionMismatch(msg.protocolVersion)) {
+      const data = {
+        localProtocolVersion: PROTOCOL_VERSION, peerProtocolVersion: msg.protocolVersion, messageType: type,
+        ...(typeof msg.method === "string" ? { method: msg.method } : {}), ...(typeof msg.id === "string" ? { requestId: msg.id } : {}),
+      };
+      const text = `Protocol version mismatch: this side speaks ${PROTOCOL_VERSION}, the peer ${String(msg.protocolVersion)}`;
+      if (type === "request") this.respondError(typeof msg.id === "string" ? msg.id : null, ErrorCodes.INVALID_REQUEST, text, data);
+      else if (type === "response") {
+        // Whoever is waiting for this answer learns why it will not come.
+        const p = typeof msg.id === "string" ? this.pending.get(msg.id) : undefined;
+        if (p) { this.pending.delete(msg.id!); p.reject(new RpcError(ErrorCodes.INVALID_REQUEST, text, data)); }
+      } else this.log(`[rpc] ${text}; notification ${msg.method ?? ""} dropped`);
+      return;
+    }
     if (type === "response") {
       const p = msg.id ? this.pending.get(msg.id) : undefined;
       if (!p) return;

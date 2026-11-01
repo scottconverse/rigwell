@@ -397,6 +397,7 @@ export class Session {
         cwd: this.cwd,
         callTool: (name, input, meta) => this.callInner(name, input, meta),
         notify: (text) => this.notify({ type: "tool_progress_update", toolUseId: "script", toolName: "Script", update: { type: "status", text, timestamp: new Date().toISOString() } }),
+        processExited: (message) => this.notify({ type: "session_process_exited", message, timestamp: new Date().toISOString() }),
       },
     });
     this.jobs.onFinished(() => { if (!this.running) this.kick(); });

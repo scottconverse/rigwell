@@ -89,7 +89,7 @@ describe("list_tools", () => {
     const { repo } = await setup([]);
     const d = driver({ canPrompt: false });
     await d.call("initialize_session", { cwd: repo, modelId: "custom:F-0", autonomyLevel: "high" });
-    const task = async (p: object) => (await d.call("list_tools", p)).tools.find((t: any) => t.id === "Task");
+    const task = async (p: Record<string, unknown>) => (await d.call("list_tools", p)).tools.find((t: any) => t.id === "Task");
     expect(await task({ depth: 0 })).toMatchObject({ currentlyAllowed: true });
     const deep = await task({ depth: 99 });
     expect(deep === undefined || deep.currentlyAllowed === false).toBe(true);
