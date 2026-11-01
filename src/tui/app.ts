@@ -46,6 +46,8 @@ export async function runTui(opts: TuiOptions): Promise<number> {
   let client: RpcClient | undefined;
   let reqN = 0;
   const waiting = new Map<string, (result: unknown) => void>();
+  /** Re-shown prompts stay open in the harness when the TUI quits (a later load_session shows them again). */
+  const reshownIds = new Set<string>();
   let renderQueued = false;
   let done: (code: number) => void;
   const exited = new Promise<number>((r) => (done = r));
@@ -94,7 +96,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
       if (c === client && method === "session_notification" && p.notification) dispatch({ type: "notification", n: p.notification, now: Date.now() });
     };
     c.onRequest = (method, p) => {
-      if (method !== "request_permission" && method !== "ask_user" && method !== "pick_options") throw new Error(`Method not found: ${method}`);
+      if (method !== "request_permission" && method !== "ask_user" && method !== "pick_options" && method !== "request_trust") throw new Error(`Method not found: ${method}`);
       const id = String((p as any).requestId ?? (p as any).toolCallId ?? `req-${++reqN}`);
       return new Promise((res) => { waiting.set(id, res); dispatch({ type: "request", id, method, params: p }); });
     };
@@ -102,6 +104,12 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     const result = load
       ? await c.request("load_session", { sessionId: load, cwd })
       : await c.request("initialize_session", { machineId: "default", cwd, sessionOriginHint: "tui", ...params });
+    // Prompts the resumed session still waits on: answered through answer_request (the harness has no request open for us).
+    for (const pr of [...(result?.pendingPermissions ?? []), ...(result?.pendingAskUserRequests ?? [])]) {
+      const rid = pr?.requestId;
+      if (typeof rid === "string") reshownIds.add(rid);
+      if (typeof rid === "string") waiting.set(rid, (answer) => { void c.request("answer_request", { requestId: rid, answer }).catch(() => {}); });
+    }
     dispatch({ type: "session_ready", result, fresh: true });
     void refreshExtras();
   }
@@ -330,7 +338,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     leaveTerminal();
     const c = client;
     client = undefined;
-    for (const f of waiting.values()) f({ selectedOption: "cancel", cancelled: true, answers: [], selectedIds: [] });
+    for (const [rid, f] of waiting) if (!reshownIds.has(rid)) f({ selectedOption: "cancel", cancelled: true, answers: [], selectedIds: [] });
     waiting.clear();
     if (c) {
       await Promise.race([c.request("close_session", { reason: "prompt_input_exit" }).catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
@@ -343,20 +351,18 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     done(code);
   }
 
+  let ready = false;
+  const early: string[] = [];
   function onData(chunk: Buffer | string) {
     let data = chunk.toString();
+    if (!ready && !state.panels.length) { early.push(data); return; }
     // Focus reporting (CSI I / CSI O) feeds soundFocusMode; it is not a key.
     data = data.replace(/\x1b\[([IO])/g, (_m, c) => { focused = c === "I"; return ""; });
     for (const key of parseKeys(data)) dispatch({ type: "key", key, now: Date.now() });
   }
 
-  try {
-    await connect(opts.sessionParams ?? {}, opts.resumeSessionId);
-  } catch (e) {
-    leaveTerminal();
-    process.stderr.write(`rigwell: could not start a session: ${errText(e)}\n`);
-    return 1;
-  }
+  // The terminal is live before the session starts: rigwell.request_trust can arrive during initialize_session / load_session.
+  // Keys typed before the session is ready wait, unless a panel (the trust question) is open to receive them.
   enterTerminal();
   onResize();
   stdin.on("data", onData);
@@ -364,11 +370,23 @@ export async function runTui(opts: TuiOptions): Promise<number> {
   stdin.on("end", () => {
     // Piped input ended: let a running turn finish, then exit.
     const wait = setInterval(() => {
+      if (!ready) return;
       if (state.panels.length) dispatch({ type: "key", key: { name: "esc" }, now: Date.now() });
       if (!state.running && !state.panels.length) { clearInterval(wait); void finish(0); }
     }, 50);
   });
   if (!tty) stdin.resume();
+  try {
+    await connect(opts.sessionParams ?? {}, opts.resumeSessionId);
+  } catch (e) {
+    stdin.off("data", onData);
+    stdout.off("resize", onResize);
+    leaveTerminal();
+    process.stderr.write(`rigwell: could not start a session: ${errText(e)}\n`);
+    return 1;
+  }
+  ready = true;
+  for (const chunk of early.splice(0)) onData(chunk);
   process.once("SIGTERM", () => void finish(143));
   return exited;
 }

@@ -179,6 +179,17 @@ function mkQuestion(p: Panel): Panel {
   };
 }
 
+/** rigwell.request_trust: trust the folder (the harness remembers a yes) or not. */
+export function trustPanel(id: string, p: any): Panel {
+  const unlocks: string[] = Array.isArray(p.unlocks) ? p.unlocks.map(String) : [];
+  return {
+    id, kind: "trust", action: { type: "request", requestId: id, method: "request_trust" }, title: "Do you trust this folder?",
+    body: [String(p.cwd ?? ""), "", ...(unlocks.length ? ["Trusting it loads from the folder:", ...unlocks.map((u) => "  - " + u)] : []), "", "Untrusted, the agent still works but ignores these."],
+    options: [{ label: "Yes, trust this folder", value: "trust" }, { label: "No, don't trust it", value: "no" }],
+    selected: 1, checked: [],
+  };
+}
+
 function pickPanel(id: string, p: any): Panel {
   const rows: { id: string; label: string; detail?: string }[] = p.rows ?? [];
   const pre = new Set<string>(p.preselectedIds ?? []);
@@ -194,6 +205,7 @@ const cancelResult = (panel: Panel): { method: string; result: unknown } | null 
   const m = panel.action.method;
   if (m === "request_permission") return { method: m, result: { selectedOption: "cancel" } };
   if (m === "ask_user") return { method: m, result: { cancelled: true, answers: [] } };
+  if (m === "request_trust") return { method: m, result: { trust: false } };
   return { method: m, result: { cancelled: true, selectedIds: [] } };
 };
 
@@ -222,6 +234,7 @@ function finishPanel(s: TuiState, panel: Panel, picked: number[]): Step {
   }
   const value = picked.map((i) => panel.options[i].value);
   if (a.method === "request_permission") return { state, effects: [{ type: "answer", requestId: a.requestId, method: a.method, result: { selectedOption: value[0] } }] };
+  if (a.method === "request_trust") return { state, effects: [{ type: "answer", requestId: a.requestId, method: a.method, result: { trust: value[0] === "trust" } }] };
   if (a.method === "pick_options") return { state, effects: [{ type: "answer", requestId: a.requestId, method: a.method, result: { selectedIds: value } }] };
   // ask_user: collect this answer; move to the next question or finish
   const q = panel.questions![panel.qIndex!];
@@ -714,7 +727,8 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
     case "tick": return { state: { ...s, now: e.now }, effects: [] };
     case "notification": return notification({ ...s, now: e.now }, e.n);
     case "request": {
-      const panel = e.method === "request_permission" ? permissionPanel(e.id, e.params) : e.method === "ask_user" ? askPanel(e.id, e.params) : pickPanel(e.id, e.params);
+      const panel = e.method === "request_permission" ? permissionPanel(e.id, e.params) : e.method === "ask_user" ? askPanel(e.id, e.params)
+        : e.method === "request_trust" ? trustPanel(e.id, e.params) : pickPanel(e.id, e.params);
       return { state: { ...s, panels: [...s.panels, panel], working: "waiting_for_tool_confirmation" }, effects: [{ type: "attention", kind: "awaiting" }] };
     }
     case "session_ready": {
@@ -726,12 +740,19 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
         models: (r.availableModels ?? s.models).map((m: any) => ({ id: m.id, displayName: m.displayName })),
       };
       if (!e.fresh) return { state: base, effects: [] };
+      // A resumed session may still be waiting for answers (load_session pendingPermissions / pendingAskUserRequests): show them again.
+      const reshown: Panel[] = [
+        ...(r.pendingPermissions ?? []).filter((x: any) => typeof x?.requestId === "string").map((x: any) => permissionPanel(x.requestId, x)),
+        ...(r.pendingAskUserRequests ?? []).filter((x: any) => typeof x?.requestId === "string").map((x: any) => askPanel(x.requestId, x)),
+      ];
+      const busy = r.isAgentLoopInProgress === true || reshown.length > 0;
       return {
         state: {
-          ...base, items: messagesToItems(r.session?.messages ?? []), tokenUsage: r.tokenUsage ?? zeroUsage(), contextUsed: 0, running: false, working: "idle",
-          pending: { steer: [], queue: [] }, panels: [], overlay: null, turns: 0, input: { text: "", cursor: 0 }, atMenu: null, scroll: 0,
+          ...base, items: messagesToItems(r.session?.messages ?? []), tokenUsage: r.tokenUsage ?? zeroUsage(), contextUsed: 0,
+          running: busy, runStartedAt: busy ? s.now : undefined, working: reshown.length ? "waiting_for_tool_confirmation" : busy ? (r.workingState ?? "streaming_assistant_message") : "idle",
+          pending: { steer: [], queue: [] }, panels: reshown, overlay: null, turns: 0, input: { text: "", cursor: 0 }, atMenu: null, scroll: 0,
         },
-        effects: [{ type: "fetch_context", show: false }, { type: "status_line" }],
+        effects: [{ type: "fetch_context", show: false }, { type: "status_line" }, ...(reshown.length ? [{ type: "attention" as const, kind: "awaiting" as const }] : [])],
       };
     }
     case "context_stats": {
