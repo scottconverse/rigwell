@@ -8,21 +8,35 @@ describe("sending and steering", () => {
     d = key(type(d, "hello"), "enter");
     expect(d.effects).toEqual([{ type: "send", text: "hello", messageId: "t-1" }]);
     expect(d.s.running).toBe(true);
-    expect(d.s.items).toEqual([{ kind: "user", text: "hello" }]);
+    expect(d.s.items).toEqual([{ kind: "user", text: "hello", id: "t-1" }]);
     expect(d.s.input.text).toBe("");
   });
 
-  test("while running Enter steers and Ctrl+Enter queues; both go out when the turn ends, steer first", () => {
+  test("while running Enter steers at once with end_of_loop; Ctrl+Enter queues on the client until the turn ends", () => {
     let d = key(type(driver(), "first"), "enter");
     d = key(type(d, "queued one"), "ctrl+enter");
     d = key(type(d, "steer one"), "enter");
     expect(d.s.pending).toEqual({ steer: ["steer one"], queue: ["queued one"] });
-    d = ev(d, { type: "notification", n: { type: "agent_turn_completed", reason: "completed" }, now: d.t });
-    const sends = d.effects.filter((e) => e.type === "send");
-    expect(sends.map((e: any) => e.text)).toEqual(["first", "steer one"]);
-    expect(d.s.pending).toEqual({ steer: [], queue: ["queued one"] });
+    const sent = d.effects.filter((e) => e.type === "send") as any[];
+    expect(sent.map((e) => [e.text, e.queuePlacement])).toEqual([["first", undefined], ["steer one", "end_of_loop"]]);
+    // The next tool result means the harness delivered the steer message: it joins the transcript.
+    d = note(d, { type: "tool_result", toolUseId: "u1", content: "ok", isError: false });
+    expect(d.s.pending.steer).toEqual([]);
+    expect(d.s.items.at(-1)).toEqual({ kind: "user", text: "steer one" });
     d = note(d, { type: "agent_turn_completed", reason: "completed" });
     expect(d.effects.filter((e) => e.type === "send").map((e: any) => e.text)).toEqual(["first", "steer one", "queued one"]);
+    expect(d.s.pending).toEqual({ steer: [], queue: [] });
+  });
+
+  test("an undelivered steer message is shown when the turn ends and holds the queue back", () => {
+    let d = key(type(driver(), "first"), "enter");
+    d = key(type(d, "queued one"), "ctrl+enter");
+    d = key(type(d, "steer one"), "enter");
+    d = note(d, { type: "agent_turn_completed", reason: "completed" });
+    expect(d.s.items.at(-1)).toEqual({ kind: "user", text: "steer one" });
+    expect(d.s.running).toBe(true);
+    expect(d.s.pending).toEqual({ steer: [], queue: ["queued one"] });
+    expect(d.effects.filter((e) => e.type === "send").length).toBe(2);
   });
 
   test("Ctrl+G pulls the top pending item back, Ctrl+X clears, Ctrl+R lists", () => {
@@ -30,13 +44,14 @@ describe("sending and steering", () => {
     d = key(type(d, "a"), "enter");
     d = key(type(d, "b"), "ctrl+enter");
     d = key(d, "ctrl+r");
-    expect(d.s.overlay?.lines).toEqual(["steer:  a", "queued: b"]);
+    expect(d.s.overlay?.lines.map((l) => l.replace(/\(.*?\)/, "").replace(/\s+/g, " "))).toEqual(["steer : a", "queued : b"]);
     d = key(d, "esc");
-    d = key(d, "ctrl+g");
-    expect(d.s.input.text).toBe("a");
-    expect(d.s.pending).toEqual({ steer: [], queue: ["b"] });
+    d = key(d, "ctrl+g"); // only queued messages can be pulled back; the steer message is already with the harness
+    expect(d.s.input.text).toBe("b");
+    expect(d.s.pending).toEqual({ steer: ["a"], queue: [] });
+    d = key(type(d, "c"), "ctrl+enter");
     d = key(d, "ctrl+x");
-    expect(d.s.pending).toEqual({ steer: [], queue: [] });
+    expect(d.s.pending.queue).toEqual([]);
   });
 
   test("an interrupted turn keeps pending messages and sends nothing", () => {

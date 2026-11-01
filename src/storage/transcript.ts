@@ -68,6 +68,10 @@ export interface LoadedSession {
   files: SessionFiles;
   /** Lines that were not valid JSON objects. */
   skippedLines: number;
+  /** Messages removed from `messages` by `rewind` records (kept in the file, shown by the UI history only). */
+  rewound: Message[];
+  /** Every message id in seq order, rewound ones included (snapshots use it to order boundaries). */
+  allMessageIds: string[];
   /** Count of records with an unrecognised `type` (tolerated). */
   unknownRecords: number;
 }
@@ -355,6 +359,22 @@ export function appendCompaction(files: SessionFiles, rec: CompactionRecord): Pr
   });
 }
 
+/** `rewind` record: the model-visible transcript ends at `messageId`; later messages stay in the file (UI history). */
+export interface RewindRecord {
+  type: "rewind";
+  id: string;
+  timestamp: string;
+  messageId: string;
+  removedCount: number;
+  restoredFiles: string[];
+}
+
+export function appendRewind(files: SessionFiles, rec: Omit<RewindRecord, "type" | "id" | "timestamp">): Promise<void> {
+  return withAppendLock(files, () => {
+    appendLine(files, { type: "rewind", id: crypto.randomUUID(), timestamp: new Date().toISOString(), ...rec });
+  });
+}
+
 export function appendTurnOutcome(
   files: SessionFiles,
   o: { turnId: string; reason: string; resultKind: "text" | "structured" | null },
@@ -400,6 +420,8 @@ export function loadTranscript(files: SessionFiles): LoadedSession {
   const msgs: { msg: Message; seq: number; order: number }[] = [];
   const outcomes: TurnOutcome[] = [];
   let compaction: CompactionRecord | undefined;
+  const rewound: Message[] = [];
+  const everyId: { id: string; seq: number; order: number }[] = [];
   let skippedLines = 0;
   let unknownRecords = 0;
   let first = true;
@@ -422,7 +444,11 @@ export function loadTranscript(files: SessionFiles): LoadedSession {
     }
     if (o.type === "message") {
       const m = decodeMessage(o);
-      if (m) msgs.push({ msg: m, seq: typeof o.seq === "number" ? o.seq : Number.MAX_SAFE_INTEGER, order });
+      if (m) {
+        const seq = typeof o.seq === "number" ? o.seq : Number.MAX_SAFE_INTEGER;
+        msgs.push({ msg: m, seq, order });
+        everyId.push({ id: m.id, seq, order });
+      }
       else skippedLines++;
     } else if (o.type === "agent_turn_outcome") {
       outcomes.push({ type: "agent_turn_outcome", turnId: o.turnId, reason: o.reason, resultKind: o.resultKind ?? null });
@@ -430,13 +456,23 @@ export function loadTranscript(files: SessionFiles): LoadedSession {
       if (typeof o.summaryText === "string" && o.anchorMessage && typeof o.anchorMessage.id === "string" && Array.isArray(o.preambleBlocks)) {
         compaction = o as CompactionRecord; // the latest one wins
       } else skippedLines++;
+    } else if (o.type === "rewind" && typeof o.messageId === "string") {
+      msgs.sort((a, b) => a.seq - b.seq || a.order - b.order);
+      const at = msgs.findIndex((x) => x.msg.id === o.messageId);
+      if (at >= 0) {
+        const cut = msgs.splice(at + 1);
+        rewound.push(...cut.map((x) => x.msg));
+        // A summary whose anchor was rewound away no longer describes the kept messages.
+        if (compaction && cut.some((x) => x.msg.id === compaction!.anchorMessage.id)) compaction = undefined;
+      }
     } else if (o.type !== "session_start") {
       unknownRecords++;
     }
   });
   if (!start) throw new Error(`transcript ${files.transcriptPath}: empty`);
   msgs.sort((a, b) => a.seq - b.seq || a.order - b.order);
-  return { start, compaction, messages: msgs.map((x) => x.msg), outcomes, files, skippedLines, unknownRecords };
+  everyId.sort((a, b) => a.seq - b.seq || a.order - b.order);
+  return { start, compaction, messages: msgs.map((x) => x.msg), rewound, allMessageIds: everyId.map((x) => x.id), outcomes, files, skippedLines, unknownRecords };
 }
 
 /** Newest-first (mtime) scan; no index. With `cwd`, only that project's folder. */

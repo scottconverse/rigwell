@@ -166,7 +166,8 @@ async function tui(argv: string[]) {
   if (a.auto) sessionParams.autonomyLevel = a.auto;
   if (a.skip) sessionParams.skipPermissionsUnsafe = true;
   if (argv.includes("--use-spec")) sessionParams.interactionMode = "spec";
-  const code = await runTui({ cwd: a.cwd, makeTransport, sessionParams, homeDir: rigwellHome(), log });
+  const connection = url ? `WebSocket ${url}` : socket || argv.includes("--daemon") ? `daemon socket ${socket ? resolve(socket) : defaultSocketPath()}` : "in-process";
+  const code = await runTui({ cwd: a.cwd, makeTransport, sessionParams, homeDir: rigwellHome(), log, connection, settingsPath: a.settings });
   process.exit(code);
 }
 

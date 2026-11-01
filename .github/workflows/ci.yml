@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+    branches: [main, "phase-*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Install ripgrep, bubblewrap and socat
+        run: sudo apt-get update && sudo apt-get install -y ripgrep bubblewrap socat
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bunx tsc --noEmit -p .
+      - name: Tests
+        run: bun test
+      # Spec section 7 / phase 7: fails when first-keystroke p95 regresses past perf/baseline.json (or the 250 ms cap)
+      # or when the first request grows past the base-prompt budget in src/agent/budget.ts. The Markdown report goes
+      # to the job summary.
+      - name: Perf gate
+        run: bun perf/gate.ts
+
+  # Optional: the desktop (Electron) smoke tests skip themselves unless `npm install` has run in desktop/ and an X
+  # server exists. This job provides both. It does not block the main job; remove continue-on-error to enforce it.
+  desktop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install system packages
+        run: sudo apt-get update && sudo apt-get install -y ripgrep xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1
+      - run: bun install --frozen-lockfile
+      - run: npm install
+        working-directory: desktop
+      - name: Desktop tests under Xvfb
+        run: xvfb-run -a bun test test/desktop

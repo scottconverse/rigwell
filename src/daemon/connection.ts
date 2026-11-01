@@ -23,6 +23,7 @@ import { fromInitConfigs, type McpServerInitConfig } from "../mcp/index.ts";
 import { loadAgents } from "../subagents/agents.ts";
 import { TaskLimits } from "../subagents/task.ts";
 import { forkSession } from "../storage/fork.ts";
+import { RewindError, rewindSession } from "../snapshots/index.ts";
 
 export interface ConnectionOptions {
   /** The client can answer rigwell.request_permission (stream-jsonrpc). False for plain `exec "prompt"`. */
@@ -333,6 +334,18 @@ export function createConnection(write: (line: string) => void, opts: Connection
         const tags = Array.isArray(p.tags) ? (p.tags as any[]).filter((t) => t && typeof t.name === "string") : undefined;
         const dest = forkSession(files!, { title: p.title as string | undefined, tags });
         return { newSessionId: dest.id };
+      }
+      case "rewind_session": {
+        const s = need();
+        if (typeof p.messageId !== "string" || !p.messageId) throw new RpcError(ErrorCodes.INVALID_PARAMS, "messageId is required");
+        try {
+          return await rewindSession({ session: s, messageId: p.messageId, restoreFiles: p.restoreFiles === true, force: p.force === true });
+        } catch (e) {
+          if (!(e instanceof RewindError)) throw e;
+          const code = e.code === "not_found" ? ErrorCodes.ENTITY_NOT_FOUND
+            : e.code === "busy" || e.code === "stale" ? ErrorCodes.CONFLICT : ErrorCodes.INVALID_PARAMS;
+          throw new RpcError(code, e.message, { reason: e.code, ...(e.files ? { files: e.files } : {}) });
+        }
       }
       case "list_tools": {
         const s = need();

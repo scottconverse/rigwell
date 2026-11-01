@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import type { Tool, ToolContext, ToolOutput } from "../core/types.ts";
+import { prepareSandbox } from "../sandbox/controller.ts";
 import { fail, intArg, ok, promptDesc, promptSchema, resolvePath, strArg } from "./util.ts";
 
 export const EXECUTE_OUTPUT_CAP = 30_000;
@@ -122,12 +123,15 @@ async function runExecute(input: Record<string, unknown>, ctx: ToolContext, back
   const err = new CappedText(EXECUTE_OUTPUT_CAP);
   const both = new CappedText(EXECUTE_OUTPUT_CAP);
 
-  return await new Promise<ToolOutput>((resolve) => {
-    const child = spawn(shell.path, ["-c", command], {
+  const sbx = await prepareSandbox(ctx, { shell: shell.path, command, cwd, input });
+  if (sbx.error) return fail(sbx.error);
+  return await new Promise<ToolOutput>((resolveRaw) => {
+    const resolve = (o: ToolOutput) => void sbx.finalize(o, err.toString()).then(resolveRaw).finally(() => sbx.cleanup());
+    const child = spawn(sbx.file, sbx.args, {
       cwd,
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...ctx.env, CI: process.env.CI ?? "1", GIT_PAGER: "cat", PAGER: "cat", GIT_TERMINAL_PROMPT: "0" },
+      env: { ...process.env, ...ctx.env, ...sbx.env, CI: process.env.CI ?? "1", GIT_PAGER: "cat", PAGER: "cat", GIT_TERMINAL_PROMPT: "0" },
     });
     let timedOut = false;
     let aborted = false;

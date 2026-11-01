@@ -7,6 +7,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import type { AutonomyLevel, InteractionMode, ReasoningEffort } from "../core/types.ts";
+import type { SandboxSettings } from "../sandbox/policy.ts";
 import { rigwellHome, userHomeDir } from "./paths.ts";
 
 export interface CustomModelEntry {
@@ -21,6 +22,9 @@ export interface CustomModelEntry {
   maxContextLimit?: number;
   reasoningEffort?: ReasoningEffort;
   noImageSupport?: boolean;
+  apiProvider?: string;
+  chatCompletionRequest?: Record<string, unknown>;
+  chatCompletionRequestByProvider?: Record<string, Record<string, unknown>>;
   [k: string]: unknown;
 }
 
@@ -52,6 +56,8 @@ export interface RigwellSettings {
   /** Candidates for the "auto" model id: { classifierModel, candidates: [{ model, description, inputCost }], threshold?, timeoutMs? }. */
   autoRouter?: { classifierModel: string; candidates: { model: string; description: string; inputCost: number }[]; threshold?: number; timeoutMs?: number };
   compactionThresholdCheckEnabled?: boolean;
+  /** Per-command Execute sandbox (spec 5.5.8). */
+  sandbox?: SandboxSettings;
   env?: Record<string, string>;
   trustedFolders?: Record<string, { trustedAt?: number | string }>;
   [k: string]: unknown;
