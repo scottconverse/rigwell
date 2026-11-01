@@ -112,7 +112,7 @@ export class AnthropicAdapter implements ModelAdapter {
     let finished = false;
 
     const events = sseRequest(
-      url, { headers, body: JSON.stringify(buildAnthropicBody(req)) }, req.signal, this.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      url, { headers, body: JSON.stringify(buildAnthropicBody(req)) }, req.signal, req.limits?.hardLimitMs ?? this.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, req.limits?.idleTimeoutMs,
     );
     for await (const sse of events) {
       const data = safeJson(sse.data);

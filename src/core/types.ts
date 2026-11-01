@@ -96,6 +96,8 @@ export interface ModelRequest {
   maxOutputTokens: number;
   reasoningEffort?: ReasoningEffort;
   signal?: AbortSignal;
+  /** Stream guards (spec §4.2). Absent: the adapter defaults (no idle limit, 10 minute hard limit). */
+  limits?: { idleTimeoutMs?: number; hardLimitMs?: number };
 }
 
 /**
@@ -125,7 +127,11 @@ export class ModelError extends Error {
   constructor(
     public kind: ModelErrorKind,
     message: string,
-    public opts: { status?: number; retryable?: boolean; retryAfterMs?: number } = {},
+    public opts: {
+      status?: number; retryable?: boolean; retryAfterMs?: number;
+      /** Why a "timeout" happened: no bytes for the idle limit, or the response ran past the hard limit. */
+      cause?: "idle" | "hard_limit"; elapsedMs?: number; limitMs?: number;
+    } = {},
   ) {
     super(message);
     this.name = "ModelError";
