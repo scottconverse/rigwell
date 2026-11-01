@@ -70,6 +70,7 @@ export function createMissionService(opts: MissionServiceOptions = {}) {
     let store: MissionStore | undefined;
     let runner: MissionRunner | undefined;
     let sink: ((snap: Record<string, unknown>) => void) | undefined;
+    const askHooked = new WeakSet<Session>();
 
     const sess = () => {
       const s = conn.session();
@@ -143,6 +144,16 @@ export function createMissionService(opts: MissionServiceOptions = {}) {
       if (!s || !mission) return protectTools(tools, { role: "other" });
       const st = storeOf(s);
       recover(st, s.id);
+      // While the orchestrator asks the user a question during planning, the mission waits for input.
+      if (!askHooked.has(s)) {
+        askHooked.add(s);
+        s.onAskUser((phase) => {
+          if (!st.exists()) return;
+          const now = st.stateName();
+          if (phase === "start" && now === "planning") st.setState("awaiting_input");
+          else if (phase === "end" && now === "awaiting_input") st.setState("planning");
+        });
+      }
       const names = new Set(tools.map((t) => t.name));
       const base = [...tools, ...(names.has("Edit") ? [] : [createEditTool()]), ...(names.has("Create") ? [] : [createCreateTool()])];
       const prot = protectTools(base, { role: "orchestrator", onFeaturesWritten: () => conn.notify({ type: "mission_features_changed", features: st.features() }) });
