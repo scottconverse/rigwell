@@ -78,6 +78,8 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
 28. **One-token deny entries** (`shutdown`, `mkfs`, `reboot`) match only at command position (after
     optional `sudo`, `env`, `nohup` or a path), so `grep reboot log` does not ask. Multi-token entries
     match anywhere in a segment.
+28b. **A deny entry whose last token is a path** (`dd of=/dev`) also matches paths under it
+    (`of=/dev/sda`); a bare `/` (as in `chmod -R 777 /`) stays exact. Without this, device writes passed.
 29. **`rm-protected-target` is a structural check** of recursive `rm` targets, path-normalized. The
     `/tmp` exception needs every target under `/tmp/` with no `..`.
 30. **Extra safeguard id `fork-bomb`**: the spec lists fork bombs in the deny table but has no id for
