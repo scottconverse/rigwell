@@ -97,6 +97,8 @@ export class ScriptRun implements Job {
   readonly done: Promise<void>;
   readonly logRef: string;
   toolCalls = 0;
+  /** Images the program passed to image(base64, mime); the model sees them with the result. */
+  readonly images: { type: "image"; mediaType: string; data: string }[] = [];
   private errors: { call: number; tool: string; message: string }[] = [];
   private scriptError?: string;
   private printed = new PrintBuffer();
@@ -121,7 +123,7 @@ export class ScriptRun implements Job {
     this.sandbox = new Sandbox({
       onCall: (id, name, input) => void this.handleCall(id, name, input),
       onPrint: (t) => this.emitPrint(t),
-      onImage: (_d, mime) => this.emitPrint(`[image ${mime} not shown: images are not supported in this build]`),
+      onImage: (d, mime) => this.addImage(d, mime),
       onNotify: (t) => this.event(() => this.o.host.notify(t)),
     }, { ...DEFAULT_LIMITS, ...o.limits });
     this.done = this.sandbox.finished.then((r) => this.finalize(r));
@@ -147,6 +149,14 @@ export class ScriptRun implements Job {
     // Abort inner calls still in flight so nothing keeps running for a finished Script.
     if (!r.ok) this.ac.abort();
     this.logLine(`--- ${this.status}; ${this.toolCalls} tool calls; ${Date.now() - this.startedAt} ms${this.scriptError ? `\n${this.scriptError}` : ""}`);
+  }
+
+  private addImage(data: string, mime: string): void {
+    if (!/^image\/(png|jpeg|gif|webp)$/.test(mime)) return this.emitPrint(`[image not shown: ${mime} is not PNG, JPEG, GIF or WebP]`);
+    if (this.images.length >= 8) return this.emitPrint("[image not shown: at most 8 images per run]");
+    if (data.length > 7 * 1024 * 1024) return this.emitPrint("[image not shown: over 5 MiB]");
+    this.images.push({ type: "image", mediaType: mime, data });
+    this.emitPrint(`[image ${this.images.length} attached (${mime})]`);
   }
 
   private logLine(s: string): void {

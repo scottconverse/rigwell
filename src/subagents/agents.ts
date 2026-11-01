@@ -66,6 +66,8 @@ export interface LoadAgentsOptions {
   homeDir?: string;
   /** Returns whether a model id is valid; an invalid agent model falls back to `inherit`. */
   isValidModel?: (id: string) => boolean;
+  /** false: the folder is not trusted, so project agents are not loaded (spec 12.2). Default true. */
+  projectTrusted?: boolean;
 }
 
 export interface LoadedAgents { agents: CustomAgent[]; shadowed: CustomAgent[] }
@@ -73,7 +75,7 @@ export interface LoadedAgents { agents: CustomAgent[]; shadowed: CustomAgent[] }
 /** Project agents first, then personal; first found per normalized name wins (the rest are listed as `shadowed`). */
 export function loadAgents(o: LoadAgentsOptions): LoadedAgents {
   const root = projectRoot(o.cwd, o.homeDir);
-  const found = [...(root ? scan(path.join(root, ".rigwell", "agents"), "project") : []), ...scan(path.join(rigwellHome(), "agents"), "personal")];
+  const found = [...(root && o.projectTrusted !== false ? scan(path.join(root, ".rigwell", "agents"), "project") : []), ...scan(path.join(rigwellHome(), "agents"), "personal")];
   const seen = new Set<string>();
   const agents: CustomAgent[] = [], shadowed: CustomAgent[] = [];
   for (const a of found) {

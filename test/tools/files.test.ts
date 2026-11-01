@@ -31,7 +31,8 @@ describe("Read", () => {
     expect((await read.run({ path: "long.txt" }, ctx)).content).toContain("line cut");
     expect((await read.run({ path: "." }, ctx)).content).toContain("directory");
     expect((await read.run({ path: "b.bin" }, ctx)).isError).toBe(true);
-    expect((await read.run({ path: "i.png" }, ctx)).content).toContain("not supported");
+    // a file with an image name but not image bytes is refused; real images come back as image blocks (test/gap/images.test.ts)
+    expect((await read.run({ path: "i.png" }, ctx)).isError).toBe(true);
   });
 });
 

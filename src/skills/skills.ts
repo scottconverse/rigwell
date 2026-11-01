@@ -113,6 +113,8 @@ export interface LoadSkillsOptions {
   builtins?: BuiltinSkill[];
   /** Drop built-in skills for this session. */
   includeBuiltins?: boolean;
+  /** false: the folder is not trusted, so project skills are not loaded (spec 12.2). Default true. */
+  projectTrusted?: boolean;
 }
 
 export class SkillRegistry {
@@ -132,7 +134,7 @@ export class SkillRegistry {
     this.disabled = new Set(disabled.map(normalizeName));
     const found: Skill[] = [];
     const root = projectRoot(o.cwd, o.homeDir);
-    if (root) for (const d of SKILL_ROOT_DIRS) found.push(...scanSkillsDir(path.join(root, d, "skills"), "project-dir"));
+    if (root && o.projectTrusted !== false) for (const d of SKILL_ROOT_DIRS) found.push(...scanSkillsDir(path.join(root, d, "skills"), "project-dir"));
     const userDirs = [rigwellHome(), path.join(o.homeDir ?? userHomeDir(), ".agents"), path.join(o.homeDir ?? userHomeDir(), ".agent")];
     for (const d of userDirs) found.push(...scanSkillsDir(path.join(d, "skills"), "user-dir"));
     if (o.includeBuiltins !== false) {
@@ -184,6 +186,7 @@ export class SkillRegistry {
    * looking for `{.rigwell,.agents,.agent}/skills/*`. Returns the newly found, enabled, model-invocable skills.
    */
   discoverForPath(filePath: string): Skill[] {
+    if (this.opts.projectTrusted === false) return [];
     const cwd = path.resolve(this.opts.cwd);
     const top = findGitRoot(cwd) ?? cwd;
     let target = path.resolve(cwd, filePath);

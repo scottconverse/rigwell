@@ -204,7 +204,15 @@ function encodeBlock(b: ContentBlock): Record<string, unknown> {
     case "tool_use":
       return { type: "tool_use", id: b.id, name: b.name, input: b.input };
     case "tool_result":
-      return { type: "tool_result", tool_use_id: b.tool_use_id, is_error: b.is_error ?? false, content: b.content };
+      // With images the content is a list of blocks (spec 12.1: a string or a list of blocks).
+      return {
+        type: "tool_result", tool_use_id: b.tool_use_id, is_error: b.is_error ?? false,
+        content: b.images?.length ? [{ type: "text", text: b.content }, ...b.images.map((i) => ({ type: "image", mediaType: i.mediaType, data: i.data }))] : b.content,
+      };
+    case "image":
+      return { type: "image", mediaType: b.mediaType, data: b.data };
+    case "document":
+      return { type: "document", mediaType: b.mediaType, data: b.data, ...(b.name ? { name: b.name } : {}) };
   }
 }
 
@@ -222,12 +230,22 @@ function decodeBlock(b: any): ContentBlock | null {
     case "tool_use":
       return { type: "tool_use", id: String(b.id), name: String(b.name), input: b.input ?? {} };
     case "tool_result": {
-      // On disk `content` may be a string or a list of text blocks (spec §12.1).
+      // On disk `content` may be a string or a list of text and image blocks (spec §12.1).
       const c = Array.isArray(b.content)
-        ? b.content.map((x: any) => (typeof x === "string" ? x : String(x?.text ?? ""))).join("")
+        ? b.content.map((x: any) => (typeof x === "string" ? x : x?.type === "image" ? "" : String(x?.text ?? ""))).join("")
         : String(b.content ?? "");
-      return { type: "tool_result", tool_use_id: String(b.tool_use_id), content: c, ...(b.is_error !== undefined ? { is_error: !!b.is_error } : {}) };
+      const images = Array.isArray(b.content)
+        ? b.content.filter((x: any) => x?.type === "image" && typeof x.data === "string").map((x: any) => ({ type: "image" as const, mediaType: String(x.mediaType ?? "image/png"), data: x.data }))
+        : [];
+      return {
+        type: "tool_result", tool_use_id: String(b.tool_use_id), content: c,
+        ...(images.length ? { images } : {}), ...(b.is_error !== undefined ? { is_error: !!b.is_error } : {}),
+      };
     }
+    case "image":
+      return typeof b.data === "string" ? { type: "image", mediaType: String(b.mediaType ?? "image/png"), data: b.data } : null;
+    case "document":
+      return typeof b.data === "string" ? { type: "document", mediaType: String(b.mediaType ?? "application/pdf"), data: b.data, ...(b.name ? { name: String(b.name) } : {}) } : null;
     default:
       return null; // unknown block types are dropped
   }

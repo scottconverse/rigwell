@@ -48,10 +48,18 @@ const stripLead = (s: string) => (s.startsWith("\n") ? s.slice(1) : s);
 const truthy = (v: unknown) => (Array.isArray(v) ? v.length > 0 : Boolean(v));
 
 /** Identity line, base prompt, and (script_only sessions) the short block saying tools are reached through Script. */
-export function systemBlocks(mode: "direct_only" | "script_only" = "direct_only"): string[] {
-  const blocks = [render(PROMPT_TEXT.identity, { AGENT_NAME }), PROMPT_TEXT.system_base];
+export function systemBlocks(mode: "direct_only" | "script_only" = "direct_only", choice: { replace?: string; append?: string } = {}): string[] {
+  const blocks = [render(PROMPT_TEXT.identity, { AGENT_NAME }), choice.replace ?? PROMPT_TEXT.system_base];
   if (mode === "script_only") blocks.push(PROMPT_TEXT.system_script);
+  if (choice.append) blocks.push(choice.append);
   return blocks;
+}
+
+/** initialize_session systemPrompt: a string replaces the base prompt; {type:"preset", append} keeps it and adds text. */
+export function systemChoice(p: string | { type: "preset"; preset?: string; append?: string } | undefined): { replace?: string; append?: string } {
+  if (typeof p === "string") return p.trim() ? { replace: p } : {};
+  if (p && typeof p === "object" && p.append?.trim()) return { append: p.append };
+  return {};
 }
 
 function git(cwd: string, args: string[]): string | null {
@@ -81,6 +89,8 @@ export interface ContextInput {
   skills?: string | null;
   /** Context text from SessionStart hooks, appended after the todos block. */
   extra?: string[];
+  /** The carried todo list for the todos block. */
+  todos?: { status: string; content: string }[];
 }
 
 /** Context blocks for the first user message (prompts.md section 4): environment, instructions, skills, session, todos. */
@@ -114,8 +124,13 @@ export function contextBlocks(c: ContextInput): string[] {
     GIT_STATUS_TRUNCATED: statusLines.length > STATUS_MAX, GIT_STATUS_SHOWN: STATUS_MAX,
     GIT_STATUS_SHORT: statusLines.slice(0, STATUS_MAX).join("\n") || "(clean)", GIT_LOG_ONELINE: log, CWD_LISTING: listing,
   }).replace("Git repository: \n", "Git repository: no\n");
-  const todos = render(PROMPT_TEXT.ctx_todos, { TODOS: [] });
+  const todos = todosBlock(c.todos ?? []);
   return [env, ...(c.instructions ? [c.instructions] : []), ...(c.skills ? [c.skills] : []), session, todos, ...(c.extra ?? [])];
+}
+
+/** The todos context block (prompts.md 4.5). */
+export function todosBlock(items: { status: string; content: string }[]): string {
+  return render(PROMPT_TEXT.ctx_todos, { TODOS: items.map((t) => ({ STATUS: t.status, CONTENT: t.content })) });
 }
 
 export function guardText(id: keyof typeof PROMPT_TEXT, vars: Vars = {}): string {

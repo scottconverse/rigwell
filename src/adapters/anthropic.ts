@@ -15,10 +15,12 @@ function mapStop(r: string | null | undefined): "end_turn" | "tool_use" | "max_t
   return "other";
 }
 
-function mapBlock(b: ContentBlock): Record<string, unknown> | null {
+const imageBlock = (b: { mediaType: string; data: string }) => ({ type: "image", source: { type: "base64", media_type: b.mediaType, data: b.data } });
+
+function mapBlock(b: ContentBlock, cache = true): Record<string, unknown> | null {
   const o = mapBlockPlain(b);
   // Request-time breakpoint marker set by the request builder (spec prompts.md section 4).
-  if (o && (b as { cache?: boolean }).cache && b.type !== "thinking") o.cache_control = CACHE;
+  if (o && cache && (b as { cache?: boolean }).cache && b.type !== "thinking") o.cache_control = CACHE;
   return o;
 }
 
@@ -30,23 +32,28 @@ function mapBlockPlain(b: ContentBlock): Record<string, unknown> | null {
       if (!b.signature || (b.signatureProvider && b.signatureProvider !== "anthropic")) return null;
       return { type: "thinking", thinking: b.thinking, signature: b.signature };
     case "tool_use": return { type: "tool_use", id: b.id, name: b.name, input: b.input };
+    case "image": return imageBlock(b);
+    case "document": return { type: "document", source: { type: "base64", media_type: b.mediaType, data: b.data }, ...(b.name ? { title: b.name } : {}) };
     case "tool_result": {
-      const o: Record<string, unknown> = { type: "tool_result", tool_use_id: b.tool_use_id, content: b.content };
+      const content = b.images?.length
+        ? [...(b.content ? [{ type: "text", text: b.content }] : []), ...b.images.map(imageBlock)]
+        : b.content;
+      const o: Record<string, unknown> = { type: "tool_result", tool_use_id: b.tool_use_id, content };
       if (b.is_error !== undefined) o.is_error = b.is_error;
       return o;
     }
   }
 }
 
-export function mapMessages(messages: Message[]): { role: string; content: Record<string, unknown>[] }[] {
+export function mapMessages(messages: Message[], cache = true): { role: string; content: Record<string, unknown>[] }[] {
   const out: { role: string; content: Record<string, unknown>[] }[] = [];
   for (const m of messages) {
-    const content = m.content.map(mapBlock).filter((x): x is Record<string, unknown> => x !== null);
+    const content = m.content.map((b) => mapBlock(b, cache)).filter((x): x is Record<string, unknown> => x !== null);
     if (content.length === 0) continue;
     if (m.role === "user") content.sort((a, b) => Number(b.type === "tool_result") - Number(a.type === "tool_result"));
     out.push({ role: m.role, content });
   }
-  for (let i = out.length - 1; i >= 0; i--) {
+  for (let i = cache ? out.length - 1 : -1; i >= 0; i--) {
     if (out[i]!.role === "user") {
       const last = out[i]!.content;
       last[last.length - 1] = { ...last[last.length - 1]!, cache_control: CACHE };
@@ -57,13 +64,14 @@ export function mapMessages(messages: Message[]): { role: string; content: Recor
 }
 
 export function buildAnthropicBody(req: ModelRequest): Record<string, unknown> {
+  const cache = req.cacheStrategy !== "none";
   const system = req.system.map((text, i) =>
-    i === req.system.length - 1 ? { type: "text", text, cache_control: CACHE } : { type: "text", text });
+    cache && i === req.system.length - 1 ? { type: "text", text, cache_control: CACHE } : { type: "text", text });
   const body: Record<string, unknown> = {
     model: req.model.model,
     max_tokens: req.maxOutputTokens,
     stream: true,
-    messages: mapMessages(req.messages),
+    messages: mapMessages(req.messages, cache),
   };
   if (system.length) body.system = system;
   if (req.tools.length) {

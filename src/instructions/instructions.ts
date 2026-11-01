@@ -42,6 +42,8 @@ export interface InstructionOptions {
   /** Override for tests; default $HOME. */
   homeDir?: string;
   totalBudget?: number;
+  /** false: the folder is not trusted, so only personal instruction files load (spec 12.2). Default true. */
+  projectTrusted?: boolean;
 }
 
 const contains = (outer: string, inner: string) => {
@@ -117,6 +119,7 @@ export class InstructionLoader {
   /** Candidate files in a visited folder `D`: D, D/.rigwell, D/.agents, D/.agent (first matching name each). */
   private candidatesIn(dir: string): Candidate[] {
     const out: Candidate[] = [];
+    if (this.o.projectTrusted === false) return out;
     for (const sub of ["", ...INSTRUCTION_SUBDIRS]) {
       const d = sub ? path.join(dir, sub) : dir;
       const n = pickName(d);
