@@ -93,16 +93,20 @@ describe("Script behavior", () => {
   });
   test("at most 128 calls in flight", async () => {
     let live = 0, peak = 0;
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((r) => (releaseGate = r));
     const r = await run("await Promise.all(Array.from({ length: 300 }, (_, i) => tools.Read({ i })));", {}, async () => {
       live++; peak = Math.max(peak, live);
-      await Bun.sleep(5);
+      // Hold every call until the cap is reached, so the peak does not depend on how fast the pipe delivers calls.
+      if (live >= 128) releaseGate();
+      await Promise.race([gate, Bun.sleep(5000)]);
       live--;
       return { content: "{}" };
     });
     expect(r.status).toBe("completed");
     expect(r.tool_calls).toBe(300);
     expect(peak).toBeLessThanOrEqual(128);
-    expect(peak).toBeGreaterThan(64);
+    expect(peak).toBe(128);
   });
 });
 
