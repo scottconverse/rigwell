@@ -19,7 +19,7 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
 6. **Methods built:** `initialize_session`, `load_session`, `add_user_message`, `interrupt_session`,
    `close_session`, `update_session_settings`, `list_tools`, `list_models`, `get_context_stats`.
    `compact_session`, `fork_session`, the MCP methods and `warmup_cache` answer `-32601` with "not in
-   this build": they belong to later phases (compaction Phase 4, MCP Phase 5, cache Phase 3).
+   this build": they belong to later phases (compaction Phase 4, MCP Phase 5, cache Phase 3). (Superseded by #118 (warmup_cache), #131 (compact_session), #148 (MCP methods), #151 (fork_session) and #171 (rewind_session).)
 7. **Settings changeable mid-session:** only the fields §3.1.5 allows on `update_session_settings`
    (model, effort, interaction mode, autonomy). §10 open decision 1, default.
 8. **Duplicate in-flight request id** answers `-32006 CONFLICT` (§3.1.3 DESIGN). A second
@@ -46,7 +46,7 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
 15. **`max_tokens`:** the model's `maxOutputTokens`, else 32,000 (the observed value, §6.4).
 16. **Context blocks** sent: environment, session/git, todos. Project instructions (AGENTS.md) and skills
     are Phase 5, so those blocks are left out. Git status shows at most 50 entries; the listing at most
-    100 entries.
+    100 entries. (Superseded by #146: project instructions and skills are context blocks now.)
 17. **Encrypted OpenAI reasoning is dropped** from requests when the message's provider differs from the
     current model's provider (§4.6.2 DESIGN, applied per message).
 18. **Prompt text is generated** from `spec/prompts.md` by `scripts/gen-prompts.ts` into
@@ -66,7 +66,7 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
     30,000 characters per stream (first 15,000 + last 15,000, with a cut marker); shell `bash`, else
     `/bin/sh`.
 23. **Not in this build:** Execute `background: true` returns an error (background jobs are Phase 2);
-    Read refuses images (no image path yet) and files over 50 MB.
+    Read refuses images (no image path yet) and files over 50 MB. (Superseded by #82 for background Execute and #205 for images; Read still refuses files over 50 MB.)
 24. **Execute env** adds `CI=1`, `GIT_PAGER=cat`, `PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, so commands do
     not wait on a pager or prompt. Timeout and interrupt kill the whole process group.
 25. **Grep and Glob use `rg`** with `--no-require-git`. Globs are matched in JS over `rg --files`,
@@ -128,7 +128,7 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
 46. **OpenAI reasoning on disk:** the first item as `openaiReasoningId`, `openaiEncryptedContent`,
     `openaiReasoningSummary` (the spec's field names); further items in `openaiReasoningMore`.
 47. **`seq` starts at 0** (the real files' context message has seq 0). Messages load in `seq` order; the
-    `parentId` chain is written but not walked (no fork or compaction yet).
+    `parentId` chain is written but not walked (no fork or compaction yet). (Superseded by #131, #151 and #171 for compaction, fork and rewind; the parentId chain is still not walked.)
 48. **`tool_result` on disk** always writes `is_error`. Unknown block and record types are skipped on load.
 49. **Lock file:** a lock older than 10 s is stolen; waiting gives up after 30 s.
 50. **Session lookup order:** the cwd's slug folder, then every folder under `sessions/`, then the root.
@@ -136,14 +136,14 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
     replaces a good backup.
 52. **Settings merge:** objects deep-merge; arrays and scalars replace, command lists included.
 53. **Project and folder config always load.** `trustedFolders` is read but not enforced in Phase 1:
-    headless runs have no way to ask for trust. Add the gate with the TUI.
+    headless runs have no way to ask for trust. Add the gate with the TUI. (Superseded by #217.)
 54. **Git root** is found by walking up for a `.git` entry (directory or file).
 55. **Custom model ids** `custom:<displayName with dashes>-<index>`, where index is the position in
     `customModels` including invalid entries, so ids stay stable. The old `custom:<model>` form matches
     the first model with that name. `${VAR}` expands in `apiKey` and `extraHeaders`; `process.env` wins
     over `settings.env`; an unset variable invalidates the entry.
 56. **Not built:** the SQLite session index (the spec makes it a cache; `listSessions` scans files),
-    `fileEditToolProfile` (Create + Edit for every model), the keychain (keys come from settings or env).
+    `fileEditToolProfile` (Create + Edit for every model), the keychain (keys come from settings or env). (Superseded by #215 (fileEditToolProfile), #227 (session index) and #228 (credential store).)
 
 ## Phase 10: Local automations
 
@@ -164,7 +164,7 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
     closes as soon as the turn ends (no 15 s grace). `targetSessionId` loads that session and adds the prompt.
 61. **Not built:** auto-pause after 10 days, `mcp_unavailable` flagging, `host_slept` reason, agent tools
     (`CreateAutomation` etc., `Loop`), the `/loop` slash command, natural-language schedules. Project automation folders are
-    scanned only for `projectDirs` given to the service or used by `create_automation` with `projectDir` (not persisted).
+    scanned only for `projectDirs` given to the service or used by `create_automation` with `projectDir` (not persisted). (Superseded by #181 (/loop), #188 (auto-pause), #189 (host_slept), #190 (mcp_unavailable), #191 (natural-language schedules), #192 (agent tools) and #193 (project registry).)
 62. **Webhook:** `POST /hooks/<id>` on `127.0.0.1`, default port 47821 (`settings.automations.webhookPort`, host via
     `webhookHost`). The listener exists only while some valid automation has `trigger: webhook`. Auth: `Authorization: Bearer
     <secret>` or `X-Rigwell-Signature: sha256=<hmac of body>`. Responses: 202 `{runId}`, 200 `{status: filtered|deduped}`,
@@ -202,7 +202,7 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
     runs only when the repo root is in `trustedFolders`. Local: `<rigwell home>/worktree-setups/
     <sha256(repoRoot)>/*.yaml`, no trust check; local wins on an id clash. A profile that cannot run
     (missing, untrusted) is reported in `worktree.setup.skipped`; the worktree is still created.
-    `index.yaml` / `lastUsedProfileId` and "deleted profiles keep name + cleanup script" are not built.
+    `index.yaml` / `lastUsedProfileId` and "deleted profiles keep name + cleanup script" are not built. (Superseded by #187.)
     Setup runs inside initialize_session after the session exists, emitting `setup_step_progress`
     notifications `{kind: "setup_script", text}`; the profile's `initialPrompt` is returned in
     `worktree.setup.initialPrompt` for the client to send (the daemon does not send it).
@@ -227,7 +227,7 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
 73. **Not built:** fetch from origin (`pullFromOrigin`), rename of a generated branch after the title,
     HEAD watching and `branch_changed`, the 5-minute housekeeping timer and archive-time removal (needs
     session archiving), `daemon.worktree.removed` broadcast, trust marking of the new folder, the
-    Windows PowerShell runner, PR status and `create_pr`.
+    Windows PowerShell runner, PR status and `create_pr`. (Superseded by #182 to #186; the PowerShell runner, PR status and `create_pr` are still not built.)
 
 ## Phase 2: Script mode
 
@@ -241,7 +241,7 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
     parent; the parent runs the real tool through the session (same `decide`/`askPermission` path as a direct call).
 76. **Names and binding:** tools are bound under their Phase 1 names (`tools.Read`, `tools.Edit`, ...). Only tools the session really
     has are bound; the Script description drops the signatures (and the "MORE TOOLS" paragraph) of LS, Skill, ToolSearch and
-    load_tools while those tools do not exist. `{{SCRIPT_EXTRA_BINDINGS}}` is empty. `Task` is not callable (no subagents yet).
+    load_tools while those tools do not exist. `{{SCRIPT_EXTRA_BINDINGS}}` is empty. `Task` is not callable (no subagents yet). (Superseded by #110 (ToolSearch, load_tools), #145 (Skill, Task) and #202 (LS): the signatures are dropped only while a tool is missing.)
 77. **Structured results (S1):** Read, Grep, Glob, Edit, Create results are parsed from the direct tool's text (`src/script/bindings.ts`);
     Execute returns `ToolOutput.data` (new optional field) so a non-zero exit resolves with `{exitCode,...}` instead of rejecting.
     A refused or failed call rejects with an Error; refusals have `name === "PermissionDenied"`.
@@ -334,23 +334,23 @@ them into the loop. Each index.ts starts with an "Integration" comment.
 97. **Steer versus queue:** the harness has no mid-turn steering (a message sent during a turn runs after it). So the TUI keeps
     pending messages itself: Enter during a run adds a "steering" message, Ctrl+Enter a "queued" one; when the turn ends, steering
     messages go first, then queued ones, one turn at a time. This makes Ctrl+R/G/X real. After an Esc interrupt pending messages are
-    kept and not sent. Alt+Enter also queues, for terminals that do not report Ctrl+Enter.
+    kept and not sent. Alt+Enter also queues, for terminals that do not report Ctrl+Enter. (Superseded by #178: steering is `queuePlacement: "end_of_loop"`.)
 98. **Keys:** Ctrl+C clears the input; on empty input twice within 1.5 s it quits (spec says only "clear"). Ctrl+D on empty input
     quits. Tab cycles reasoning (off, low, medium, high) unless a menu is open. Shift+Tab toggles auto and spec. Ctrl+L cycles autonomy
     off, low, medium, high. Not built: Ctrl+V image paste, Ctrl+Shift+C, Alt+P plan view, Alt+arrows paging, Ctrl+J changelog (the
-    last three are outside the 13.7 v1 cut). Transcript shows the newest lines that fit; there is no scrolling.
+    last three are outside the 13.7 v1 cut). Transcript shows the newest lines that fit; there is no scrolling. (Superseded by #180 (paging and scrolling), #237 (Ctrl+V) and #238 (Ctrl+Shift+C); Alt+P and Ctrl+J are still not built.)
 99. **Commands:** `/droids` from the spec table is `/agents` here (the product name is not used). `/mcp`, `/hooks`, `/skills`,
     `/commands`, `/agents` show "not available in this build yet" until their phases. `/compress`, `/fork` call `compact_session` and
     `fork_session` and show the harness error while those do not exist; `/rename` calls `rename_session` (not in the spec MVP list)
     with the same fallback. `/rewind-conversation` and double Esc on empty input say rewind is not available (the harness cannot
     truncate a session). `/cost` shows token counts only: there is no pricing data for local models. `/context` shows the provider
-    meter from `get_context_stats`, and the category list and bar only if the result carries `categories` (the harness does not yet).
+    meter from `get_context_stats`, and the category list and bar only if the result carries `categories` (the harness does not yet). (Superseded by #174 (config views), #151 (/context categories), #179 (rewind) and #181 (other commands).)
 100. **Context percent:** last call's `inputTokens + cacheReadTokens` over the `limit` from `get_context_stats`, refreshed after
     every turn; `<1%` for tiny values and `n/a` until the first stats call returns.
 101. **Panels:** permission, batch ("Approve N operations", grouped), exit-spec ("Specification for approval", "Will save to"),
     ask_user (one question at a time, Space toggles multi-select, Esc cancels and interrupts) and pick_options render from the request
     params. Field names for the exit-spec plan (`plan`, `specContent` or `content`) and path (`filePath` or `path`) are guesses until the
-    spec-mode phase defines them. Denial comments (`[Comment]`) are not built.
+    spec-mode phase defines them. Denial comments (`[Comment]`) are not built. (Superseded by #150 for the exit-spec field names, #240 for denial comments and the spec comment box, and #241 for free-text answers.)
 
 ## Phase 6: Eval loop
 102. **Surface:** `rigwell eval run|report|tasks` lives in `src/eval/` (one dispatch line in `src/cli/main.ts`). Trials spawn
@@ -364,7 +364,7 @@ them into the loop. Each index.ts starts with an "Integration" comment.
     of tasks that passed every trial in both builds (spec section 8 methodology).
 106. **Proposals as variants:** a variant is `settings` (passed as `--settings`) plus optional `toolExecutionMode`. The profile fields
     `promptVariant` and `toolDescriptionOverrides` do not exist in the session yet; when a later phase reads them from settings,
-    a variant can carry them with no change here. Ship rule: all families hold, else per-model option, else do not ship.
+    a variant can carry them with no change here. Ship rule: all families hold, else per-model option, else do not ship. (Superseded by #215: `promptVariant` and `toolDescriptionOverrides` are read from the model profile.)
 107. **Failure clusters:** same failKind, turn reason and normalized grader line, on at least 2 tasks and 2 models.
 
 ## Phase 3: Cache + budget
@@ -439,14 +439,14 @@ them into the loop. Each index.ts starts with an "Integration" comment.
     or 9,600 characters); a cycle is a period p with window / p at least 8. The stream is cut, nothing of it is stored, the turn ends with an
     `error` notification "the same N-character block repeated M times in the model output" and an `llm_only` transcript note (text is Rigwell's).
     Thresholds are not in the spec; these are mine and configurable.
-126. **Todo nudge**: not built; there is no todo tool in this build.
+126. **Todo nudge**: not built; there is no todo tool in this build. (Superseded by #204.)
 127. **Compaction** (`src/agent/compaction.ts`): trigger before each model request when the estimated context (last reported call + chars/4 of
     what was added since; chars/4 of the whole prefix when no call was reported) reaches `compactionTokenLimit`, else the model's
     `maxContextLimit` (default 200,000) minus the 16,000 reserve. `compactionThresholdCheckEnabled: false` turns it off; after a compaction
     another automatic one waits `minCallsBetweenCompactions` model calls. Numbers (settings `compaction`): reserve 16,000, target 4,000,
     headroom 8,192, custom cap 8,000, post ceiling 40,000, keepRecentTurns 2, toolResultCapChars 4,000. Summarizer limit = min(reserve,
     model maxOutputTokens or 8,000); `max_tokens` = limit + 8,192, clamped to maxOutputTokens when set; both logged. The reserve is not grown
-    for carried items (there are none: no todos). The summarizer runs with reasoning off, no tools, on `compactionModelId` (session setting,
+    for carried items (there are none: no todos). The summarizer runs with reasoning off, no tools, on `compactionModelId` (session setting, (Superseded by #204: the reserve grows by the carried todo list.)
     default from settings `compactionModel`, else the session model; for "auto", the routed model).
 128. **What is kept**: the recent turns kept verbatim are the last `keepRecentTurns` (2) turns, fewer if they exceed 40,000 minus the target
     summary minus the re-injected context, and never all turns (something must be summarized; one huge turn is folded entirely). A cut falls on
@@ -461,7 +461,7 @@ them into the loop. Each index.ts starts with an "Integration" comment.
 130. **compaction_state record** (spec 12.1) is appended to the transcript with the spec's fields plus `reason`, `preambleMessageId`,
     `preambleBlocks` (the rebuilt first message). `anchorMessage` is the last message the summary covers; on load the latest record gives
     the preamble, and only messages after the anchor follow. `summaryTokens` is chars/4 of the summary. `loadedDeferredToolNames` is merged
-    with the settings file's list on load. Hooks (PreCompact) belong to Phase 5.
+    with the settings file's list on load. Hooks (PreCompact) belong to Phase 5. (Superseded by #147: hooks are wired; PreCompact runs before a compaction and can cancel it.)
 131. **compact_session** compacts in place: `newSessionId` is the same id (the spec's record lives in the same transcript), `removedCount` the
     number of messages replaced. It fails with CONFLICT while a turn runs, and with an internal error (history untouched) if there is
     nothing to compact or the summarizer fails. `mode: "handoff"` (meaning not in the spec) keeps no recent turns: everything goes into the
@@ -475,7 +475,7 @@ them into the loop. Each index.ts starts with an "Integration" comment.
     first candidate). Recorded as `effectiveRouterModel` in the session settings. When the picked model fails after its retries, the next
     fallback is tried (the cache monitor logs "router fallback"). Cleared on compaction. Tool mode is decided for the session model
     ("auto" is direct_only unless overridden), not per routed model, so the tool list does not flip. The classifier prompt is Rigwell's own.
-    No image handling (images are not supported in this build).
+    No image handling (images are not supported in this build). (Superseded by #205 for images in the loop; the classifier still sees text only and drops image blocks, which is intended.)
 
 ## Phase 8: Desktop app
 
@@ -522,7 +522,7 @@ them into the loop. Each index.ts starts with an "Integration" comment.
     anything; the spec's "unless the user turns writes on" switch is not built. Earlier exchanges (up to 10, question 1000 chars, answer 4000)
     are carried into a new fork as possibly stale context. The fork is closed when no question is pending. Nothing is written to disk or to
     the main transcript, so the spec's `btw` folder, tags and Promote are not built. Methods: `daemon.side_chat_ask`, `side_chat_list`,
-    `side_chat_cancel`; notification `daemon.side_chat_entry`.
+    `side_chat_cancel`; notification `daemon.side_chat_entry`. (Superseded by #244: forks are stored under btw/ with the btw-fork tag, Promote and the writes switch are built.)
 141. **Attention events** (§19.1) are computed by `src/sidepane/attention.ts` and fed by the main-process broker, which sees both the daemon's
     notifications and requests and the window's answers. The daemon's connection layer belongs to another phase, so the mapping is not
     inside the daemon yet; the events are the same. Notification, badge and sound rules are pure functions in `desktop/main/alerts.ts`:
@@ -546,7 +546,7 @@ them into the loop. Each index.ts starts with an "Integration" comment.
     Custom Models, Worktrees, Connectors, Session Management and Usage settings pages, per-session Pin, Rename and Archive (no daemon
     methods exist yet), Share (hosted), model cost multipliers, the Connectors and Skills dialogs, per-window zoom file, image attachments,
     voice dictation, API keys, secrets and environments pages (approval list). Settings pages built: General, Appearance, Notifications and
-    sounds, Support.
+    sounds, Support. (Superseded by #196 to #201 and #210 (pages, dialogs, Pin, Rename, Archive), #200 (Mission Control), #242 (image attachments) and #245 (per-window zoom file); the tray icon, Share, cost multipliers, voice, API keys, secrets and environments are still not built.)
 
 ## Phase 5: Wiring into the loop
 
@@ -570,7 +570,7 @@ them into the loop. Each index.ts starts with an "Integration" comment.
 
 ## Gap wave: Execute sandbox
 
-169. **Per-command sandbox only.** `whole-process` is accepted in settings and reported (`sandbox.mode`, with a note) but commands are still sandboxed per command; relaunching the agent inside the sandbox is not built. Default is `enabled: false`. Status is reported through `sandboxStatus()` / `settingsSnapshot().sandbox` as `{enabled, mode, active, available, engine, reason?, note?}`; the TUI `SANDBOX` marker should show when `active` is true.
+169. **Per-command sandbox only.** `whole-process` is accepted in settings and reported (`sandbox.mode`, with a note) but commands are still sandboxed per command; relaunching the agent inside the sandbox is not built. Default is `enabled: false`. Status is reported through `sandboxStatus()` / `settingsSnapshot().sandbox` as `{enabled, mode, active, available, engine, reason?, note?}`; the TUI `SANDBOX` marker should show when `active` is true. (Done in #239: the TUI shows SANDBOX while `active` is true.)
 170. **Engines.** Linux: bubblewrap (read-only root, private `/tmp` tmpfs, writable working folder + Rigwell home + `allowWrite`, read-only certs/bin/tools/org-cache/credentials, credential dirs emptied and credential files bound to `/dev/null`, new pid/ipc namespaces, `--new-session`). macOS: `sandbox-exec` profile (generated and unit-tested; not run on this Linux host). No seccomp filter is built (documented gap). Unavailable engine: Linux/macOS fail closed (Execute returns an error); Windows reports unavailable and runs unwrapped, relying on 5.5.3.
 171. **Network.** No allowed domains: `--unshare-net` (deny all, kernel-enforced). `"*"` with no deny list: network shared. A domain list (or `"*"` with a deny list): `--unshare-net` plus a per-command HTTP/CONNECT proxy on a unix socket, bridged into the sandbox by `socat` on 127.0.0.1:3128 with `HTTP(S)_PROXY` set; programs that ignore the proxy have no route. Without `socat` a domain list degrades to deny all. SOCKS, `allowUnixSockets`, `allowAllUnixSockets` and `httpProxyPort` (Linux) are typed but not enforced. Vendor API hosts are added through the `vendorHosts` option (empty by default: Execute commands do not need the model API).
 172. **Violations.** Detected from stderr (EROFS, or EACCES/EPERM on a path outside the writable set), from the command text naming a denied read path (denied files read back empty, so there is no error to catch), and from the proxy (host blocked). Up to 500 are kept per session. Each unique target raises a `sandbox_violation` request (max 5 per command) with options `proceed_always` (parent dir, or the domain), `proceed_always_file` (exact path), `proceed_once` (session only), `remove_from_deny_list` (deny-list reasons), `cancel`. "Always" saves to `$RIGWELL_HOME/settings.json` `sandbox`. The command is not re-run automatically; the result tells the model to run it again. Credential files, certs, bin/tools and the org cache are never offered. A declined target is not asked again in the session.
@@ -603,7 +603,7 @@ them into the loop. Each index.ts starts with an "Integration" comment.
 173. **Custom slash commands** (spec §12.2 names a `commands/` folder but gives no format): Markdown files, one per command. Project `<root>/.rigwell/commands/<name>.md` wins over user `$RIGWELL_HOME/commands/<name>.md`. The file name is the command name; optional frontmatter `description` and `argument-hint`; the body is the prompt. `$ARGUMENTS` is the text after the command, `$1`..`$9` are single words; with no placeholder, typed arguments are appended after a blank line. Names that clash with a built-in command are skipped. Commands and user-invocable skills are listed in the `/` menu; a skill runs by sending its body in a `<skill>` wrapper as the turn text (in-process read of the skill files; the transcript shows the typed `/name args`). Files are read at session start and after `/mcp`; `/new` picks up changes.
 174. **Config views** (`/mcp`, `/hooks`, `/skills`, `/commands`, `/agents`, `/diagnostics`, `/statusline`): read-only overlays. MCP uses `list_mcp_servers`, `add_mcp_server` (`/mcp add <name> <url|command> [args]`, `--sse` for SSE) and `remove_mcp_server`; hooks, skills, agents and settings are read in the TUI process with the loaders in `src/hooks`, `src/skills`, `src/subagents`, `src/storage/settings.ts` (the TUI runs on the machine that owns those files, also when it talks to a daemon). `/diagnostics` counts failed MCP servers, settings warnings, hook warnings and invalid skills as issues and the footer shows the count.
 175. **Status line command** (spec §13.1 leaves the input unknown): the command runs through the shell with a 2 s timeout, working folder = session folder, and gets one JSON object on stdin: `{session_id, cwd, version, model:{id,display_name}, mode, autonomy, reasoning, running, context:{used_tokens, limit_tokens, used_percent}}`. The first `maxRows` (1-3) lines of stdout, with escape sequences stripped, are drawn above the status bar, indented by `padding`. It refreshes after every turn, at session start, and about every 5 s while idle (every 30 s after a failure). A failure shows "Status line ... Run /statusline." in its place.
-176. **Attention** (spec §19.1, §19.3): on a completed (not cancelled) turn the TUI writes BEL when `enableCompletionBell` is true and plays `completionSound` (default off); on a permission, AskUser or picker request it plays `awaitingInputSound` (default `ack`). Sound keys are read from the top level of settings (§12.2) or under `general` (§19.3). Values: `off`, `bell`, `ack`, `ok` (two short tones generated at run time into a temp WAV, so no audio asset is shipped), or a file path. Players: `afplay`; Linux `paplay`, `aplay`, `ffplay`. A player that cannot scale volume gets a rescaled temp copy of a 16-bit PCM WAV (at most 25 MB); timeout 5 s; on failure the bell rings, only at volume 100. `soundFocusMode` uses terminal focus reports (CSI I / CSI O; unknown counts as focused). `subagentSounds` is not built: the TUI sees no nested-agent notifications.
+176. **Attention** (spec §19.1, §19.3): on a completed (not cancelled) turn the TUI writes BEL when `enableCompletionBell` is true and plays `completionSound` (default off); on a permission, AskUser or picker request it plays `awaitingInputSound` (default `ack`). Sound keys are read from the top level of settings (§12.2) or under `general` (§19.3). Values: `off`, `bell`, `ack`, `ok` (two short tones generated at run time into a temp WAV, so no audio asset is shipped), or a file path. Players: `afplay`; Linux `paplay`, `aplay`, `ffplay`. A player that cannot scale volume gets a rescaled temp copy of a 16-bit PCM WAV (at most 25 MB); timeout 5 s; on failure the bell rings, only at volume 100. `soundFocusMode` uses terminal focus reports (CSI I / CSI O; unknown counts as focused). `subagentSounds` is not built: the TUI sees no nested-agent notifications. (Scope: this entry describes the TUI only. The desktop does build `subagentSounds`, see #141.)
 177. **OSC 9;4 progress** (spec §19.2: timing not checked): indeterminate progress (`9;4;3`) while a turn runs, paused/warning (`9;4;4`) while a permission, AskUser or picker request waits for the user, cleared (`9;4;0`) when idle and on exit.
 178. **Steering** uses `add_user_message` with `queuePlacement: "end_of_loop"` at once; the message is listed under "Steering messages" until the next tool result (the harness delivers it after the next tool call) or the end of the turn, then it joins the transcript. Ctrl+Enter queues on the client (`end_of_turn` behaviour) so Ctrl+G and Ctrl+X still work on queued messages; a steering message is already with the harness and cannot be pulled back.
 179. **Rewind**: `/rewind-conversation` and double Esc on an empty input list the session's user messages (those with a message id), then ask "restore files" or "conversation only" and call `rewind_session {messageId, restoreFiles}`. On success the transcript is cut before that message and its text goes back into the input box. History loaded from a session keeps its message ids; steering messages shown from the pending list have none and cannot be picked.
@@ -658,7 +658,7 @@ them into the loop. Each index.ts starts with an "Integration" comment.
 ## Gap wave: client handlers
 
 218. **Trust question in every client.** `rigwell.request_trust {cwd, unlocks}` is answered `{trust, remember?}`; an unhandled request means untrusted, and the harness saves a yes in `trustedFolders`. SDK: `onTrust` option (boolean or `{trust, remember}`; default and on a throw: untrusted). The SDK installs its request handler before `initialize_session` / `load_session` because the question arrives while those run. TUI: a trust panel (Trust / Don't trust, default is not trusting, Esc is no and does not interrupt). The TUI now enters its terminal mode and starts reading keys before the session is created, so the panel can be answered at startup; other keys typed before the session is ready wait in a buffer. Desktop: the asks go into a small app-level store (`trustAsks`) and the existing `TrustDialog` is shown over whatever screen is open (they arrive while Home is still creating the session); Escape and "Don't trust" answer no.
-219. **AskUser in the clients.** The TUI panel and the SDK `onAskUser` already matched the harness fields (`requestId`, `toolCallId`, `questions[{index, topic, question, options, multiSelect}]`, answer `{answers[{index, question, answer}], cancelled?}`), so only tests were added. The desktop already had a question panel in the session screen. Not built: typing a free-text answer (the tool text says the user can); all three clients offer the listed options only.
+219. **AskUser in the clients.** The TUI panel and the SDK `onAskUser` already matched the harness fields (`requestId`, `toolCallId`, `questions[{index, topic, question, options, multiSelect}]`, answer `{answers[{index, question, answer}], cancelled?}`), so only tests were added. The desktop already had a question panel in the session screen. Not built: typing a free-text answer (the tool text says the user can); all three clients offer the listed options only. (Superseded by #241 for free-text answers.)
 220. **Re-shown prompts.** After `load_session`, each client shows `pendingPermissions` and `pendingAskUserRequests` again and answers with `rigwell.answer_request {requestId, answer}` (the harness has no request open towards the new connection). SDK: `resumeSessionId` runs the same `onPermission` / `onAskUser` callbacks (defaults cancel). TUI: `session_ready` builds the panels, marks the session running, and an effect answer for such a panel goes out as `answer_request`; quitting the TUI leaves re-shown prompts open (they are not cancelled) so a later load shows them again. Desktop: prompts carry `reshown`; closing the view does not cancel them, finishing a turn does.
 221. **ApplyPatch snapshots.** ApplyPatch calls `ctx.snapshots.before(abs)` for every file it will write or delete before the first write, and `after(abs)` after each write or delete, so rewind restores updated and deleted files and removes added ones.
 222. **Parked session adoption.** The park entry keeps the connection's worktree hold; `load_session` of a parked session hands it to the new connection (released on its close or shutdown), and the park timeout releases it when nobody came back. Before, the hold stayed in the in-use map forever after the adopting connection closed.
@@ -679,3 +679,18 @@ them into the loop. Each index.ts starts with an "Integration" comment.
 234. **Routed turns and tool mode model.** Assistant messages of an `auto` session carry `routerId: "auto"` in the transcript. The settings file records `toolExecutionModeModelId`, the model (the routed pick for `auto`) the tool mode was worked out for.
 235. **Streaming and idle notifications.** `tool_execution_phase_changed` with phase `streaming_input` goes out when the model starts a tool call, before `queued`. `agent_working_state_changed {newState: "idle"}` carries `backgroundWork`, the number of running background jobs (Execute, Task, Script); the one sent by `close_session` is after the jobs were stopped.
 236. **Responses profile fields.** Model profile keys (settings `modelProfiles`, the custom model's `profile`): `textVerbosity` (low, medium, high) becomes `text.verbosity`; `serviceTier` becomes `service_tier`; `safetyIdentifier` (a string, or `true` for the session id) becomes `safety_identifier`; `extendedCache: true` becomes `prompt_cache_retention: "24h"` only when the base URL host is exactly `api.openai.com` (never Azure or a custom host). `extraArgs` still win.
+
+## Final gap wave: clients
+
+237. **TUI Ctrl+V.** Ctrl+V sends the effect `paste_image`; the app reads the clipboard (`src/tui/clipboard.ts`): `wl-paste`, `xclip`, `xsel` on Linux, `pngpaste` on macOS, then, as a fallback, a clipboard text that is the path (or `file://` URL) of a PNG, JPEG, GIF or WebP file. The type is read from the first bytes and the size capped at 5 MiB. The image waits in `state.images`, the input area shows `[Image #N]`, and the next non-queued message (Enter, also while a turn runs) carries them as `images[]` on `add_user_message`; the transcript line gets the same markers. A queued (Ctrl+Enter) message does not take them. No image on the clipboard says so in the transcript. Windows has no reader here. Plain text paste stays the terminal's bracketed paste.
+238. **TUI Ctrl+Shift+C** copies the input box text (OSC 52) and keeps it. Terminals that report it send it as the kitty sequence `ESC[99;6u` or xterm `ESC[27;6;67~`; both parse to `ctrl+shift+c`. A terminal that sends plain Ctrl+C for it clears the input as before, which is all the terminal can tell us.
+239. **SANDBOX marker.** `state.sandbox` follows `settings.sandbox.active` from `initialize_session`, `load_session` and `settings_updated`; the status bar shows `SANDBOX` after the reasoning level while it is true (not while the sandbox is enabled but unavailable).
+240. **Comments and the plan editor in the TUI.** Permission, batch and spec panels: Tab opens a comment box (label "Comment", or "Add guidance for the implementation" on the spec panel); typed text goes to the box (digits included), Up/Down still pick the option, Enter sends the chosen option with `comment`, Tab or Esc closes the box (Esc again cancels, with the comment). A denial therefore sends `{selectedOption: "cancel", comment}`. On the spec panel Ctrl+G opens the plan in `$VISUAL` / `$EDITOR` (the `editor` effect with `target: "spec"`); the result replaces the panel body, selects "Edit the spec first" and Enter sends `{selectedOption: "proceed_edit", editedSpecContent, comment?}`. Choosing "Edit the spec first" before editing opens the editor instead of answering, and an empty edit is ignored. The harness appends the denial comment as "The user said: ..." (#213); the spec's `[Comment]` prefix is not what the model sees (harness text, not changed here).
+241. **Free-text answers to AskUser.** The tool text says the user may type their own answer, so every question gets a last choice "Other...". TUI: selecting it (Enter or a number key; in a multi-select, tick it with Space and press Enter) opens a text box ("Your answer"); Enter sends the text (ticked options and the text are joined with ", " in a multi-select), Esc goes back to the options without cancelling. Desktop: an "Other..." button opens a textarea with "Send answer". SDK: nothing changes on the wire (`answer` is any string); `buildAskUserAnswer(request, replies)` builds the answer from one reply per question (an option, a list for multi-select, any other text is the free-text answer, `null` skips) and `ASK_USER_OTHER_LABEL` is the label UIs use. `send()` also takes `images` and `files`. The harness accepts any answer string, so no server change.
+242. **Desktop composer attach** (spec 14.3): an Attach button (OS file picker through a hidden `<input type=file multiple>`), paste of files from the clipboard, and drop on the composer. Images (PNG, JPEG, GIF, WebP, 5 MiB) go to `images[]`, PDFs (32 MiB) and text files (1 MiB, `text/*`, or an unknown type whose bytes decode as UTF-8 without NUL) to `files[]` (text is sent as text, PDFs as base64); at most 10; refused files are named in an alert and the rest stay. Chips show a thumbnail, name and size with a remove button. An empty message with attachments sends "Attached: <names>" because `add_user_message` needs text. The transcript bubble shows `[Attached: ...]`. Home and the session screen both use it. Code: `desktop/renderer/lib/attachments.ts`, `Composer.tsx`.
+243. **Desktop prompts.** Permission panels have "Add a comment" (spec panels: "Add guidance"), a textarea sent as `comment` with whatever option is clicked, cancel included. The spec panel shows "Will save to"; "Edit the spec first" turns the plan into a textarea and its button into "Approve the edited spec", which sends `proceed_edit` with `editedSpecContent`. Answers are built by `desktop/renderer/lib/prompts.ts` (`permissionAnswer`, `answerText`).
+244. **Side chat storage, Promote, writes** (spec 17.4). Each fork is a session with a fresh UUID stored in `<sessions>/btw/<id>.jsonl` and `<id>.settings.json` (`src/sidepane/btw-store.ts`; its `session_start` has `parent` = the main session and `cwd`), with the tag `btw-fork` whose metadata holds `parent` and `priorExchanges` (up to 10 `{question, answer}` pairs, clipped to 1000 and 4000 characters; they are tag metadata only, so there is nothing to redact in logs because the code never logs it). The copied conversation and the fork's own turns are persisted like any session's, so the file loads with `load_session`. Entries gain `forkId` and `promotedTo`. `daemon.side_chat_promote {entryId}` waits for the fork to close (refuses while that entry is still being answered), removes the tag, moves both files into the project's session folder, sets the title to "Side chat: <first question>" and returns `{sessionId}`; promoting again returns the same id. `list_sessions` hides `btw-fork` sessions unless `includeBtwForks: true` (file scan and SQLite index both); `daemon.list_sessions` takes the same flag. `daemon.side_chat_set_writes {enabled}` (and `writes` in `side_chat_list`) is the "unless the user turns writes on" switch: off, the fork has no Edit or Create; on, it keeps them at autonomy Low, so edits run and commands that need approval are still auto-rejected; a fork already open keeps the old setting until it closes. Not done: reusing the main session's prompt-cache key (the adapters key it on the session id, and sharing the id would share sandbox and job state), and `/btw` in the TUI (not in the 13.2 v1 list, #181). Desktop: a checkbox "Allow edits in this side chat" and a "Promote to session" button on each finished answer, which opens the new session.
+245. **Per-window zoom** (spec 14.4, 19.4). Each window has a slot (the lowest free number); `<home>/window-zoom.json` maps slot to level (`desktop/main/window-zoom.ts`). A new window starts from its slot's saved level, else `windowZoomLevel`. The View menu has its own Zoom In, Zoom Out and Actual Size (ids `zoom-in`, `zoom-out`, `zoom-reset`), acting on the focused window, and Ctrl+wheel zooms the window it happens in; each saves its slot. A saved 0 is kept, so a reset window does not fall back to the app-wide level. Chromium also remembers zoom per URL and a `file:` page's route is part of its URL, so the window's own level is applied again after every in-page navigation; without that a route change picked up another route's level.
+246. **Archive Project** (spec 14.3). The project's row menu in the sidebar has "Archive Project": after a confirmation it archives every non-archived, non-subagent session of that folder with `archive_session`, one short connection each, and shows how many. The sessions leave the sidebar and stay in Session Management.
+247. **Edits outside the client folders:** `src/storage/session-list.ts` and `src/storage/session-index.ts` (`includeBtwForks` option, default hide) and one parameter in `src/daemon/connection.ts` (`list_sessions` passes `includeBtwForks`). No new protocol methods besides the `daemon.side_chat_*` ones in `src/sidepane`.
+248. **Older notes.** Entries that later work made stale carry "(Superseded by #N.)" at their end instead of being removed. Besides the ones asked for, #53, #97, #101, #127, #140, #169 and #219 were checked against the code and marked too.
