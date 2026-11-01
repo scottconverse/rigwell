@@ -1,6 +1,9 @@
 // Sidebar and command palette (spec §14.3).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ago, groupByProject, projectName, sidebarRows, type SessionRow } from "../lib/sessions.ts";
+import { app } from "../lib/app-model.ts";
+import { projectArchiveTargets } from "../lib/sessions.ts";
+import { ConfirmDialog } from "./Dialogs.tsx";
 import { useAddFolder } from "./Home.tsx";
 
 export function Sidebar({ sessions, current, daemon, route, go, openPalette }: { sessions: SessionRow[]; current?: string; daemon: string; route?: string; go(r: string): void; openPalette(): void }) {
@@ -8,6 +11,9 @@ export function Sidebar({ sessions, current, daemon, route, go, openPalette }: {
   const [lookback, setLookback] = useState(30);
   const [project, setProject] = useState("");
   const adder = useAddFolder((p) => go(`/?folder=${encodeURIComponent(p)}`));
+  const [rowMenu, setRowMenu] = useState<string | null>(null); // project whose row menu is open
+  const [archiving, setArchiving] = useState<string | null>(null); // project waiting for the confirmation
+  const [note, setNote] = useState("");
   // Pinned first, archived and subagent sessions hidden (spec §14.3, §12.1).
   const rows = useMemo(() => sidebarRows(sessions, { lookbackDays: lookback, project }), [sessions, lookback, project]);
   const projects = useMemo(() => [...new Set(sessions.map((s) => s.cwd).filter(Boolean) as string[])], [sessions]);
@@ -29,7 +35,12 @@ export function Sidebar({ sessions, current, daemon, route, go, openPalette }: {
       <div className="side-list">
         {groups.map(([k, list]) => (
           <div key={k} className="side-group">
-            {group && <div className="side-group-head"><span>{projectName(k)}</span><button title="New session in this project" aria-label={`New session in ${projectName(k)}`} onClick={() => go(`/?folder=${encodeURIComponent(k)}`)}>+</button></div>}
+            {group && <div className="side-group-head"><span>{projectName(k)}</span><span className="spacer" />
+              <span className="chip-wrap">
+                <button title="Project menu" aria-label={`Menu for ${projectName(k)}`} aria-haspopup="menu" aria-expanded={rowMenu === k} onClick={() => setRowMenu(rowMenu === k ? null : k)}>...</button>
+                {rowMenu === k && <div className="menu right" role="menu" aria-label="Project menu"><button role="menuitem" className="menu-item" onClick={() => { setRowMenu(null); setArchiving(k); }}>Archive Project</button></div>}
+              </span>
+              <button title="New session in this project" aria-label={`New session in ${projectName(k)}`} onClick={() => go(`/?folder=${encodeURIComponent(k)}`)}>+</button></div>}
             {list.map((s) => (
               <button key={s.id} className={`side-row ${s.id === current ? "on" : ""}`} onClick={() => go(`/sessions/${s.id}`)} title={s.cwd}>
                 <span className="side-title">{s.pinned && <span className="pin" title="Pinned" aria-label="Pinned">* </span>}{s.title}</span><span className="muted small">{ago(s.updatedAt)}</span>
@@ -46,6 +57,13 @@ export function Sidebar({ sessions, current, daemon, route, go, openPalette }: {
         <button aria-label="Settings" onClick={() => go("/settings/general")}>Settings</button>
       </div>
       {adder.dialog}
+      {note && <div className="toast" role="status">{note}</div>}
+      {archiving !== null && (
+        <ConfirmDialog title={`Archive ${projectName(archiving)}?`} action="Archive Project"
+          body={`${projectArchiveTargets(sessions, archiving).length} session(s) in this project will be archived. You can unarchive them in Settings > Session management.`}
+          onCancel={() => setArchiving(null)}
+          onConfirm={() => { const p = archiving; setArchiving(null); void app.archiveProject(p).then((n) => { setNote(`Archived ${n} session${n === 1 ? "" : "s"}`); setTimeout(() => setNote(""), 2500); }).catch((e) => { setNote((e as Error).message); setTimeout(() => setNote(""), 3500); }); }} />
+      )}
     </nav>
   );
 }

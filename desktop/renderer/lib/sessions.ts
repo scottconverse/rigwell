@@ -15,6 +15,11 @@ export function normalizeSession(r: any): SessionRow {
   };
 }
 
+/** Sessions that "Archive Project" archives: the project's visible sessions that are not archived yet. */
+export function projectArchiveTargets(sessions: SessionRow[], cwd: string): SessionRow[] {
+  return sessions.filter((s) => s.cwd === cwd && !isArchived(s) && !s.isSubagent);
+}
+
 export const isArchived = (s: SessionRow) => s.archivedAt != null;
 
 export interface Filter { lookbackDays?: number; project?: string; query?: string; now?: number }

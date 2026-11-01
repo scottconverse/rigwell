@@ -1,6 +1,7 @@
 // Permission, question and picker panels (spec §13.4 behaviour, desktop presentation).
 import { useState } from "react";
 import type { Prompt } from "../lib/session.ts";
+import { OTHER_LABEL, answerText, permissionAnswer, questionOptions } from "../lib/prompts.ts";
 
 function describe(params: any): { title: string; lines: string[] } {
   const uses: any[] = params.toolUses ?? [];
@@ -26,13 +27,34 @@ function diff(a?: string, b?: string): string[] {
 function Permission({ p, onAnswer }: { p: Prompt; onAnswer: (r: unknown) => void }) {
   const d = describe(p.params);
   const options: { label: string; value: string }[] = p.params.options ?? [];
+  const spec = p.params.toolUses?.length === 1 && p.params.toolUses[0].confirmationType === "exit_spec_mode" ? p.params.toolUses[0].details ?? {} : null;
+  const plan = spec ? String(spec.plan ?? spec.specContent ?? spec.content ?? "") : "";
+  const [comment, setComment] = useState("");
+  const [showComment, setShowComment] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [edited, setEdited] = useState(plan);
+  const answer = (value: string) => {
+    if (value === "proceed_edit" && spec && !editing) { setEditing(true); return; } // edit the plan first, then approve it
+    onAnswer(permissionAnswer(value, { comment, editedSpec: editing ? edited : undefined }));
+  };
   return (
     <div className="prompt" role="alertdialog" aria-label={d.title}>
       <div className="prompt-title">{d.title}</div>
-      <pre className="prompt-body">{d.lines.join("\n")}</pre>
+      {editing
+        ? <div className="prompt-field"><textarea className="plan" aria-label="Specification" value={edited} onChange={(e) => setEdited(e.target.value)} /></div>
+        : <pre className="prompt-body">{d.lines.join("\n")}</pre>}
+      {spec?.filePath && <div className="prompt-sub">Will save to: {String(spec.filePath)}</div>}
+      {(showComment || comment) ? (
+        <div className="prompt-field">
+          <textarea rows={2} aria-label="Comment" value={comment} onChange={(e) => setComment(e.target.value)} autoFocus={showComment}
+            placeholder={spec ? "Add guidance for the implementation..." : "Add a comment for the agent (sent with your choice)..."} />
+        </div>
+      ) : <button className="link small" onClick={() => setShowComment(true)}>{spec ? "Add guidance" : "Add a comment"}</button>}
       <div className="prompt-actions">
         {options.map((o) => (
-          <button key={o.value} className={o.value === "proceed_once" ? "primary" : o.value === "cancel" ? "danger" : ""} onClick={() => onAnswer({ selectedOption: o.value })}>{o.label}</button>
+          <button key={o.value} className={o.value === "proceed_once" ? "primary" : o.value === "cancel" ? "danger" : ""} disabled={editing && o.value === "proceed_edit" && !edited.trim()} onClick={() => answer(o.value)}>
+            {editing && o.value === "proceed_edit" ? "Approve the edited spec" : o.label}
+          </button>
         ))}
       </div>
     </div>
@@ -44,14 +66,16 @@ function Questions({ p, onAnswer }: { p: Prompt; onAnswer: (r: unknown) => void 
   const [i, setI] = useState(0);
   const [answers, setAnswers] = useState<{ index: number; question: string; answer: string }[]>([]);
   const [checked, setChecked] = useState<string[]>([]);
+  const [other, setOther] = useState<string | null>(null); // null: the Other... box is closed
   const q = qs[i];
   if (!q) return null;
-  const options: string[] = q.options?.length ? q.options : ["Yes", "No"];
+  const options = questionOptions(q);
   const next = (answer: string) => {
     const all = [...answers, { index: q.index ?? i, question: q.question, answer }];
     if (i + 1 >= qs.length) onAnswer({ answers: all });
-    else { setAnswers(all); setI(i + 1); setChecked([]); }
+    else { setAnswers(all); setI(i + 1); setChecked([]); setOther(null); }
   };
+  const otherText = other?.trim() ?? "";
   return (
     <div className="prompt" role="alertdialog" aria-label="Question">
       <div className="prompt-title">{q.topic ? `[${q.topic}] ` : ""}{q.question}</div>
@@ -60,9 +84,17 @@ function Questions({ p, onAnswer }: { p: Prompt; onAnswer: (r: unknown) => void 
         {options.map((o) => q.multiSelect
           ? <label key={o} className="check"><input type="checkbox" checked={checked.includes(o)} onChange={() => setChecked(checked.includes(o) ? checked.filter((x) => x !== o) : [...checked, o])} />{o}</label>
           : <button key={o} onClick={() => next(o)}>{o}</button>)}
-        {q.multiSelect && <button className="primary" onClick={() => next(checked.join(", "))}>Continue</button>}
+        <button aria-expanded={other !== null} onClick={() => setOther(other === null ? "" : null)}>{OTHER_LABEL}</button>
+        {q.multiSelect && other === null && <button className="primary" disabled={!checked.length} onClick={() => next(answerText(checked, null))}>Continue</button>}
         <button className="danger" onClick={() => onAnswer({ cancelled: true, answers: [] })}>Cancel</button>
       </div>
+      {other !== null && (
+        <div className="prompt-field">
+          <textarea rows={2} autoFocus aria-label="Your answer" value={other} onChange={(e) => setOther(e.target.value)} placeholder="Type your own answer"
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && otherText) { e.preventDefault(); next(answerText(q.multiSelect ? checked : [], other)); } }} />
+          <div className="prompt-actions"><button className="primary" disabled={!otherText} onClick={() => next(answerText(q.multiSelect ? checked : [], other))}>Send answer</button></div>
+        </div>
+      )}
     </div>
   );
 }

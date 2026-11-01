@@ -13,7 +13,7 @@ const KEYS: Record<PaneTab, string> = { files: "Ctrl+P", terminal: "Ctrl+J", bro
 
 export function SidePane(props: {
   ctl: SessionController; state: SessionState; tab: PaneTab; mounted: Set<PaneTab>; maximized: boolean; autoOpenPreviews: boolean;
-  prefill?: string; onPrefillUsed(): void; onTab(t: PaneTab): void; onClose(): void; onMaximize(): void;
+  prefill?: string; onPrefillUsed(): void; onPromoted(sessionId: string): void; onTab(t: PaneTab): void; onClose(): void; onMaximize(): void;
 }) {
   const { ctl, state, tab, mounted } = props;
   const [fileToOpen] = useState<string | undefined>();
@@ -32,7 +32,7 @@ export function SidePane(props: {
         {mounted.has("files") && <div className="pane-page" style={show("files")}><FilesTab ctl={ctl} autoOpen={props.autoOpenPreviews} requestOpen={fileToOpen} refreshKey={state.working === "idle" ? 1 : 0} /></div>}
         {mounted.has("terminal") && <div className="pane-page" style={show("terminal")}><TerminalTab ctl={ctl} active={tab === "terminal"} /></div>}
         {mounted.has("browser") && <div className="pane-page" style={show("browser")}><BrowserTab visible={tab === "browser"} onWantVisible={() => props.onTab("browser")} /></div>}
-        {mounted.has("side") && <div className="pane-page" style={show("side")}><SideChatTab ctl={ctl} entries={state.sideChat} prefill={props.prefill} onPrefillUsed={props.onPrefillUsed} /></div>}
+        {mounted.has("side") && <div className="pane-page" style={show("side")}><SideChatTab ctl={ctl} entries={state.sideChat} writes={state.sideWrites} prefill={props.prefill} onPrefillUsed={props.onPrefillUsed} onPromoted={props.onPromoted} /></div>}
       </div>
     </aside>
   );

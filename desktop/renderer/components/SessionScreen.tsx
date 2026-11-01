@@ -4,6 +4,7 @@ import { SessionController } from "../lib/session.ts";
 import { toMarkdown } from "../lib/transcript.ts";
 import { readinessText } from "../lib/missions.ts";
 import { Composer } from "./Composer.tsx";
+import { toParams } from "../lib/attachments.ts";
 import { ConfirmDialog, TextDialog } from "./Dialogs.tsx";
 import { Prompts } from "./Prompts.tsx";
 import { SidePane, type PaneTab } from "./SidePane.tsx";
@@ -126,7 +127,7 @@ function Loaded({ ctl }: { ctl: SessionController }) {
         <Composer
           settings={state.settings} models={state.models.length ? state.models : a.models} busy={state.working !== "idle"} disabled={state.phase !== "ready"}
           disabledShortcuts={off} autoFocus placeholder="Message the agent" session={ctl} cwd={state.cwd} autoAvailable={!!a.userSettings.autoRouter} onMission={() => void enterMission()}
-          onChange={(p) => void ctl.updateSettings({ ...p })} onSend={(t) => void ctl.send(t)} onStop={() => ctl.interrupt()}
+          onChange={(p) => void ctl.updateSettings({ ...p })} onSend={(t, atts) => void ctl.send(t, atts ? toParams(atts) : {})} onStop={() => ctl.interrupt()}
           extra={<button className="chip" onClick={() => { const last = [...state.items].reverse().find((i) => i.kind === "assistant"); setPrefill(last && last.kind === "assistant" ? `About this: "${last.text.slice(0, 200)}"\n\n` : ""); showTab("side"); }}>Side chat</button>}
         />
         {toast && <div className="toast" role="status">{toast}</div>}
@@ -136,7 +137,7 @@ function Loaded({ ctl }: { ctl: SessionController }) {
       <div className={paneOpen ? "pane-slot open" : "pane-slot"} hidden={!paneOpen}>
         <SidePane
           ctl={ctl} state={state} tab={tab} mounted={mounted} maximized={maximized} autoOpenPreviews={a.settings?.autoOpenFilePreviews ?? true}
-          prefill={prefill} onPrefillUsed={() => setPrefill(undefined)} onTab={showTab} onClose={() => setPaneOpen(false)} onMaximize={() => setMaximized(!maximized)}
+          prefill={prefill} onPrefillUsed={() => setPrefill(undefined)} onPromoted={(sid) => { void app.refresh(); window.location.hash = `/sessions/${sid}`; }} onTab={showTab} onClose={() => setPaneOpen(false)} onMaximize={() => setMaximized(!maximized)}
         />
       </div>
     </div>

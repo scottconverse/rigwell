@@ -207,3 +207,19 @@ kbd { font: 11px var(--font-code); background: var(--bg-sunken); border: 1px sol
 .log { padding-left: 18px; max-height: 220px; overflow: auto; } .bar { height: 8px; background: var(--accent); border-radius: 4px; } .barcell { width: 40%; }
 .checklist { display: flex; flex-direction: column; gap: 4px; } .addserver { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .side-btn.on { background: var(--bg-hover); font-weight: 600; } .chip.check { display: inline-flex; gap: 4px; align-items: center; }
+
+/* Composer attachments, spec comment box, side chat controls */
+.composer.dragging { outline: 2px dashed var(--accent, #6b8afd); outline-offset: -2px; }
+.attachments { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px 6px; align-items: center; }
+.attachment { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 8px; padding: 2px 6px; font-size: 12px; }
+.attachment img { width: 24px; height: 24px; object-fit: cover; border-radius: 4px; }
+.attachment-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment button { border: none; background: transparent; cursor: pointer; color: inherit; padding: 0 2px; }
+.attach-error { color: var(--danger, #d44); font-size: 12px; }
+.prompt-field { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+.prompt-field textarea, .prompt-field input[type=text] { width: 100%; box-sizing: border-box; font-family: var(--font-content); font-size: var(--size-content); border: 1px solid var(--border); border-radius: 8px; background: var(--bg-panel); color: inherit; padding: 6px; }
+.prompt-field textarea.plan { min-height: 160px; font-family: var(--font-code, ui-monospace, monospace); }
+.sc-tools { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.sc-promote { margin-top: 4px; font-size: 12px; }
+.side-group-head .menu { top: calc(100% + 4px); bottom: auto; font-weight: 400; }
+.side-group-head .menu-item { color: var(--fg); padding: 5px 8px; }
