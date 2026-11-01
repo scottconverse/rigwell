@@ -1447,7 +1447,7 @@ export class Session {
       };
       phase("queued");
       if (batch?.cancelled && batch.ids.has(call.id)) {
-        finish(`The user rejected this tool call and stopped the turn.${batch.comment ? ` The user said: ${batch.comment}` : ""}`, true, false);
+        finish(`The user rejected this tool call and stopped the turn.${batch.comment ? ` [Comment] ${batch.comment}` : ""}`, true, false);
         continue;
       }
       if (stop || signal.aborted) { finish("Not run: the turn was stopped before this call.", true, false); continue; }
@@ -1506,7 +1506,7 @@ export class Session {
       if (d.decision === "ask" && !batch?.approved.has(call.id)) {
         const asked = await this.askPermission(call, d);
         const verdict = asked.verdict;
-        const said = asked.comment ? ` The user said: ${asked.comment}` : "";
+        const said = asked.comment ? ` [Comment] ${asked.comment}` : "";
         if (verdict === "rejected") { finish(`The user rejected this tool call. Do not retry it; change your approach or ask the user.${said}`, true, false); continue; }
         if (verdict === "cancel") { finish(`The user rejected this tool call and stopped the turn.${said}`, true, false); stop = "permission_rejected"; continue; }
         if (verdict === "no_approver") {
@@ -1693,7 +1693,7 @@ export class Session {
     if (d.decision === "ask") {
       const asked = await this.askPermission(use, d);
       const verdict = asked.verdict;
-      const said = asked.comment ? ` The user said: ${asked.comment}` : "";
+      const said = asked.comment ? ` [Comment] ${asked.comment}` : "";
       if (verdict === "rejected") return refuse(`PermissionDenied: the user rejected this tool call. Do not retry it; change your approach or ask the user.${said}`, "PermissionDenied");
       if (verdict === "cancel" || verdict === "no_approver") {
         if (meta.foreground && this.abort && !this.abort.signal.aborted) {
@@ -1974,7 +1974,7 @@ export class Session {
     if (r.verdict === "rejected" || r.verdict === "no_approver") return bad("The plan cannot be approved here: this run has no one to ask. Present the plan as your answer.");
     const comment = r.answer?.comment?.trim();
     if (r.option === "cancel" || r.verdict === "cancel") {
-      return { content: `The plan was not approved. Spec mode stays on. ${comment ? `The user said: ${comment}` : "Keep investigating or revise the plan, then propose it again."}`, data: { approved: false } };
+      return { content: `The plan was not approved. Spec mode stays on. ${comment ? `[Comment] ${comment}` : "Keep investigating or revise the plan, then propose it again."}`, data: { approved: false } };
     }
     const edited = r.option === "proceed_edit" && typeof r.answer?.editedSpecContent === "string" && r.answer.editedSpecContent.trim() ? r.answer.editedSpecContent : undefined;
     if (edited) plan = edited;
@@ -2017,7 +2017,7 @@ export class Session {
     });
     if (r.verdict === "rejected" || r.verdict === "no_approver") return { content: "No one can be asked right now. Carry on in this session.", isError: true };
     const comment = r.answer?.comment?.trim();
-    if (r.verdict === "cancel") return { content: `The user declined mission mode. Carry on in this session. ${comment ? `The user said: ${comment}` : ""}`.trim(), data: { accepted: false } };
+    if (r.verdict === "cancel") return { content: `The user declined mission mode. Carry on in this session. ${comment ? `[Comment] ${comment}` : ""}`.trim(), data: { accepted: false } };
     let res: Record<string, unknown>;
     try { res = await this.deps.enterMissionMode!(); } catch (e) { return { content: `Could not enter mission mode: ${(e as Error)?.message ?? e}`, isError: true }; }
     if (res.entered !== true) {
@@ -2039,7 +2039,7 @@ export class Session {
     });
     if (r.verdict === "rejected" || r.verdict === "no_approver") return { content: "No one can be asked right now. Carry on with the current model.", isError: true };
     const comment = r.answer?.comment?.trim();
-    if (r.verdict === "cancel") return { content: `The user declined the model upgrade. Carry on with the current model. ${comment ? `The user said: ${comment}` : ""}`.trim(), data: { approved: false } };
+    if (r.verdict === "cancel") return { content: `The user declined the model upgrade. Carry on with the current model. ${comment ? `[Comment] ${comment}` : ""}`.trim(), data: { approved: false } };
     // updateSettings queues the tool-mode notice when the new model changes the tool mode.
     this.updateSettings({ modelId: next });
     return { content: `The user approved. This session now uses ${next} (was ${from}), from the next request on.`, data: { approved: true, from, to: next } };
