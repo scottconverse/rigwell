@@ -3,8 +3,16 @@ import type { DesktopSettings, SoundValue, ThemePref } from "../../main/settings
 import { app, useApp } from "../lib/app-model.ts";
 import { applyAppearance } from "../lib/appearance.ts";
 import { bridge } from "../lib/rpc.ts";
+import { ConnectorSettings, CustomModels, MissionSettings, SessionDefaults, SessionManagement, UsagePage, WorktreeSettings } from "./SettingsAgent.tsx";
 
-const PAGES = [["general", "General"], ["appearance", "Appearance"], ["notifications", "Notifications and sounds"], ["support", "Support"]] as const;
+const PAGES = [
+  ["general", "General"], ["appearance", "Appearance"], ["notifications", "Notifications and sounds"], ["session-defaults", "Session Defaults"], ["missions", "Missions"],
+  ["custom-models", "Custom Models"], ["worktrees", "Worktrees"], ["connectors", "Connectors"], ["session-management", "Session Management"], ["usage", "Usage"], ["support", "Support"],
+] as const;
+const AGENT_PAGES: Record<string, () => React.ReactElement> = {
+  "session-defaults": SessionDefaults, missions: MissionSettings, "custom-models": CustomModels, worktrees: WorktreeSettings,
+  connectors: ConnectorSettings, "session-management": SessionManagement, usage: UsagePage,
+};
 
 export function Settings({ page, go }: { page: string; go(r: string): void }) {
   const a = useApp();
@@ -15,7 +23,7 @@ export function Settings({ page, go }: { page: string; go(r: string): void }) {
         {PAGES.map(([id, label]) => <button key={id} className={page === id ? "on" : ""} aria-current={page === id} onClick={() => go(`/settings/${id}`)}>{label}</button>)}
       </nav>
       <div className="settings-body">
-        {!s ? <div className="muted">Loading</div> : page === "appearance" ? <Appearance s={s} /> : page === "notifications" ? <Notifications s={s} /> : page === "support" ? <Support /> : <General s={s} />}
+        {!s ? <div className="muted">Loading</div> : AGENT_PAGES[page] ? (() => { const P = AGENT_PAGES[page]; return <P />; })() : page === "appearance" ? <Appearance s={s} /> : page === "notifications" ? <Notifications s={s} /> : page === "support" ? <Support /> : <General s={s} />}
       </div>
     </div>
   );

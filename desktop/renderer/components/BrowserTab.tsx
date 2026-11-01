@@ -3,6 +3,7 @@
 // the agent can keep driving a page.
 import { createElement, useCallback, useEffect, useRef, useState } from "react";
 import { bridge } from "../lib/rpc.ts";
+import { moveTab, pushClosed, stepTab } from "../lib/tabs.ts";
 
 interface Tab { key: string; url: string; title: string; requestId?: string; wcId?: number; canBack: boolean; canForward: boolean; loading: boolean }
 const PARTITION = "persist:browserpanel";
@@ -47,7 +48,16 @@ export function BrowserTab({ visible, onWantVisible }: { visible: boolean; onWan
     return key;
   }, []);
   const patch = useCallback((key: string, p: Partial<Tab>) => setTabs((t) => t.map((x) => (x.key === key ? { ...x, ...p } : x))), []);
-  const close = useCallback((key: string) => setTabs((t) => { const rest = t.filter((x) => x.key !== key); setActive((a) => (a === key ? rest.at(-1)?.key ?? "" : a)); return rest; }), []);
+  const [closed, setClosed] = useState<string[]>([]);
+  const close = useCallback((key: string) => setTabs((t) => {
+    const gone = t.find((x) => x.key === key);
+    if (gone) setClosed((c) => pushClosed(c, gone.url));
+    const rest = t.filter((x) => x.key !== key);
+    setActive((a) => (a === key ? rest.at(-1)?.key ?? "" : a));
+    return rest;
+  }), []);
+  const reopen = () => setClosed((c) => { const url = c.at(-1); if (url) setTimeout(() => open(url)); return c.slice(0, -1); });
+  const [shot, setShot] = useState("");
 
   useEffect(() => {
     const b = bridge().browser;
@@ -76,18 +86,25 @@ export function BrowserTab({ visible, onWantVisible }: { visible: boolean; onWan
           </div>
         ))}
         <button className="btab-new" aria-label="New tab" onClick={() => open("about:blank")}>+</button>
+        <button aria-label="Reopen closed tab" disabled={!closed.length} onClick={reopen}>Reopen</button>
+        <button aria-label="Previous tab" disabled={tabs.length < 2} onClick={() => setActive(stepTab(tabs.map((t) => t.key), active, -1))}>Prev</button>
+        <button aria-label="Next tab" disabled={tabs.length < 2} onClick={() => setActive(stepTab(tabs.map((t) => t.key), active, 1))}>Next</button>
+        <button aria-label="Move tab left" disabled={tabs.findIndex((t) => t.key === active) < 1} onClick={() => setTabs((t) => moveTab(t, active, -1))}>Move left</button>
+        <button aria-label="Move tab right" disabled={tabs.findIndex((t) => t.key === active) >= tabs.length - 1} onClick={() => setTabs((t) => moveTab(t, active, 1))}>Move right</button>
       </div>
       <div className="addrbar">
         <button disabled={!cur?.canBack} onClick={() => nav((w) => w.goBack())} aria-label="Back">Back</button>
         <button disabled={!cur?.canForward} onClick={() => nav((w) => w.goForward())} aria-label="Forward">Forward</button>
         <button onClick={() => nav((w) => (cur?.loading ? w.stop() : w.reload()))}>{cur?.loading ? "Stop" : "Reload"}</button>
         <input value={address} onChange={(e) => setAddress(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { const u = normalize(address); nav((w) => w.loadURL(u)); } }} aria-label="Address" placeholder="Enter a URL or search" />
+        <button disabled={cur?.wcId == null} onClick={() => cur?.wcId != null && void bridge().browser.screenshot(cur.wcId).then(setShot).catch(() => {})} title="Take a screenshot of this tab">Screenshot</button>
         <button onClick={() => void bridge().browser.clearData()} title="Clear cache and cookies">Clear data</button>
       </div>
       <div className="webviews">
         {tabs.map((t) => <div key={t.key} className="webview-slot" data-key={t.key} style={{ display: t.key === active ? "flex" : "none" }}><WebviewTab tab={t} onState={patch} onGone={close} /></div>)}
         {!tabs.length && <div className="empty">No tabs</div>}
       </div>
+      {shot && <div className="overlay" onClick={() => setShot("")}><div className="dialog wide" role="dialog" aria-label="Screenshot" onClick={(e) => e.stopPropagation()}><img src={shot} alt="Screenshot of the tab" style={{ maxWidth: "100%" }} /><div className="dialog-actions"><a href={shot} download="screenshot.png">Save</a><button onClick={() => setShot("")}>Close</button></div></div></div>}
     </div>
   );
 }

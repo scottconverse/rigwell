@@ -1,5 +1,7 @@
 // One session view: a daemon connection, the transcript, pending prompts and side-chat entries.
 import { DaemonConn, RpcFailure, bridge } from "./rpc.ts";
+import { normalizeModel } from "./models.ts";
+import { actionCall } from "./sessions.ts";
 import { fromMessages, reduce, type Item } from "./transcript.ts";
 
 export class Store<S> {
@@ -27,13 +29,19 @@ export interface SessionState {
   tokens: { input: number; output: number };
   prompts: Prompt[];
   sideChat: SideEntry[];
+  pinned: boolean;
+  archived: boolean;
 }
 
 const empty = (cwd: string): SessionState => ({
-  phase: "connecting", cwd, title: "New Session", items: [], working: "idle", settings: {}, models: [], tokens: { input: 0, output: 0 }, prompts: [], sideChat: [],
+  phase: "connecting", cwd, title: "New Session", items: [], working: "idle", settings: {}, models: [], tokens: { input: 0, output: 0 }, prompts: [], sideChat: [], pinned: false, archived: false,
 });
 
-export type CreateOptions = { cwd: string; title?: string; modelId?: string; autonomyLevel?: string; interactionMode?: string; reasoningEffort?: string };
+export type CreateOptions = {
+  cwd: string; title?: string; modelId?: string; autonomyLevel?: string; interactionMode?: string; reasoningEffort?: string;
+  /** Run the session in its own git worktree (spec §18.1). */
+  worktree?: boolean | { enabled: true; lifecycle?: "ephemeral" | "persistent"; setupProfile?: string };
+};
 
 export class SessionController extends Store<SessionState> {
   conn?: DaemonConn;
@@ -49,9 +57,9 @@ export class SessionController extends Store<SessionState> {
   }
 
   /** Reattaches to a stored session (after a reload or a daemon restart). */
-  static async resume(sessionId: string, cwd: string): Promise<SessionController> {
+  static async resume(sessionId: string, cwd: string, info?: { title?: string; pinned?: boolean; archived?: boolean }): Promise<SessionController> {
     const c = new SessionController(cwd);
-    c.set({ sessionId });
+    c.set({ sessionId, ...(info?.title ? { title: info.title } : {}), pinned: info?.pinned === true, archived: info?.archived === true });
     await c.connect((conn) => conn.request("load_session", { sessionId, cwd }));
     return c;
   }
@@ -64,7 +72,7 @@ export class SessionController extends Store<SessionState> {
       conn.onRequest = (m, p) => this.onRequest(m, p);
       conn.onClose = () => { this.resolveAllPrompts(); this.set({ phase: this.state.phase === "error" ? "error" : "disconnected", working: "idle" }); };
       const r = await init(conn);
-      const models = (r.availableModels ?? []).map((m: any) => ({ id: m.id, displayName: m.displayName ?? m.id, provider: m.provider }));
+      const models = (r.availableModels ?? []).map(normalizeModel);
       this.set({
         phase: "ready", sessionId: r.sessionId, cwd: r.cwd ?? this.state.cwd, items: fromMessages(r.session?.messages ?? []),
         settings: r.settings ?? {}, models, working: r.workingState ?? "idle",
@@ -86,6 +94,7 @@ export class SessionController extends Store<SessionState> {
       case "daemon.side_chat_entry": this.upsertSide(n.entry); return;
       case "agent_working_state_changed": this.set({ working: n.newState }); return;
       case "settings_updated": this.set({ settings: n.settings ?? {} }); return;
+      case "session_title_updated": if (typeof n.title === "string" && n.title) this.set({ title: n.title }); return;
       case "session_token_usage_changed": this.set({ tokens: { input: n.tokenUsage?.inputTokens ?? 0, output: n.tokenUsage?.outputTokens ?? 0 } }); return;
       case "permission_resolved": this.set({ prompts: this.state.prompts.filter((x) => x.requestId !== n.requestId) }); return;
       case "agent_turn_completed":
@@ -121,12 +130,33 @@ export class SessionController extends Store<SessionState> {
 
   async send(text: string) {
     if (!this.conn || !text.trim()) return;
+    if (this.attaching) await Promise.race([this.attaching, new Promise((r) => setTimeout(r, 3000))]);
     this.set({ items: [...this.state.items, { kind: "user", id: `u-${Date.now()}`, text }], working: "thinking" });
     if (this.state.title === "New Session") this.set({ title: text.split("\n")[0].slice(0, 60) });
     try { await this.conn.request("add_user_message", { text }); } catch (e) { this.set({ items: [...this.state.items, { kind: "info", id: `e-${Date.now()}`, text: (e as Error).message, level: "error" }], working: "idle" }); }
   }
   interrupt() { void this.conn?.request("interrupt_session").catch(() => {}); }
   async updateSettings(patch: Record<string, unknown>) { await this.conn?.request("update_session_settings", patch); }
+
+  // ---- header menu (spec §14.3): rename, pin, archive
+  async rename(title: string) { const c = actionCall("rename", {}, title); await this.request(c.method, c.params); this.set({ title: String(c.params.title) }); }
+  async setPinned(pinned: boolean) { await this.request("pin_session", { pinned }); this.set({ pinned }); }
+  async setArchived(archived: boolean) { await this.request("archive_session", { archived }); this.set({ archived }); }
+
+  // ---- missions (spec §15.1): the mode chip's Mission entry
+  async enterMission(continueAnyway = false): Promise<{ entered: boolean; readiness?: any; modelSwitched?: string }> {
+    const r = await this.request("enter_mission_mode", continueAnyway ? { continue: true } : {});
+    if (r.entered) {
+      // Worker and validator models from the Missions settings page become this session's missionSettings.
+      try {
+        const m = (await bridge().userSettings.get()).missions ?? {};
+        const ms: Record<string, unknown> = {};
+        for (const k of ["workerModel", "workerReasoningEffort", "validationWorkerModel", "validationWorkerReasoningEffort", "skipScrutiny", "skipUserTesting"]) if (m[k] !== undefined) ms[k] = m[k];
+        if (Object.keys(ms).length) await this.request("update_session_settings", { missionSettings: ms });
+      } catch { /* the defaults stay */ }
+    }
+    return r;
+  }
   request<T = any>(method: string, params: Record<string, unknown> = {}) { if (!this.conn) return Promise.reject(new RpcFailure(-32005, "not connected")); return this.conn.request<T>(method, params); }
 
   onTerminal(cb: (n: any) => void) { this.terminalListeners.add(cb); return () => { this.terminalListeners.delete(cb); }; }
@@ -141,9 +171,13 @@ export class SessionController extends Store<SessionState> {
   async refreshSideChat() { try { this.set({ sideChat: (await this.request("daemon.side_chat_list")).entries }); } catch {} }
   async askSide(question: string) { const r = await this.request("daemon.side_chat_ask", { question }); this.upsertSide(r.entry); }
 
-  async attachBrowser() {
-    const url = await bridge().browser.cdpUrl();
-    if (url) await this.request("daemon.browser_attach", { cdpUrl: url }).catch(() => {});
+  private attaching?: Promise<void>;
+  /** Registers the browser pane with the daemon. `send` waits for this (briefly), so a Browser tool call never beats the attach. */
+  attachBrowser(): Promise<void> {
+    return (this.attaching ??= (async () => {
+      const url = await bridge().browser.cdpUrl();
+      if (url) await this.request("daemon.browser_attach", { cdpUrl: url }).catch(() => {});
+    })());
   }
 
   close() { this.resolveAllPrompts(); void bridge().view.set(null); this.conn?.close(); }

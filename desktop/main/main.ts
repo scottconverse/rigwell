@@ -11,6 +11,8 @@ import { startCdpProxy, type CdpProxy, type PaneHost, type PaneTarget } from "./
 import { browserPermission, buildCsp, isAllowedExternal, isTrustedSender, parseDeepLink } from "./security.ts";
 import { loadDesktopSettings, updateDesktopSettings, type DesktopSettings } from "./settings.ts";
 import { DaemonSupervisor, START_FAILURE_HINT } from "./supervisor.ts";
+import { deleteLocalProfile, gitRoot, listProfileViews, readUserSettings, saveLocalProfile, trustFolder, updateUserSettings } from "./user-settings.ts";
+import { listSkillViews } from "./skills.ts";
 import { synthWav } from "./sounds.ts";
 
 // The bundle lives in <app>/dist next to preload.cjs and renderer/. app.getAppPath() is the folder with package.json
@@ -221,6 +223,15 @@ function registerIpc() {
     return settings;
   }));
 
+  // Agent settings (<home>/settings.json), setup profiles and skills: no daemon method exists for these (secrets stay masked).
+  ipcMain.handle("userSettings:get", guard(() => readUserSettings(HOME)));
+  ipcMain.handle("userSettings:update", guard((_e, patch: unknown) => updateUserSettings(HOME, patch)));
+  ipcMain.handle("userSettings:trustFolder", guard((_e, folder: string) => trustFolder(HOME, String(folder))));
+  ipcMain.handle("profiles:list", guard(async (_e, folder: string) => { const root = await gitRoot(String(folder)); return { repoRoot: root, profiles: root ? listProfileViews(HOME, root) : [] }; }));
+  ipcMain.handle("profiles:save", guard(async (_e, folder: string, p: any) => { const root = await gitRoot(String(folder)); if (!root) throw new Error("Not a git repository"); return saveLocalProfile(HOME, root, p); }));
+  ipcMain.handle("profiles:delete", guard(async (_e, folder: string, id: string) => { const root = await gitRoot(String(folder)); if (!root) throw new Error("Not a git repository"); deleteLocalProfile(HOME, root, String(id)); }));
+  ipcMain.handle("skills:list", guard((_e, cwd: string) => listSkillViews(String(cwd))));
+
   ipcMain.handle("dialog:pickFolder", guard(async (e) => {
     const w = BrowserWindow.fromWebContents(e.sender);
     const r = await dialog.showOpenDialog(w!, { properties: ["openDirectory", "createDirectory"] });
@@ -323,7 +334,14 @@ function daemonCommand(): string[] {
   return [bun, cli];
 }
 
+/** Chromium's own background network traffic (component updater, field trials, pings) is not wanted: this app keeps local logs only (spec §14.5). It also stalled startup behind a filtering proxy. */
+function quietChromium() {
+  for (const sw of ["disable-background-networking", "disable-component-update", "disable-sync", "no-pings", "no-default-browser-check"]) app.commandLine.appendSwitch(sw);
+  app.commandLine.appendSwitch("disable-features", "OptimizationHints,Translate,MediaRouter,CertificateTransparencyComponentUpdater,AutofillServerCommunication");
+}
+
 async function boot() {
+  quietChromium();
   if (!app.requestSingleInstanceLock()) { app.quit(); return; }
   app.on("second-instance", (_e, argv) => {
     const link = argv.find((a) => a.startsWith(`${SCHEME}://`));
