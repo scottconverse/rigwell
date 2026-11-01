@@ -4,8 +4,13 @@ import type {
   AutonomyLevel, CommandLists, ContentBlock, InteractionMode, Message, ModelAdapter, ModelConfig,
   PermissionDecision, ReasoningEffort, TokenUsage, Tool, ToolResultBlock, ToolUseBlock, FileReadRecord,
 } from "../core/types.ts";
+import type { ToolExecutionMode, ToolOutput } from "../core/types.ts";
 import { ModelError, zeroUsage } from "../core/types.ts";
-import { contextBlocks, systemBlocks } from "./prompts.ts";
+import { JobManager, type Job } from "../jobs/manager.ts";
+import { ToolCallError } from "../script/bindings.ts";
+import { ScriptService, type ScriptLimits } from "../script/service.ts";
+import { PROMPT_TEXT } from "./prompt-text.generated.ts";
+import { contextBlocks, guardText, systemBlocks } from "./prompts.ts";
 
 export type WorkingState =
   | "idle" | "thinking" | "streaming_assistant_message" | "waiting_for_tool_confirmation" | "executing_tool";
@@ -53,9 +58,23 @@ export interface SessionDeps {
   persistence: SessionPersistence;
   shell: string;
   retryBaseDelayMs?: number;
+  /** Models (ids or API names) that run script_only; every other model runs direct_only (spec §4.1). */
+  scriptToolModels?: string[];
+  /** Per-session override from initialize_session. */
+  toolExecutionModeOverride?: ToolExecutionMode;
+  scriptLimits?: ScriptLimits;
   /** Restored state (load_session). */
   messages?: Message[];
   tokenUsage?: TokenUsage;
+}
+
+/** Waits on one running Script before the turn is stopped (2 hours of 5-minute waits). */
+export const SCRIPT_WAIT_STOP = 24;
+
+function modeNotice(mode: ToolExecutionMode): string {
+  return mode === "script_only"
+    ? "<system-reminder>The model changed. From now on you reach tools only through Script (tools.Name({...}) inside a program, as the Script description shows), plus script_job for background jobs. The direct tools are no longer sent.</system-reminder>"
+    : "<system-reminder>The model changed. From now on the tools (Read, Execute, Grep, Glob, Edit, Create) are available to call directly. Script and script_job are still available.</system-reminder>";
 }
 
 const AUTONOMY_RANK: Record<AutonomyLevel, number> = { off: 0, low: 1, medium: 2, high: 3 };
@@ -95,6 +114,14 @@ export class Session {
   private abort?: AbortController;
   private activeTimeMs = 0;
   private currentRun?: Promise<void>;
+  readonly jobs = new JobManager();
+  private scripts: ScriptService;
+  /** Notices to append before the next user message (e.g. the tool mode changed with the model). */
+  private pendingNotices: string[] = [];
+  private lastMode: ToolExecutionMode;
+  private waitStreak = { jobId: "", count: 0 };
+  /** Set by an inner Script call whose permission was refused in a way that ends the turn. */
+  private pendingStop?: TurnReason;
 
   constructor(private deps: SessionDeps, private host: SessionHost) {
     this.id = deps.id;
@@ -102,12 +129,39 @@ export class Session {
     this.settings = { ...deps.settings };
     this.messages = deps.messages ?? [];
     this.tokenUsage = deps.tokenUsage ?? zeroUsage();
+    this.lastMode = this.effectiveMode();
+    this.scripts = new ScriptService({
+      sessionId: this.id, jobs: this.jobs, limits: deps.scriptLimits,
+      toolNames: () => this.coreTools().map((t) => t.name),
+      host: {
+        cwd: this.cwd,
+        callTool: (name, input, meta) => this.callInner(name, input, meta),
+        notify: (text) => this.notify({ type: "tool_progress_update", toolUseId: "script", toolName: "Script", update: { type: "status", text, timestamp: new Date().toISOString() } }),
+      },
+    });
+    this.jobs.onFinished(() => { if (!this.running) this.kick(); });
+  }
+
+  /** Effective tool mode: the per-session override, else the model allowlist (spec §4.1). */
+  effectiveMode(modelId: string = this.settings.modelId): ToolExecutionMode {
+    if (this.deps.toolExecutionModeOverride) return this.deps.toolExecutionModeOverride;
+    const list = this.deps.scriptToolModels ?? [];
+    const apiName = this.deps.resolveModel(modelId)?.model;
+    return list.includes(modelId) || (apiName !== undefined && list.includes(apiName)) ? "script_only" : "direct_only";
+  }
+
+  /** Tools Script and direct calls can reach (autonomy gates apply). */
+  private coreTools(): Tool[] {
+    return this.deps.toolsFor({ autonomy: this.settings.autonomyLevel, skipPermissions: this.deps.skipPermissions });
   }
 
   get isRunning() { return this.running; }
 
+  /** Tools sent to the model: Script and script_job always; the core tools too in direct_only. */
   tools(): Tool[] {
-    return this.deps.toolsFor({ autonomy: this.settings.autonomyLevel, skipPermissions: this.deps.skipPermissions });
+    const core = this.coreTools();
+    const script = [this.scripts.scriptTool(), this.scripts.jobTool()];
+    return this.effectiveMode() === "script_only" ? script : [...core, ...script];
   }
 
   private notify(n: Record<string, unknown>) { this.host.notify(n); }
@@ -119,11 +173,16 @@ export class Session {
   }
 
   settingsSnapshot(): Record<string, unknown> {
-    return { ...this.settings, toolExecutionMode: "direct_only", availableAutonomyLevels: ["off", "low", "medium", "high"] };
+    return { ...this.settings, toolExecutionMode: this.effectiveMode(), availableAutonomyLevels: ["off", "low", "medium", "high"] };
   }
 
   updateSettings(p: Partial<SessionSettings>) {
     Object.assign(this.settings, Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined)));
+    const mode = this.effectiveMode();
+    if (mode !== this.lastMode) {
+      this.lastMode = mode;
+      this.pendingNotices.push(modeNotice(mode));
+    }
     this.notify({ type: "settings_updated", settings: this.settingsSnapshot() });
     void this.persistSettings();
   }
@@ -132,7 +191,9 @@ export class Session {
     await this.deps.persistence.saveSettings({
       model: this.settings.modelId, reasoningEffort: this.settings.reasoningEffort,
       interactionMode: this.settings.interactionMode, autonomyLevel: this.settings.autonomyLevel,
-      toolExecutionMode: "direct_only", assistantActiveTimeMs: this.activeTimeMs,
+      toolExecutionMode: this.effectiveMode(),
+      ...(this.deps.toolExecutionModeOverride ? { toolExecutionModeOverride: this.deps.toolExecutionModeOverride } : {}),
+      assistantActiveTimeMs: this.activeTimeMs,
       tokenUsage: this.tokenUsage, inclusiveTokenUsage: this.tokenUsage, lastCallTokenUsage: this.lastCallTokenUsage,
       ...(this.providerLock ? { providerLock: this.providerLock, apiProviderLock: this.providerLock } : {}),
     });
@@ -141,7 +202,15 @@ export class Session {
   /** Accepts a user message. Returns at once; the turn runs in the background. */
   addUserMessage(text: string, messageId: string = crypto.randomUUID()) {
     this.queue.push({ text, messageId });
-    if (!this.running) this.currentRun = this.drain();
+    this.kick();
+  }
+
+  /** Starts the turn loop unless it is already running. */
+  private kick() {
+    if (this.currentRun) return;
+    const p = this.drain();
+    this.currentRun = p;
+    void p.then(() => { if (this.currentRun === p) this.currentRun = undefined; });
   }
 
   /** Resolves when no turn is running. */
@@ -152,15 +221,52 @@ export class Session {
   private async drain() {
     this.running = true;
     try {
-      while (this.queue.length) {
-        const next = this.queue.shift()!;
-        await this.runTurn(next.text, next.messageId);
+      for (;;) {
+        while (this.queue.length) {
+          const next = this.queue.shift()!;
+          await this.runTurn(next.text, next.messageId);
+        }
+        // A background job finished while the model was asleep: wake it with a reminder (spec §4.3).
+        const wake = this.takeWake();
+        if (!wake) break;
+        await this.runTurn(wake, `wake-${crypto.randomUUID()}`, "llm_only");
       }
     } finally {
       this.running = false;
-      this.currentRun = undefined;
     }
   }
+
+  /** Reminder text for background jobs that finished unseen, or null. Marks them seen. */
+  private takeWake(): string | null {
+    const done = this.jobs.unreported();
+    if (!done.length) return null;
+    const parts = done.map((j) => {
+      j.reported = true;
+      let body = JSON.stringify(j.report());
+      if (body.length > 16_000) body = `${body.slice(0, 8_000)} ... [cut] ... ${body.slice(-8_000)}`;
+      return `Background job ${j.id} (${j.kind}) finished with status ${j.status}. Result:\n${body}`;
+    });
+    return `<system-reminder>\n${parts.join("\n\n")}\n</system-reminder>`;
+  }
+
+  /** True while background jobs run or finished results have not reached the model. */
+  hasBackgroundWork(): boolean {
+    return this.jobs.running().length > 0 || this.jobs.unreported().length > 0;
+  }
+
+  /** Resolves when no turn runs and no background work is left (jobs finish, the wake turn runs). */
+  async settled() {
+    for (;;) {
+      await this.idle();
+      if (!this.hasBackgroundWork()) return;
+      const live = this.jobs.running();
+      if (!live.length) { this.kick(); continue; }
+      await Promise.race(live.map((j) => j.done));
+      await Promise.resolve();
+    }
+  }
+
+  async stopBackgroundJobs() { await this.jobs.stopAll(); }
 
   private lastId(): string | null { return this.messages.at(-1)?.id ?? null; }
 
@@ -170,7 +276,7 @@ export class Session {
     await this.deps.persistence.appendMessage(msg, parent);
   }
 
-  private async runTurn(text: string, turnId: string) {
+  private async runTurn(text: string, turnId: string, visibility?: "llm_only") {
     const started = Date.now();
     this.abort = new AbortController();
     const signal = this.abort.signal;
@@ -182,11 +288,14 @@ export class Session {
       if (!this.messages.some((m) => m.role === "user")) {
         const ctx = contextBlocks({
           cwd: this.cwd, interactionMode: this.settings.interactionMode, autonomy: this.settings.autonomyLevel,
-          modelId: this.settings.modelId, shell: this.deps.shell,
+          modelId: this.settings.modelId, shell: this.deps.shell, toolExecutionMode: this.effectiveMode(),
         });
         await this.push({ id: `context-${turnId}`, role: "user", visibility: "llm_only", content: ctx.map((t) => ({ type: "text", text: t })) });
       }
-      await this.push({ id: turnId, role: "user", content: [{ type: "text", text }] });
+      for (const n of this.pendingNotices.splice(0)) {
+        await this.push({ id: `notice-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: n }] });
+      }
+      await this.push({ id: turnId, role: "user", ...(visibility ? { visibility } : {}), content: [{ type: "text", text }] });
 
       for (;;) {
         if (signal.aborted) { reason = "cancelled"; break; }
@@ -195,7 +304,7 @@ export class Session {
         const messageId = crypto.randomUUID();
         const tools = this.tools();
         const req = {
-          model, sessionId: this.id, system: systemBlocks(),
+          model, sessionId: this.id, system: systemBlocks(this.effectiveMode()),
           tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
           messages: this.modelMessages(model.provider),
           maxOutputTokens: model.maxOutputTokens ?? 32000,
@@ -262,6 +371,7 @@ export class Session {
         const outcome = await this.runTools(calls, signal);
         await this.push({ id: crypto.randomUUID(), role: "user", content: outcome.results });
         if (outcome.stop) { reason = outcome.stop; break; }
+        if (await this.scriptWaitGuard(calls)) break;
       }
     } catch (e) {
       if (signal.aborted) reason = "cancelled";
@@ -330,15 +440,97 @@ export class Session {
       this.setState("executing_tool");
       try {
         const out = await tool.run(call.input, {
-          cwd: this.cwd, sessionId: this.id, readFiles: this.readFiles, signal,
+          cwd: this.cwd, sessionId: this.id, readFiles: this.readFiles, signal, toolUseId: call.id, jobs: this.jobs,
           onProgress: (p) => this.notify({ type: "tool_progress_update", toolUseId: call.id, toolName: call.name, update: { ...p, timestamp: new Date().toISOString() } }),
         });
         finish(out.content, !!out.isError, true);
       } catch (e) {
         finish(`Tool failed: ${(e as Error)?.message ?? e}`, true, true);
       }
+      if (this.pendingStop) { stop = this.pendingStop; this.pendingStop = undefined; }
     }
     return { results, stop };
+  }
+
+  /**
+   * One tool call made from inside a Script. It takes the same path as a direct call: permission
+   * gate (a prompt per call that needs one), execution, notifications and transcript records.
+   * Throws ToolCallError when the call is refused; the Script sees a rejected promise.
+   */
+  private async callInner(
+    name: string, input: Record<string, unknown>,
+    meta: { runId: string; n: number; outerId: string; signal: AbortSignal; foreground: boolean },
+  ): Promise<ToolOutput> {
+    const id = `${meta.runId}-${meta.n}`;
+    const use: ToolUseBlock = { type: "tool_use", id, name, input, scriptExecution: { runId: meta.runId, outerToolUseId: meta.outerId } };
+    this.notify({ type: "tool_call", toolUse: use });
+    await this.push({ id: `repl-tool-call:${id}`, role: "assistant", visibility: "user_only", content: [use] });
+    const finish = async (content: string, isError: boolean) => {
+      this.notify({ type: "tool_result", toolUseId: id, messageId: `repl-tool-result:${id}`, content, isError });
+      await this.push({ id: `repl-tool-result:${id}`, role: "user", visibility: "user_only", content: [{ type: "tool_result", tool_use_id: id, content, ...(isError ? { is_error: true } : {}) }] });
+    };
+    const refuse = async (message: string, errName = "Error"): Promise<never> => {
+      await finish(message, true);
+      throw new ToolCallError(message, errName);
+    };
+    const tool = this.coreTools().find((t) => t.name === name);
+    if (!tool) return refuse(`Unknown tool: ${name}. Available in a Script: ${this.coreTools().map((t) => t.name).join(", ")}.`);
+    if (name === "Execute" && input.background === true) {
+      return refuse("background is not available inside a Script. Start the whole Script with //@background instead.");
+    }
+    const d = this.deps.decide(name, input, {
+      autonomy: this.settings.autonomyLevel, interactionMode: this.settings.interactionMode,
+      skipPermissions: this.deps.skipPermissions, lists: this.deps.lists, cwd: this.cwd,
+    });
+    if (d.decision === "block") return refuse(d.message, "PermissionDenied");
+    if (d.decision === "missing_risk") return refuse(d.message);
+    if (d.decision === "ask") {
+      const verdict = await this.askPermission(use, d);
+      if (verdict === "rejected") return refuse("PermissionDenied: the user rejected this tool call. Do not retry it; change your approach or ask the user.", "PermissionDenied");
+      if (verdict === "cancel" || verdict === "no_approver") {
+        if (meta.foreground && this.abort && !this.abort.signal.aborted) {
+          this.pendingStop = verdict === "cancel" ? "permission_rejected" : "no_approver_available";
+          if (verdict === "no_approver") {
+            this.notify({
+              type: "error", errorType: "SessionError", timestamp: new Date().toISOString(),
+              message: `Tool call ${name} (inside a Script) needs approval at autonomy "${this.settings.autonomyLevel}". Re-run with a higher --auto level (low, medium, high) or with --skip-permissions-unsafe.`,
+            });
+          }
+          this.abort.abort();
+        }
+        return refuse(verdict === "cancel"
+          ? "PermissionDenied: the user rejected this tool call and stopped the turn."
+          : "PermissionDenied: this call needs approval, and this run cannot ask for it.", "PermissionDenied");
+      }
+    }
+    try {
+      const out = await tool.run(input, { cwd: this.cwd, sessionId: this.id, readFiles: this.readFiles, signal: meta.signal, toolUseId: id });
+      await finish(out.content, !!out.isError);
+      return out;
+    } catch (e) {
+      return refuse(`Tool failed: ${(e as Error)?.message ?? e}`);
+    }
+  }
+
+  /**
+   * Spec §4.2: repeats that are only waits on one running Script get no nudge and stop at 24.
+   * Returns true when the turn was stopped.
+   */
+  private async scriptWaitGuard(calls: ToolUseBlock[]): Promise<boolean> {
+    const first = calls[0];
+    const jobId = first?.name === "script_job" && first.input.action === "wait" ? String(first.input.job_id ?? "") : "";
+    const onlyWaits = jobId !== "" && calls.every((c) => c.name === "script_job" && c.input.action === "wait" && c.input.job_id === jobId);
+    if (!onlyWaits || this.jobs.get(jobId)?.status !== "running") { this.waitStreak = { jobId: "", count: 0 }; return false; }
+    this.waitStreak = this.waitStreak.jobId === jobId ? { jobId, count: this.waitStreak.count + 1 } : { jobId, count: 1 };
+    if (this.waitStreak.count < SCRIPT_WAIT_STOP) return false;
+    const vars = { JOB_ID: jobId, COUNT: this.waitStreak.count, HOURS: Math.round((this.waitStreak.count * 5) / 60) };
+    this.waitStreak = { jobId: "", count: 0 };
+    const user = guardText("guard_scriptwait_stop_user", vars);
+    const notice: Message = { id: crypto.randomUUID(), role: "assistant", visibility: "user_only", content: [{ type: "text", text: user }] };
+    await this.push(notice);
+    this.notify({ type: "create_message", message: notice });
+    await this.push({ id: crypto.randomUUID(), role: "user", visibility: "llm_only", content: [{ type: "text", text: guardText("guard_scriptwait_stop_transcript", vars) }] });
+    return true;
   }
 
   /** Returns "approved", "rejected" (model continues), "cancel" (turn stops) or "no_approver". */
