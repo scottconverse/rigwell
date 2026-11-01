@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createConnection } from "./connection.ts";
 import { rigwellHome } from "../storage/paths.ts";
-import { createAutomationService, type ServiceOptions } from "../automations/index.ts";
+import { automationTools, createAutomationService, type ServiceOptions } from "../automations/index.ts";
+import { onWorktreeNotification, startWorktreeHousekeeping } from "../worktree/connect.ts";
 import { loadSettings } from "../storage/settings.ts";
 import { METHOD_PREFIX } from "../protocol/rpc.ts";
 import { createMissionService } from "../missions/index.ts";
@@ -36,13 +37,18 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
       cronHost: {
         isLive: (id) => !!live(id),
         isBusy: (id) => !!live(id)?.isRunning,
-        inject: (id, prompt) => { const s = live(id); if (!s) return false; s.addUserMessage(prompt); return true; },
+        inject: (id, prompt) => { const s = live(id); if (!s) return false; s.addUserMessage(prompt, undefined, "automation"); return true; },
       },
-      onCronChanged: (cron) => { for (const c of conns) c.peer.notify(METHOD_PREFIX + "cron_state_changed", { cron }); },
+      onCronChanged: (cron) => { for (const c of conns) c.peer.notify(METHOD_PREFIX + "cron.state_changed", { cron }); },
+      onAutoPaused: (a) => { for (const c of conns) c.peer.notify(METHOD_PREFIX + "automation.auto_paused", a); },
       ...opts.automations,
     });
   })();
   auto?.start();
+  const autoTools = auto ? automationTools(auto) : [];
+  // Worktrees (spec 18): removal and branch-change broadcasts, and the 5-minute housekeeping pass.
+  const offWorktree = onWorktreeNotification((method, params) => { for (const c of conns) c.peer.notify(METHOD_PREFIX + method, params); });
+  const housekeeping = startWorktreeHousekeeping({ log: opts.log });
   // Side pane (spec §17): files, terminals, browser control and side chat. The app's CDP proxy port and endpoint
   // arrive through the environment (RIGWELL_BROWSER_CDP_PORT / RIGWELL_BROWSER_CDP_URL) or `daemon.browser_attach`.
   const sidepane = opts.sidepane === false ? undefined : createSidePane({
@@ -68,7 +74,7 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
       canPrompt: true, log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs,
       extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx), ...mission.methods },
       wrapTools: mission.wrapTools,
-      extraTools: sidepane ? () => sidepane.tools() : undefined,
+      extraTools: sidepane || autoTools.length ? () => [...(sidepane ? sidepane.tools() : []), ...autoTools] : undefined,
     });
     conns.add(conn);
     ctxs.set(conn, ctx);
@@ -131,6 +137,8 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
     get sessionCount() { return [...conns].filter((c) => c.session).length; },
     stop() {
       auto?.stop();
+      offWorktree();
+      housekeeping.stop();
       sidepane?.closeAll();
       for (const c of conns) void c.shutdown();
       server.stop(true);

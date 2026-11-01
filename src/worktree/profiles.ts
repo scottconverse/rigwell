@@ -1,5 +1,5 @@
 // Setup profiles (spec §18.3): repo profiles (need a trusted repo) and local profiles (no trust check).
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { rigwellHome } from "../storage/paths.ts";
@@ -58,7 +58,72 @@ export function listProfiles(repoRoot: string): SetupProfile[] {
 /** Finds a profile by id; local wins over repository on a clash. */
 export function findProfile(repoRoot: string, id: string): SetupProfile | undefined {
   const all = listProfiles(repoRoot);
-  return all.find((p) => p.id === id && p.source === "local") ?? all.find((p) => p.id === id);
+  const found = all.find((p) => p.id === id && p.source === "local") ?? all.find((p) => p.id === id);
+  if (found) return found;
+  // A deleted local profile still answers with its name and cleanup script (old worktrees can be cleaned up).
+  const gone = readProfileIndex(repoRoot).deleted[id];
+  return gone ? { id, source: "local", name: gone.name, cleanupScript: gone.cleanupScript } : undefined;
+}
+
+// ---- index.yaml (spec 18.3): lastUsedProfileId, and name + cleanup script of deleted profiles ----
+
+export interface ProfileIndex {
+  lastUsedProfileId?: string;
+  /** Deleted local profiles keep only these two fields so old worktrees can still be cleaned up. */
+  deleted: Record<string, { name: string; cleanupScript?: string }>;
+}
+
+const indexFile = (repoRoot: string) => path.join(localProfilesDir(repoRoot), "index.yaml");
+
+export function readProfileIndex(repoRoot: string): ProfileIndex {
+  try {
+    const doc = (Bun as any).YAML.parse(readFileSync(indexFile(repoRoot), "utf8")) as Record<string, any> | null;
+    const deleted: ProfileIndex["deleted"] = {};
+    for (const [id, v] of Object.entries(doc?.deleted ?? {})) {
+      const d = v as Record<string, unknown>;
+      if (typeof d?.name === "string") deleted[id] = { name: d.name, ...(typeof d.cleanupScript === "string" && d.cleanupScript ? { cleanupScript: d.cleanupScript } : {}) };
+    }
+    return { lastUsedProfileId: typeof doc?.lastUsedProfileId === "string" ? doc.lastUsedProfileId : undefined, deleted };
+  } catch { return { deleted: {} }; }
+}
+
+function writeProfileIndex(repoRoot: string, idx: ProfileIndex) {
+  const dir = localProfilesDir(repoRoot);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chmodSync(dir, 0o700);
+  const lines: string[] = [];
+  if (idx.lastUsedProfileId) lines.push(`lastUsedProfileId: ${JSON.stringify(idx.lastUsedProfileId)}`);
+  const ids = Object.keys(idx.deleted);
+  if (ids.length) {
+    lines.push("deleted:");
+    for (const id of ids) {
+      lines.push(`  ${JSON.stringify(id)}:`, `    name: ${JSON.stringify(idx.deleted[id]!.name)}`);
+      if (idx.deleted[id]!.cleanupScript) lines.push(`    cleanupScript: ${JSON.stringify(idx.deleted[id]!.cleanupScript)}`);
+    }
+  }
+  const f = indexFile(repoRoot);
+  writeFileSync(f, lines.join("\n") + "\n", { mode: 0o600 });
+  chmodSync(f, 0o600);
+}
+
+/** Remembers the profile the user picked last for this repo. */
+export function setLastUsedProfile(repoRoot: string, id: string | undefined) {
+  const idx = readProfileIndex(repoRoot);
+  if (idx.lastUsedProfileId === id) return;
+  writeProfileIndex(repoRoot, { ...idx, lastUsedProfileId: id });
+}
+
+/** Deletes a local profile file; its name and cleanup script stay in index.yaml. False when there was no such file. */
+export function deleteLocalProfile(repoRoot: string, id: string): boolean {
+  const file = ["yaml", "yml"].map((e) => path.join(localProfilesDir(repoRoot), `${id}.${e}`)).find((f) => existsSync(f));
+  if (!file) return false;
+  const p = readDir(localProfilesDir(repoRoot), "local").find((x) => x.id === id);
+  const idx = readProfileIndex(repoRoot);
+  idx.deleted[id] = { name: p?.name ?? id, ...(p?.cleanupScript ? { cleanupScript: p.cleanupScript } : {}) };
+  if (idx.lastUsedProfileId === id) idx.lastUsedProfileId = undefined;
+  writeProfileIndex(repoRoot, idx);
+  rmSync(file);
+  return true;
 }
 
 /** Writes a local profile (folder 0700, file 0600). Used by tests and tooling. */

@@ -42,7 +42,77 @@ function field(text: string, lo: number, hi: number, names?: string[], nameBase 
   return out;
 }
 
-/** Parses a preset, a 5-field cron, or an interval ("every 30m", "every 2h", "every 1d"). */
+const DAY_NAMES: Record<string, number> = {
+  sunday: 0, sun: 0, monday: 1, mon: 1, tuesday: 2, tue: 2, tues: 2, wednesday: 3, wed: 3,
+  thursday: 4, thu: 4, thur: 4, thurs: 4, friday: 5, fri: 5, saturday: 6, sat: 6,
+};
+const TIME_RE = "(noon|midnight|\\d{1,2}(?::\\d{2})?\\s*(?:am|pm|a\\.m\\.|p\\.m\\.)?)";
+
+/** "9am", "9:30pm", "18:30", "noon", "9" to [hour, minute]; null when it is not a time of day. */
+function clock(text: string): [number, number] | null {
+  const t = text.trim().toLowerCase().replace(/\./g, "");
+  if (t === "noon") return [12, 0];
+  if (t === "midnight") return [0, 0];
+  const m = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/.exec(t);
+  if (!m) return null;
+  let h = Number(m[1]);
+  const min = m[2] === undefined ? 0 : Number(m[2]);
+  if (min > 59) return null;
+  if (m[3]) {
+    if (h < 1 || h > 12) return null;
+    h = (h % 12) + (m[3] === "pm" ? 12 : 0);
+  } else if (h > 23) return null;
+  return [h, min];
+}
+
+const NATURAL_HELP =
+  'Use a preset (hourly, daily, weekly, monthly), a 5-field cron, "every N minutes|hours|days", or a phrase such as ' +
+  '"every weekday at 9am", "daily at 18:30", "every monday", "every weekend at 10am", "monthly on the 1st at 8am"';
+
+/**
+ * Small deterministic parser for common phrases (spec 16.2 "natural language"). Returns a 5-field cron string,
+ * null when the text is not a schedule phrase at all, and throws ScheduleError when it is one but the time is bad.
+ * No time given means 09:00. Supported: `every weekday|weekend|day|<day>[, <day> and <day>]`, `daily`, `weekdays`,
+ * `weekends`, `monthly|every month on the <N>th`, each with an optional `at <time>` (also in front).
+ */
+export function naturalToCron(input: string): string | null {
+  let t = input.trim().toLowerCase().replace(/[.,;!]+$/, "").replace(/\s+/g, " ");
+  let time: [number, number] | null = null;
+  const bad = () => new ScheduleError(`"${input.trim()}" has a time of day that is not valid`);
+  const lead = new RegExp(`^at ${TIME_RE} (.+)$`).exec(t);
+  const tail = new RegExp(`^(.+?) (?:at )?${TIME_RE}$`).exec(t);
+  if (lead) { time = clock(lead[1]!); if (!time) throw bad(); t = lead[2]!; }
+  else if (tail && (clock(tail[2]!) || /\bat\b/.test(t))) {
+    time = clock(tail[2]!);
+    if (!time) throw bad();
+    t = tail[1]!.replace(/ at$/, "");
+  }
+  if (t === "every hour" || t === "hourly") return time ? null : "0 * * * *";
+  const [h, min] = time ?? [9, 0];
+  const when = `${min} ${h}`;
+  if (/^(every day|daily|every night|nightly|each day)$/.test(t)) return `${when} * * *`;
+  if (/^(every weekday|weekdays|every week day|on weekdays|each weekday)$/.test(t)) return `${when} * * 1-5`;
+  if (/^(every weekend|weekends|on weekends|each weekend)$/.test(t)) return `${when} * * 0,6`;
+  const month = /^(?:monthly|every month|each month)(?: on)?(?: the)? ?(\d{1,2})?(?:st|nd|rd|th)?$/.exec(t) ?? /^on the (\d{1,2})(?:st|nd|rd|th)?(?: of)? (?:every|each) month$/.exec(t);
+  if (month) {
+    const d = month[1] === undefined ? 1 : Number(month[1]);
+    if (d < 1 || d > 31) throw new ScheduleError(`day of month ${d} is out of range`);
+    return `${when} ${d} * *`;
+  }
+  const days = /^(?:every|on|each) ([a-z]+(?:s)?(?:(?:, | and |, and | & )[a-z]+s?)*)$/.exec(t);
+  if (days) {
+    const set = new Set<number>();
+    for (const w of days[1]!.split(/, and |, | and | & /)) {
+      const d = DAY_NAMES[w] ?? DAY_NAMES[w.replace(/s$/, "")];
+      if (d === undefined) return null;
+      set.add(d);
+    }
+    return `${when} * * ${[...set].sort((a, b) => a - b).join(",")}`;
+  }
+  return null;
+}
+
+/** Parses a preset, a 5-field cron, an interval ("every 30m", "every 2h", "every 1d") or a natural phrase. */
 export function parseSchedule(input: string): Schedule {
   const text = input.trim();
   if (!text) throw new ScheduleError("empty schedule");
@@ -54,7 +124,13 @@ export function parseSchedule(input: string): Schedule {
     if (n < 1 || everyMs < MIN) throw new ScheduleError("interval must be at least 1 minute");
     return { kind: "interval", source: text, everyMs };
   }
-  const expr = PRESETS[text.toLowerCase()] ?? text;
+  let expr = PRESETS[text.toLowerCase()];
+  if (!expr) {
+    const tokens = text.split(/\s+/);
+    const cronLike = tokens.length === 5 && tokens.every((x) => /^[0-9*?\/,-]+$|^[a-z]{3}([,-][a-z]{3})*$/i.test(x));
+    expr = cronLike ? text : naturalToCron(text) ?? "";
+    if (!expr) throw new ScheduleError(`Cannot understand schedule "${text}". ${NATURAL_HELP}.`);
+  }
   const f = expr.split(/\s+/);
   if (f.length !== 5) throw new ScheduleError(`expected 5 cron fields, a preset or "every N<m|h|d>", got "${text}"`);
   return {
@@ -123,4 +199,16 @@ export function slotsBetween(s: Schedule, after: number, upTo: number, tz: strin
     t = n;
   }
   return out;
+}
+
+/**
+ * Save-time normalisation (spec 16.2): a natural phrase becomes its cron once, so the stored schedule is exact and
+ * never re-interpreted. Presets, cron and intervals are kept as written. Throws ScheduleError for anything else.
+ */
+export function normalizeSchedule(input: string): string {
+  const s = parseSchedule(input);
+  if (s.kind === "cron" && naturalToCron(input.trim()) !== null && !PRESETS[input.trim().toLowerCase()]) {
+    return naturalToCron(input.trim())!;
+  }
+  return input.trim();
 }

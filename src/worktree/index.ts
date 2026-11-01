@@ -5,3 +5,7 @@ export { stripSecrets, isSecretName } from "./env.ts";
 export { parseWorktreeInclude, copyWorktreeIncludes } from "./include.ts";
 export { runScript } from "./scripts.ts";
 export { repoTopLevel } from "./git.ts";
+export { HeadWatcher, type BranchChange } from "./watch.ts";
+export { Housekeeper, fileSessionHost, HOUSEKEEPING_INTERVAL_MS, ORPHAN_AGE_MS, type HousekeepingHost, type SessionRecord } from "./housekeeping.ts";
+export { markTrusted, forgetTrusted } from "./trust.ts";
+export { onSessionArchived, onSessionTitleUpdated, onWorktreeNotification, managerFor, startWorktreeHousekeeping } from "./connect.ts";
