@@ -21,6 +21,9 @@ export interface CustomModelEntry {
   maxContextLimit?: number;
   reasoningEffort?: ReasoningEffort;
   noImageSupport?: boolean;
+  apiProvider?: string;
+  chatCompletionRequest?: Record<string, unknown>;
+  chatCompletionRequestByProvider?: Record<string, Record<string, unknown>>;
   [k: string]: unknown;
 }
 

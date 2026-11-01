@@ -60,7 +60,7 @@ export const zeroUsage = (): TokenUsage => ({
 
 // ---------- Models ----------
 
-export type ProviderKind = "anthropic" | "openai";
+export type ProviderKind = "anthropic" | "openai" | "generic-chat-completion-api";
 
 /** One resolved model (from settings `customModels`, spec §12.2). */
 export interface ModelConfig {
@@ -76,6 +76,11 @@ export interface ModelConfig {
   maxContextLimit?: number;
   reasoningEffort?: ReasoningEffort;
   noImageSupport?: boolean;
+  /** Chat Completions quirk profile: mistral, together, baseten, databricks, google (spec 4.6.6). */
+  apiProvider?: string;
+  /** Chat Completions body overrides: model level, and per api-provider (applied last). */
+  chatCompletionRequest?: Record<string, unknown>;
+  chatCompletionRequestByProvider?: Record<string, Record<string, unknown>>;
 }
 
 /** A tool as sent to the model. */
