@@ -5,7 +5,8 @@ import type {
   AutonomyLevel, CommandLists, ContentBlock, InteractionMode, Message, ModelAdapter, ModelConfig,
   PermissionDecision, ReasoningEffort, TokenUsage, Tool, ToolResultBlock, ToolUseBlock, FileReadRecord,
 } from "../core/types.ts";
-import type { ToolExecutionMode, ToolOutput } from "../core/types.ts";
+import type { ToolContext, ToolExecutionMode, ToolOutput } from "../core/types.ts";
+import { SnapshotRecorder } from "../snapshots/index.ts";
 import { ModelError, zeroUsage } from "../core/types.ts";
 import { JobManager, type Job } from "../jobs/manager.ts";
 import { ToolCallError } from "../script/bindings.ts";
@@ -232,6 +233,9 @@ export class Session {
   archived: Message[];
   private compactionAnchor?: string;
   private compactedOnce = false;
+  /** File snapshots for rewind: the user message of the running turn is the boundary. */
+  private snapRec?: SnapshotRecorder;
+  private turnMessageId?: string;
   private callsSinceCompaction = 0;
   /** Context size after the last model call (tokens) and the message count it covered. */
   private lastCallContext?: { tokens: number; count: number };
@@ -580,6 +584,7 @@ export class Session {
     const toolCallsAtStart = this.toolCalls;
     this.halt = undefined;
     this.turnChildUsage = zeroUsage();
+    this.turnMessageId = turnId;
     let blocked = false;
 
     try {
@@ -1123,7 +1128,7 @@ export class Session {
       try {
         this.toolCalls++;
         out = await tool.run(input, {
-          cwd: this.cwd, sessionId: this.id, readFiles: this.readFiles, signal, toolUseId: call.id, jobs: this.jobs, env: this.hookEnv,
+          cwd: this.cwd, sessionId: this.id, readFiles: this.readFiles, signal, toolUseId: call.id, jobs: this.jobs, env: this.hookEnv, snapshots: this.snapshotHooks(call.id),
           onProgress: (p) => this.notify({ type: "tool_progress_update", toolUseId: call.id, toolName: call.name, update: { ...p, timestamp: new Date().toISOString() } }),
         });
         finish(out.content, !!out.isError, true);
@@ -1146,6 +1151,14 @@ export class Session {
   }
 
   /** A file tool touched `path`: look for instruction files and skills in the folders on the way (spec 12.2, 5.8). */
+  /** Snapshot hooks for Edit/Create (rewind). Absent for child sessions and when RIGWELL_SNAPSHOTS=off. */
+  private snapshotHooks(toolUseId: string): ToolContext["snapshots"] {
+    const turn = this.turnMessageId;
+    if (!turn || this.deps.isChild || process.env.RIGWELL_SNAPSHOTS === "off") return undefined;
+    this.snapRec ??= new SnapshotRecorder(this.id, this.deps.log);
+    return this.snapRec.hooks(turn, this.archived.length + this.messages.findIndex((m) => m.id === turn), toolUseId);
+  }
+
   private noteTouched(tool: string, input: Record<string, unknown>) {
     if (!["Read", "Edit", "Create"].includes(tool) || typeof input.path !== "string" || !input.path) return;
     try {
@@ -1297,7 +1310,7 @@ export class Session {
     }
     try {
       this.toolCalls++;
-      const out = await tool.run(input, { cwd: this.cwd, sessionId: this.id, readFiles: this.readFiles, signal: meta.signal, toolUseId: id, env: this.hookEnv });
+      const out = await tool.run(input, { cwd: this.cwd, sessionId: this.id, readFiles: this.readFiles, signal: meta.signal, toolUseId: id, env: this.hookEnv, snapshots: this.snapshotHooks(id) });
       await finish(out.content, !!out.isError);
       if (!out.isError) this.noteTouched(name, input);
       return out;
