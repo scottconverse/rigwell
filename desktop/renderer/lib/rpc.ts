@@ -12,10 +12,12 @@ export class RpcFailure extends Error {
 
 type Pending = { resolve(v: any): void; reject(e: Error): void };
 const conns = new Map<number, DaemonConn>();
-let wired = false;
+let wired: object | undefined;
 function wire() {
-  if (wired) return;
-  wired = true;
+  // Once per preload bridge (tests swap the bridge object).
+  if (wired === bridge().daemon) return;
+  wired = bridge().daemon;
+  conns.clear();
   bridge().daemon.onMessage(({ connId, message }) => conns.get(connId)?.handle(message));
   bridge().daemon.onClosed(({ connId }) => { conns.get(connId)?.finish(); });
 }

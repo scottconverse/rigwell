@@ -18,13 +18,13 @@ const editTurn = (p: string, a: string, b: string, t: string): FakeTurn[] => [
 ];
 const say = (t: string): FakeTurn => () => ({ text: t });
 
-async function setup(script: FakeTurn[]) {
+async function setup(script: FakeTurn[], extra: Record<string, unknown> = {}) {
   const model = await startFakeAnthropic(script);
   servers.push(model);
   process.env.RIGWELL_HOME = makeHome([{ provider: "anthropic", url: model.url, displayName: "Fake Anthropic" }]);
   const repo = makeRepo();
   const c = inproc();
-  const init = await c.call("initialize_session", { cwd: repo, modelId: "custom:Fake-Anthropic-0", autonomyLevel: "high", toolExecutionMode: "direct_only" });
+  const init = await c.call("initialize_session", { cwd: repo, modelId: "custom:Fake-Anthropic-0", autonomyLevel: "high", toolExecutionMode: "direct_only", ...extra });
   return { model, repo, c, sessionId: init.sessionId as string };
 }
 
@@ -99,6 +99,29 @@ test("an external change since the agent's last edit is refused unless forced; n
   expect(r.restoredFiles).toEqual([f]);
   expect(readFileSync(f, "utf8")).toContain("Helo");
   expect(loadManifest(sessionId).boundaries.length).toBe(0);
+  await c.call("close_session", {});
+}, 30000);
+
+test("ApplyPatch files (update, add, delete) are captured and restored by rewind", async () => {
+  const patch = [
+    "*** Begin Patch", "*** Update File: greet.js", "@@", '-  return "Helo, " + name + "!";', '+  return "Hello, " + name + "!";', "*** Add File: made/new.txt", "+fresh", "*** Delete File: gone.txt", "*** End Patch",
+  ].join("\n");
+  const { repo, c } = await setup([
+    () => ({ toolCalls: [{ name: "Read", input: { path: "greet.js" } }, { name: "Read", input: { path: "gone.txt" } }] }),
+    () => ({ toolCalls: [{ name: "ApplyPatch", input: { input: patch } }] }), say("patched"),
+  ], { additionalToolIds: ["ApplyPatch"] });
+  writeFileSync(path.join(repo, "gone.txt"), "keep me\n");
+  const g = path.join(repo, "greet.js"), n = path.join(repo, "made", "new.txt"), d = path.join(repo, "gone.txt");
+  const orig = readFileSync(g, "utf8");
+  await turn(c, "patch it", "p1");
+  expect(readFileSync(g, "utf8")).toContain("Hello");
+  expect(existsSync(n)).toBe(true);
+  expect(existsSync(d)).toBe(false);
+  const r = await c.call("rewind_session", { messageId: "p1", restoreFiles: true });
+  expect([...r.restoredFiles].sort()).toEqual([d, g, n].sort());
+  expect(readFileSync(g, "utf8")).toBe(orig);
+  expect(readFileSync(d, "utf8")).toBe("keep me\n");
+  expect(existsSync(n)).toBe(false);
   await c.call("close_session", {});
 }, 30000);
 

@@ -29,7 +29,7 @@ import { forkSession } from "../storage/fork.ts";
 import { RewindError, rewindSession } from "../snapshots/index.ts";
 
 /** Sessions whose client went away while a prompt was open: kept for a reconnecting load_session (spec 3.1.5 pending lists). */
-const parked = new Map<string, { session: Session; files: SessionFiles; timer: ReturnType<typeof setTimeout> }>();
+const parked = new Map<string, { session: Session; files: SessionFiles; worktree?: SessionWorktree; timer: ReturnType<typeof setTimeout> }>();
 const parkMs = () => Number(process.env.RIGWELL_PARK_MS) || 30 * 60_000;
 
 export interface ConnectionOptions {
@@ -313,6 +313,8 @@ export function createConnection(write: (line: string) => void, opts: Connection
           parked.delete(id);
           session = live.session;
           files = live.files;
+          // The parked session kept its worktree hold; the new connection owns it now (released on close/shutdown).
+          worktree = live.worktree;
           session.setHost(hostFor());
           const lenv = environment(session.cwd);
           notify({ type: "settings_updated", settings: session.settingsSnapshot() });
@@ -555,13 +557,15 @@ export function createConnection(write: (line: string) => void, opts: Connection
       // The client went away while a prompt is open: keep the session for a reconnecting load_session.
       if (o.park && session && !closed && session.isRunning && session.pendingPrompts().length) {
         const s = session;
+        const wt = worktree;
         const timer = setTimeout(() => {
           parked.delete(s.id);
+          if (wt) releaseWorktree(wt.info.path);
           s.interrupt();
           void s.idle().then(() => s.stopBackgroundJobs()).then(() => s.end("other")).catch(() => {});
         }, parkMs());
         timer.unref?.();
-        parked.set(s.id, { session: s, files: files!, timer });
+        parked.set(s.id, { session: s, files: files!, worktree: wt, timer });
         peer.end();
         return;
       }
