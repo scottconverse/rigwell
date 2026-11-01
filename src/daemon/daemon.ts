@@ -6,6 +6,7 @@ import { rigwellHome } from "../storage/paths.ts";
 import { createAutomationService, type ServiceOptions } from "../automations/index.ts";
 import { loadSettings } from "../storage/settings.ts";
 import { METHOD_PREFIX } from "../protocol/rpc.ts";
+import { createMissionService } from "../missions/index.ts";
 import { createSidePane, type ConnCtx, type SidePaneOptions } from "../sidepane/index.ts";
 import { DEFAULT_WS_PORT, removeDaemonInfo, startWsServer, writeDaemonInfo } from "./ws.ts";
 
@@ -50,6 +51,7 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
     browserDefaultUrl: process.env.RIGWELL_BROWSER_CDP_URL,
     ...opts.sidepane,
   });
+  const missions = createMissionService({ log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs });
   const ctxs = new Map<ReturnType<typeof createConnection>, ConnCtx>();
   const mkConn = (write: (line: string) => void) => {
     let conn!: ReturnType<typeof createConnection>;
@@ -58,9 +60,14 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
       session: () => conn.session,
       notify: (n) => conn.peer.notify(METHOD_PREFIX + "session_notification", { ...(conn.session ? { sessionId: conn.session.id } : {}), notification: n }),
     };
+    const mission = missions.attach({
+      session: () => conn.session, notify: ctx.notify,
+      request: (m, p) => conn.peer.request(METHOD_PREFIX + m, p),
+    });
     conn = createConnection(write, {
       canPrompt: true, log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs,
-      extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx) },
+      extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx), ...mission.methods },
+      wrapTools: mission.wrapTools,
       extraTools: sidepane ? () => sidepane.tools() : undefined,
     });
     conns.add(conn);
