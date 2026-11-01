@@ -38,14 +38,16 @@ export function parseKeys(data: string): Key[] {
           const base = params.split(";")[0];
           if (base === "27") { // xterm modifyOtherKeys: ESC[27;mod;13~
             const code = Number(params.split(";")[2]);
-            if (code === 13) out.push({ name: ctrl ? "ctrl+enter" : alt ? "alt+enter" : "enter" });
+            if (ctrl && (mod & 1) && (code === 67 || code === 99)) out.push({ name: "ctrl+shift+c" });
+            else if (code === 13) out.push({ name: ctrl ? "ctrl+enter" : alt ? "alt+enter" : "enter" });
             continue;
           }
           const name = TILDE[base];
           if (name) out.push({ name: alt ? `alt+${name}` : name });
         } else if (fin === "u") { // kitty keyboard protocol: ESC[code;modu
           const code = Number(params.split(";")[0]);
-          if (code === 13) out.push({ name: ctrl ? "ctrl+enter" : alt ? "alt+enter" : "enter" });
+          if (ctrl && (mod & 1) && (code === 67 || code === 99)) out.push({ name: "ctrl+shift+c" }); // kitty: Ctrl+Shift+C
+          else if (code === 13) out.push({ name: ctrl ? "ctrl+enter" : alt ? "alt+enter" : "enter" });
           else if (code === 27) out.push({ name: "esc" });
           else if (ctrl && code >= 97 && code <= 122) out.push({ name: `ctrl+${String.fromCharCode(code)}` });
         } else if (CSI_FINAL[fin]) {

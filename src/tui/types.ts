@@ -40,7 +40,22 @@ export interface Panel {
   rows?: { id: string; label: string; detail?: string }[];
   /** exit_spec: "Will save to" path. */
   savePath?: string;
+  /** permission / exit_spec: the comment box (spec 13.4): Tab opens it, the text goes out as `comment` with the chosen option. */
+  comment?: string;
+  commentMode?: boolean;
+  /** exit_spec: the plan after Ctrl+G (edited in $EDITOR); sent as editedSpecContent with proceed_edit. */
+  editedSpec?: string;
+  /** ask_user: the "Other..." free-text box for the current question (typing = true while it has the keys). */
+  other?: { typing: boolean; text: string };
 }
+
+/** The label of the extra ask_user option that opens a free-text answer. */
+export const OTHER_LABEL = "Other...";
+/** The panel option value for it (never sent to the harness). */
+export const OTHER_VALUE = "\u0000other";
+
+/** An image waiting to go out with the next message (Ctrl+V). */
+export interface PastedImage { mediaType: string; data: string }
 
 /** A slash-menu entry that is not built in: a custom command (Markdown file) or a user-invocable skill. */
 export interface CustomEntry {
@@ -106,6 +121,10 @@ export interface TuiState {
   menuDismissed: boolean;
   atMenu: { query: string; items: string[]; selected: number } | null;
   panels: Panel[];
+  /** True when commands really run sandboxed (settings.sandbox.active): the SANDBOX marker in the status bar. */
+  sandbox: boolean;
+  /** Images pasted with Ctrl+V, sent with the next message. */
+  images: PastedImage[];
   overlay: { title: string; lines: string[] } | null;
   pending: { steer: string[]; queue: string[] };
   lastEscAt: number;
@@ -115,7 +134,8 @@ export interface TuiState {
 }
 
 export type Effect =
-  | { type: "send"; text: string; messageId: string; queuePlacement?: "end_of_turn" | "end_of_loop" }
+  | { type: "send"; text: string; messageId: string; queuePlacement?: "end_of_turn" | "end_of_loop"; images?: PastedImage[] }
+  | { type: "paste_image" }
   | { type: "interrupt" }
   | { type: "settings"; patch: Record<string, unknown> }
   | { type: "answer"; requestId: string; method: string; result: unknown }
@@ -127,7 +147,7 @@ export type Effect =
   | { type: "shell"; command: string }
   | { type: "files"; query: string }
   | { type: "copy"; text: string }
-  | { type: "editor"; text: string }
+  | { type: "editor"; text: string; target?: "input" | "spec" }
   | { type: "view"; name: "mcp" | "hooks" | "skills" | "commands" | "agents" | "diagnostics" | "statusline" | "automations" | "loop"; args: string }
   | { type: "rewind"; messageId: string; restoreFiles: boolean }
   | { type: "attention"; kind: "completion" | "awaiting" }
@@ -152,6 +172,8 @@ export type TuiEvent =
   | { type: "rewound"; messageId: string; text: string; removedCount: number; restoredFiles: string[] }
   | { type: "file_matches"; query: string; items: string[] }
   | { type: "editor_result"; text: string }
+  | { type: "spec_edited"; text: string }
+  | { type: "image_pasted"; image: PastedImage }
   | { type: "disconnected"; message: string };
 
 export interface Step { state: TuiState; effects: Effect[] }

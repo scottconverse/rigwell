@@ -3,7 +3,7 @@ import { AUTONOMY_HELP, COMMANDS, KEY_HELP, findCommand, matchCommands } from ".
 import { expandEntry, parseLoop } from "./customcmd.ts";
 import { plainStyler, transcriptLines } from "./transcript.ts";
 import { formatContext, type ContextStats } from "./context.ts";
-import type { Effect, Item, Key, Panel, Step, TuiEvent, TuiState } from "./types.ts";
+import { OTHER_LABEL, OTHER_VALUE, type Effect, type Item, type Key, type Panel, type Step, type TuiEvent, type TuiState } from "./types.ts";
 
 export interface InitOptions {
   version?: string; cwd: string; homeDir?: string; idPrefix?: string; agentsMd?: boolean;
@@ -22,7 +22,7 @@ export function initialState(o: InitOptions): TuiState {
     working: "idle", running: false, now: 0, contextUsed: 0, contextLimit: 0, tokenUsage: zeroUsage(), turns: 0,
     items: [], detailed: false, showThinking: false, input: { text: "", cursor: 0 }, history: [], historyIndex: null, draft: "",
     shellMode: false, vim: false, vimMode: "insert", theme: o.theme ?? "dark", autoCompress: true, menuIndex: 0, menuDismissed: false,
-    atMenu: null, panels: [], overlay: null, pending: { steer: [], queue: [] }, lastEscAt: -1e9, lastCtrlCAt: -1e9, quit: false,
+    atMenu: null, panels: [], sandbox: false, images: [], overlay: null, pending: { steer: [], queue: [] }, lastEscAt: -1e9, lastCtrlCAt: -1e9, quit: false,
   };
 }
 
@@ -175,7 +175,8 @@ function mkQuestion(p: Panel): Panel {
   const q = p.questions![p.qIndex!];
   return {
     ...p, title: `${q.topic ? `[${q.topic}] ` : ""}${q.question}`, body: [`Question ${p.qIndex! + 1} of ${p.questions!.length}`],
-    options: q.options.map((o: string) => ({ label: o, value: o })), multi: !!q.multiSelect, selected: 0, checked: [],
+    options: [...q.options.map((o: string) => ({ label: o, value: o })), { label: OTHER_LABEL, value: OTHER_VALUE }],
+    multi: !!q.multiSelect, selected: 0, checked: [], other: undefined,
   };
 }
 
@@ -203,7 +204,10 @@ function pickPanel(id: string, p: any): Panel {
 const cancelResult = (panel: Panel): { method: string; result: unknown } | null => {
   if (panel.action.type !== "request") return null;
   const m = panel.action.method;
-  if (m === "request_permission") return { method: m, result: { selectedOption: "cancel" } };
+  if (m === "request_permission") {
+    const comment = panel.comment?.trim();
+    return { method: m, result: { selectedOption: "cancel", ...(comment ? { comment } : {}) } };
+  }
   if (m === "ask_user") return { method: m, result: { cancelled: true, answers: [] } };
   if (m === "request_trust") return { method: m, result: { trust: false } };
   return { method: m, result: { cancelled: true, selectedIds: [] } };
@@ -233,12 +237,29 @@ function finishPanel(s: TuiState, panel: Panel, picked: number[]): Step {
     return { state, effects: [{ type: "rewind", messageId: a.messageId, restoreFiles: v === "files" }] };
   }
   const value = picked.map((i) => panel.options[i].value);
-  if (a.method === "request_permission") return { state, effects: [{ type: "answer", requestId: a.requestId, method: a.method, result: { selectedOption: value[0] } }] };
+  if (a.method === "request_permission") {
+    // The comment box (Tab) rides along with whatever option is chosen; Ctrl+G's edited plan goes with proceed_edit (spec 5.5.7, 13.4).
+    if (panel.kind === "exit_spec" && value[0] === "proceed_edit" && panel.editedSpec === undefined) {
+      // Nothing edited yet: open the plan in $EDITOR first; the panel stays until the edit comes back.
+      return { state: s, effects: [{ type: "editor", text: panel.body.join("\n"), target: "spec" }] };
+    }
+    const comment = panel.comment?.trim();
+    const edited = panel.kind === "exit_spec" && value[0] === "proceed_edit" ? panel.editedSpec : undefined;
+    return { state, effects: [{ type: "answer", requestId: a.requestId, method: a.method, result: { selectedOption: value[0], ...(comment ? { comment } : {}), ...(edited !== undefined ? { editedSpecContent: edited } : {}) } }] };
+  }
   if (a.method === "request_trust") return { state, effects: [{ type: "answer", requestId: a.requestId, method: a.method, result: { trust: value[0] === "trust" } }] };
   if (a.method === "pick_options") return { state, effects: [{ type: "answer", requestId: a.requestId, method: a.method, result: { selectedIds: value } }] };
   // ask_user: collect this answer; move to the next question or finish
   const q = panel.questions![panel.qIndex!];
-  const answers = [...(panel.answers ?? []), { index: q.index, question: q.question, answer: value.join(", ") }];
+  const otherIdx = panel.options.findIndex((o) => o.value === OTHER_VALUE);
+  const wantsOther = otherIdx >= 0 && picked.includes(otherIdx);
+  const typed = panel.other?.text.trim() ?? "";
+  if (wantsOther && !typed) {
+    // "Other...": open the free-text box; Enter there sends the answer.
+    return { state: { ...s, panels: s.panels.map((p) => (p === panel ? { ...panel, other: { typing: true, text: "" } } : p)) }, effects: [] };
+  }
+  const answerValues = [...picked.filter((i) => i !== otherIdx).map((i) => panel.options[i].value), ...(wantsOther ? [typed] : [])];
+  const answers = [...(panel.answers ?? []), { index: q.index, question: q.question, answer: answerValues.join(", ") }];
   if (panel.qIndex! + 1 < panel.questions!.length) {
     const next = mkQuestion({ ...panel, qIndex: panel.qIndex! + 1, answers });
     return { state: { ...s, panels: s.panels.map((p) => (p === panel ? next : p)) }, effects: [] };
@@ -246,9 +267,43 @@ function finishPanel(s: TuiState, panel: Panel, picked: number[]): Step {
   return { state, effects: [{ type: "answer", requestId: a.requestId, method: a.method, result: { answers } }] };
 }
 
+const setPanel = (s: TuiState, panel: Panel, patch: Partial<Panel>): TuiState => ({ ...s, panels: [{ ...panel, ...patch }, ...s.panels.slice(1)] });
+const commentKinds = new Set(["permission", "batch", "exit_spec"]);
+
+/** Typing into a text box owned by the panel (the comment box or the "Other..." box). */
+function boxKey(text: string, k: Key): string | null {
+  if ((k.name === "char" || k.name === "paste") && k.text) return text + k.text;
+  if (k.name === "backspace") return text.slice(0, -1);
+  if (k.name === "ctrl+u") return "";
+  if (k.name === "ctrl+w" || k.name === "alt+backspace") return text.replace(/\s*\S*$/, "");
+  return null;
+}
+
 function panelKey(s: TuiState, k: Key): Step {
   const panel = s.panels[0];
   const n = panel.options.length;
+  // "Other..." free text: the keys go to the box; Enter sends, Esc goes back to the options.
+  if (panel.other?.typing) {
+    if (k.name === "esc") return { state: setPanel(s, panel, { other: undefined }), effects: [] };
+    if (k.name === "enter") {
+      if (!panel.other.text.trim()) return { state: s, effects: [] };
+      const idx = panel.options.findIndex((o) => o.value === OTHER_VALUE);
+      const s2 = setPanel(s, panel, { other: { typing: false, text: panel.other.text } });
+      return finishPanel(s2, s2.panels[0], panel.multi ? [...new Set([...panel.checked, idx])] : [idx]);
+    }
+    const t = boxKey(panel.other.text, k);
+    return t === null ? { state: s, effects: [] } : { state: setPanel(s, panel, { other: { typing: true, text: t } }), effects: [] };
+  }
+  // The comment box (permission, batch and spec panels).
+  if (panel.commentMode) {
+    if (k.name === "esc" || k.name === "tab") return { state: setPanel(s, panel, { commentMode: false }), effects: [] };
+    if (k.name === "enter") return finishPanel(s, panel, [panel.selected]);
+    if (k.name === "up" || k.name === "down") return { state: setPanel(s, panel, { selected: (panel.selected + (k.name === "up" ? -1 : 1) + n) % Math.max(1, n) }), effects: [] };
+    const t = boxKey(panel.comment ?? "", k);
+    return t === null ? { state: s, effects: [] } : { state: setPanel(s, panel, { comment: t }), effects: [] };
+  }
+  if (k.name === "tab" && commentKinds.has(panel.kind)) return { state: setPanel(s, panel, { commentMode: true }), effects: [] };
+  if (k.name === "ctrl+g" && panel.kind === "exit_spec") return { state: s, effects: [{ type: "editor", text: panel.editedSpec ?? panel.body.join("\n"), target: "spec" }] };
   const setSel = (sel: number): Step => ({ state: { ...s, panels: [{ ...panel, selected: (sel + n) % Math.max(1, n) }, ...s.panels.slice(1)] }, effects: [] });
   const toggle = (i: number): Step => ({
     state: { ...s, panels: [{ ...panel, checked: panel.checked.includes(i) ? panel.checked.filter((x) => x !== i) : [...panel.checked, i].sort((a, b) => a - b) }, ...s.panels.slice(1)] }, effects: [],
@@ -312,7 +367,7 @@ function notification(s: TuiState, n: { type: string; [k: string]: any }): Step 
   switch (n.type) {
     case "settings_updated": {
       const st = n.settings ?? {};
-      return { state: { ...s, modelId: st.modelId ?? s.modelId, reasoning: st.reasoningEffort ?? s.reasoning, mode: st.interactionMode ?? s.mode, autonomy: st.autonomyLevel ?? s.autonomy }, effects: [] };
+      return { state: { ...s, modelId: st.modelId ?? s.modelId, reasoning: st.reasoningEffort ?? s.reasoning, mode: st.interactionMode ?? s.mode, autonomy: st.autonomyLevel ?? s.autonomy, sandbox: st.sandbox ? st.sandbox.active === true : s.sandbox }, effects: [] };
     }
     case "agent_working_state_changed":
       return { state: { ...s, working: n.newState, running: n.newState !== "idle" ? true : s.running }, effects: [] };
@@ -389,9 +444,11 @@ function notification(s: TuiState, n: { type: string; [k: string]: any }): Step 
 /** Starts a turn. `display` is what the transcript shows when it differs from the text sent (custom commands, skills). */
 function startTurn(s: TuiState, text: string, display?: string): Step {
   const id = `${s.idPrefix}-${s.counter + 1}`;
+  const images = s.images.length ? { images: s.images } : {};
+  const shown = s.images.length ? `${display ?? text}\n${s.images.map((_, i) => `[Image #${i + 1}]`).join(" ")}` : display ?? text;
   return {
-    state: { ...s, counter: s.counter + 1, running: true, runStartedAt: s.now, working: "thinking", scroll: 0, items: [...s.items, { kind: "user", text: display ?? text, id }] },
-    effects: [{ type: "send", text, messageId: id }],
+    state: { ...s, counter: s.counter + 1, running: true, runStartedAt: s.now, working: "thinking", scroll: 0, images: [], items: [...s.items, { kind: "user", text: shown, id }] },
+    effects: [{ type: "send", text, messageId: id, ...images }],
   };
 }
 
@@ -544,8 +601,8 @@ function sendText(s: TuiState, text: string, display: string | undefined, queueO
   if (queueOnly) return { state: { ...s, pending: { ...s.pending, queue: [...s.pending.queue, text] } }, effects: [] };
   const id = `${s.idPrefix}-${s.counter + 1}`;
   return {
-    state: { ...s, counter: s.counter + 1, pending: { ...s.pending, steer: [...s.pending.steer, display ?? text] } },
-    effects: [{ type: "send", text, messageId: id, queuePlacement: "end_of_loop" }],
+    state: { ...s, counter: s.counter + 1, images: [], pending: { ...s.pending, steer: [...s.pending.steer, display ?? text] } },
+    effects: [{ type: "send", text, messageId: id, queuePlacement: "end_of_loop", ...(s.images.length ? { images: s.images } : {}) }],
   };
 }
 
@@ -704,6 +761,9 @@ function key(s: TuiState, k: Key, now: number): Step {
     }
     case "alt+x": return { state: { ...s, autoCompress: !s.autoCompress }, effects: [{ type: "settings", patch: { compactionThresholdCheckEnabled: !s.autoCompress } }] };
     case "ctrl+p": return { state: s, effects: [{ type: "editor", text: s.input.text }] };
+    case "ctrl+v": return { state: s, effects: [{ type: "paste_image" }] };
+    case "ctrl+shift+c":
+      return s.input.text ? { state: { ...s, hint: "Copied the input" }, effects: [{ type: "copy", text: s.input.text }] } : { state: { ...s, hint: "The input is empty" }, effects: [] };
     case "ctrl+r": {
       const all = [...s.pending.steer.map((t) => `steer (sent, delivered after the next tool call):  ${t}`), ...s.pending.queue.map((t) => `queued (sent when the agent finishes):  ${t}`)];
       return overlay(s, "Pending messages", all.length ? all : ["Nothing is pending."]);
@@ -736,7 +796,7 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
       const st = r.settings ?? {};
       const base: TuiState = {
         ...s, sessionId: r.sessionId, modelId: st.modelId ?? s.modelId, reasoning: st.reasoningEffort ?? s.reasoning,
-        autonomy: st.autonomyLevel ?? s.autonomy, mode: st.interactionMode ?? s.mode,
+        autonomy: st.autonomyLevel ?? s.autonomy, mode: st.interactionMode ?? s.mode, sandbox: st.sandbox?.active === true,
         models: (r.availableModels ?? s.models).map((m: any) => ({ id: m.id, displayName: m.displayName })),
       };
       if (!e.fresh) return { state: base, effects: [] };
@@ -789,6 +849,16 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
       const m = /(?:^|\s)@([^\s]*)$/.exec(before);
       if (!m || m[1] !== e.query) return { state: s, effects: [] };
       return { state: { ...s, atMenu: e.items.length ? { query: e.query, items: e.items, selected: 0 } : null }, effects: [] };
+    }
+    case "image_pasted": return { state: { ...s, images: [...s.images, e.image], hint: `Image #${s.images.length + 1} attached (sent with your next message)` }, effects: [] };
+    case "spec_edited": {
+      const i = s.panels.findIndex((p) => p.kind === "exit_spec");
+      if (i < 0) return { state: s, effects: [] };
+      if (!e.text.trim()) return { state: { ...s, hint: "The edited spec is empty, so it was ignored" }, effects: [] };
+      const p = s.panels[i];
+      const at = p.options.findIndex((o) => o.value === "proceed_edit");
+      const panels = s.panels.map((x, j) => (j === i ? { ...p, editedSpec: e.text, body: e.text.split("\n"), selected: at >= 0 ? at : p.selected } : x));
+      return { state: { ...s, panels, hint: "Spec edited: Enter approves your version" }, effects: [] };
     }
     case "editor_result": return { state: { ...s, input: { text: e.text, cursor: e.text.length } }, effects: [] };
     case "disconnected": return { state: { ...s, running: false, working: "idle", items: [...s.items, info(e.message, "error")] }, effects: [] };
