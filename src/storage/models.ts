@@ -48,8 +48,11 @@ export function validateCustomModels(
     const bad = (message: string) => problems.push({ index, model: typeof raw?.model === "string" ? raw.model : undefined, message });
     if (!raw || typeof raw !== "object") return bad("entry is not an object");
     if (typeof raw.model !== "string" || !raw.model.trim()) return bad("model is required");
-    if (raw.provider !== "anthropic" && raw.provider !== "openai")
-      return bad(`unsupported provider ${JSON.stringify(raw.provider)} (supported: anthropic, openai)`);
+    if (raw.provider !== "anthropic" && raw.provider !== "openai" && raw.provider !== "generic-chat-completion-api")
+      return bad(`unsupported provider ${JSON.stringify(raw.provider)} (supported: anthropic, openai, generic-chat-completion-api)`);
+    if (raw.apiProvider !== undefined && (typeof raw.apiProvider !== "string" || !raw.apiProvider.trim())) return bad("apiProvider must be a non-empty string");
+    for (const k of ["chatCompletionRequest", "chatCompletionRequestByProvider"] as const)
+      if (raw[k] !== undefined && (typeof raw[k] !== "object" || raw[k] === null || Array.isArray(raw[k]))) return bad(`${k} must be an object`);
     if (typeof raw.baseUrl !== "string" || !/^https?:\/\/\S+$/.test(raw.baseUrl)) return bad("baseUrl must be an http(s) URL");
     if (raw.reasoningEffort !== undefined && !EFFORTS.includes(raw.reasoningEffort)) return bad(`invalid reasoningEffort ${JSON.stringify(raw.reasoningEffort)}`);
     for (const k of ["maxOutputTokens", "maxContextLimit"] as const)
@@ -95,7 +98,11 @@ export function validateCustomModels(
       ...(raw.maxOutputTokens !== undefined ? { maxOutputTokens: raw.maxOutputTokens } : {}),
       ...(raw.maxContextLimit !== undefined ? { maxContextLimit: raw.maxContextLimit } : {}),
       ...(raw.reasoningEffort !== undefined ? { reasoningEffort: raw.reasoningEffort } : {}),
-      ...(raw.noImageSupport !== undefined ? { noImageSupport: raw.noImageSupport } : {}),
+      // spec 12.2: noImageSupport defaults to true for generic-chat-completion-api, false otherwise
+      ...(raw.noImageSupport !== undefined ? { noImageSupport: raw.noImageSupport } : raw.provider === "generic-chat-completion-api" ? { noImageSupport: true } : {}),
+      ...(raw.apiProvider !== undefined ? { apiProvider: raw.apiProvider } : {}),
+      ...(raw.chatCompletionRequest ? { chatCompletionRequest: raw.chatCompletionRequest } : {}),
+      ...(raw.chatCompletionRequestByProvider ? { chatCompletionRequestByProvider: raw.chatCompletionRequestByProvider } : {}),
     });
   });
   return { models, problems };

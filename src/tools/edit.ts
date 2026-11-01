@@ -72,7 +72,9 @@ export function createEditTool(): Tool {
         ? content.split(oldText).join(newText)
         : content.slice(0, content.indexOf(oldText)) + newText + content.slice(content.indexOf(oldText) + oldText.length);
       try {
+        ctx.snapshots?.before(abs);
         fs.writeFileSync(abs, result);
+        ctx.snapshots?.after(abs);
         ctx.readFiles.set(abs, recordOf(fs.statSync(abs)));
       } catch (e) {
         return fail(`Cannot write ${abs}: ${errMessage(e)}`);
