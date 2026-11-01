@@ -6,10 +6,11 @@ import { rigwellHome } from "../storage/paths.ts";
 import { createAutomationService, type ServiceOptions } from "../automations/index.ts";
 import { loadSettings } from "../storage/settings.ts";
 import { METHOD_PREFIX } from "../protocol/rpc.ts";
+import { DEFAULT_WS_PORT, removeDaemonInfo, startWsServer, writeDaemonInfo } from "./ws.ts";
 
 export const defaultSocketPath = () => join(rigwellHome(), "daemon.sock");
 
-export async function startDaemon(opts: { socketPath: string; log?: (m: string) => void; retryBaseDelayMs?: number; automations?: false | ServiceOptions }) {
+export async function startDaemon(opts: { socketPath: string; log?: (m: string) => void; retryBaseDelayMs?: number; automations?: false | ServiceOptions; ws?: false | { port?: number; token?: string } }) {
   mkdirSync(dirname(opts.socketPath), { recursive: true });
   if (existsSync(opts.socketPath)) unlinkSync(opts.socketPath);
   const conns = new Set<ReturnType<typeof createConnection>>();
@@ -40,16 +41,19 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
     });
   })();
   auto?.start();
+  const mkConn = (write: (line: string) => void) => {
+    const conn = createConnection(write, {
+      canPrompt: true, log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs, extraMethods: auto?.methods,
+    });
+    conns.add(conn);
+    return conn;
+  };
   const server = Bun.listen<Data>({
     unix: opts.socketPath,
     socket: {
       open(sock) {
         sock.data = { out: [] } as unknown as Data;
-        const conn = createConnection((line) => { sock.data.out.push(enc.encode(line)); flush(sock); }, {
-          canPrompt: true, log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs, extraMethods: auto?.methods,
-        });
-        sock.data.conn = conn;
-        conns.add(conn);
+        sock.data.conn = mkConn((line) => { sock.data.out.push(enc.encode(line)); flush(sock); });
       },
       drain(sock) { flush(sock); },
       data(sock, chunk) { sock.data.conn.peer.feed(dec.decode(chunk, { stream: true })); },
@@ -59,14 +63,46 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
       },
     },
   });
+  // Local WebSocket (127.0.0.1, token required); see ws.ts. Port: opts.ws.port, else settings daemon.wsPort, else default.
+  let wsServer: ReturnType<typeof startWsServer> | undefined;
+  if (opts.ws !== false) {
+    const cfg = (loadSettings({ cwd: rigwellHome() }).settings as { daemon?: { wsPort?: number } }).daemon ?? {};
+    try {
+      wsServer = startWsServer({
+        port: opts.ws?.port ?? cfg.wsPort ?? DEFAULT_WS_PORT, token: opts.ws?.token, log: opts.log,
+        open(write) {
+          const conn = mkConn((line) => write(line));
+          return {
+            feed: (m) => conn.peer.feed(m + "\n"),
+            close: () => { conns.delete(conn); void conn.shutdown(); },
+          };
+        },
+      });
+    } catch (e) {
+      opts.log?.(`[daemon] WebSocket listener disabled: ${(e as Error).message}`);
+    }
+  }
+  const home = rigwellHome();
+  try {
+    writeDaemonInfo(home, {
+      pid: process.pid, socketPath: opts.socketPath, startedAt: new Date().toISOString(),
+      ...(wsServer ? { ws: { url: wsServer.url, host: "127.0.0.1", port: wsServer.port }, token: wsServer.token } : {}),
+    });
+  } catch (e) {
+    opts.log?.(`[daemon] could not write daemon.json: ${(e as Error).message}`);
+  }
   return {
     socketPath: opts.socketPath,
+    wsUrl: wsServer?.url,
+    wsToken: wsServer?.token,
     automations: auto,
     get sessionCount() { return [...conns].filter((c) => c.session).length; },
     stop() {
       auto?.stop();
       for (const c of conns) void c.shutdown();
       server.stop(true);
+      wsServer?.stop();
+      removeDaemonInfo(home, process.pid, wsServer?.token);
       try { unlinkSync(opts.socketPath); } catch {}
     },
   };

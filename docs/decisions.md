@@ -168,3 +168,47 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
     401, 404, 409 (paused or running), 413 (256 KB), 429 capped. Dedupe window 60 s. Deliveries go to `memory/deliveries.json`.
 63. **Crons:** `$RIGWELL_HOME/crons/<scope>/<sessionId>/<id>.json`, with the prompt stored in the record. The "previous prompt
     still queued" check is `session.isRunning`. Methods are `rigwell.*` (listed in `src/automations/index.ts`), not `daemon.*`.
+
+## Phase 5: Clients (SDK, WebSocket, TUI)
+
+64. **SDK layout:** `src/sdk/` has `transport.ts` (spawned `exec` process, Unix socket, WebSocket), `client.ts` (JSON-RPC client with
+    the spec 3.1.5 request timeouts), `session.ts` (`run`, `createSession`, `connectToDaemon`, `RigwellSession`) and `in-process.ts`
+    (used by the TUI; not re-exported from the index so remote users do not load the harness). `send()` returns an async iterable of
+    notifications that ends with `agent_turn_completed`; its `.done` promise gives `{reason, text, ...}`. A turn ends only on the
+    `agent_turn_completed` whose `turnId` equals the message id the SDK sent. If the transport closes mid-turn the turn ends with a
+    synthetic `error` and `agent_turn_completed {reason: "process_exit"}`.
+65. **SDK defaults:** no permission handler, or one that throws, answers `{selectedOption: "cancel"}`; `ask_user` answers
+    `{cancelled: true, answers: []}`; `pick_options` answers `{cancelled: true, selectedIds: []}` (spec 3.1.8). Spawned-process shutdown:
+    end stdin, wait 2 s, SIGTERM, SIGKILL after 3 s more (spec 3.1.1). The SDK sends `sessionOriginHint: "sdk"` and `userMessageSource: "sdk"`.
+66. **WebSocket:** the daemon also serves `ws://127.0.0.1:<port>/` (default 47822; `daemon.wsPort` in settings or `--ws-port`; `--no-ws`
+    turns it off; a busy port logs a warning and the daemon runs without WebSocket). One WebSocket = one session through
+    `createConnection`; one JSON-RPC message per text frame (no newline framing). Bound to 127.0.0.1 only.
+67. **WebSocket auth:** a random 32-byte hex token per daemon start, required on the upgrade request as `?token=<t>` or
+    `Authorization: Bearer <t>`; missing or wrong gets HTTP 401 with no upgrade (constant-time compare). The Host header must be
+    loopback (403 otherwise, blocks DNS rebinding). The token, socket path, WS URL and pid are written to `$RIGWELL_HOME/daemon.json`
+    with mode 0600 and removed on stop. The `Sec-WebSocket-Protocol` route was not used because browsers cannot set headers but can
+    use the query string, and the SDK uses the query string too.
+68. **TUI structure:** `reducer.ts` is pure (events in, `{state, effects}` out, time passed in events), `render.ts` is pure
+    (state to lines plus cursor), `keys.ts` parses stdin bytes, `app.ts` is the only terminal and RPC I/O. No TUI library was added.
+    It uses the alternate screen, raw mode and bracketed paste when stdout and stdin are TTYs; when piped it skips all of that, reads
+    keys from stdin, waits for a running turn at EOF, and prints the final screen as plain text.
+69. **Steer versus queue:** the harness has no mid-turn steering (a message sent during a turn runs after it). So the TUI keeps
+    pending messages itself: Enter during a run adds a "steering" message, Ctrl+Enter a "queued" one; when the turn ends, steering
+    messages go first, then queued ones, one turn at a time. This makes Ctrl+R/G/X real. After an Esc interrupt pending messages are
+    kept and not sent. Alt+Enter also queues, for terminals that do not report Ctrl+Enter.
+70. **Keys:** Ctrl+C clears the input; on empty input twice within 1.5 s it quits (spec says only "clear"). Ctrl+D on empty input
+    quits. Tab cycles reasoning (off, low, medium, high) unless a menu is open. Shift+Tab toggles auto and spec. Ctrl+L cycles autonomy
+    off, low, medium, high. Not built: Ctrl+V image paste, Ctrl+Shift+C, Alt+P plan view, Alt+arrows paging, Ctrl+J changelog (the
+    last three are outside the 13.7 v1 cut). Transcript shows the newest lines that fit; there is no scrolling.
+71. **Commands:** `/droids` from the spec table is `/agents` here (the product name is not used). `/mcp`, `/hooks`, `/skills`,
+    `/commands`, `/agents` show "not available in this build yet" until their phases. `/compress`, `/fork` call `compact_session` and
+    `fork_session` and show the harness error while those do not exist; `/rename` calls `rename_session` (not in the spec MVP list)
+    with the same fallback. `/rewind-conversation` and double Esc on empty input say rewind is not available (the harness cannot
+    truncate a session). `/cost` shows token counts only: there is no pricing data for local models. `/context` shows the provider
+    meter from `get_context_stats`, and the category list and bar only if the result carries `categories` (the harness does not yet).
+72. **Context percent:** last call's `inputTokens + cacheReadTokens` over the `limit` from `get_context_stats`, refreshed after
+    every turn; `<1%` for tiny values and `n/a` until the first stats call returns.
+73. **Panels:** permission, batch ("Approve N operations", grouped), exit-spec ("Specification for approval", "Will save to"),
+    ask_user (one question at a time, Space toggles multi-select, Esc cancels and interrupts) and pick_options render from the request
+    params. Field names for the exit-spec plan (`plan`, `specContent` or `content`) and path (`filePath` or `path`) are guesses until the
+    spec-mode phase defines them. Denial comments (`[Comment]`) are not built.
