@@ -19,6 +19,11 @@
 //  * Quit: "/quit" typed into the pty until the process exits. First paint / first prompt accepted: pty, from spawn.
 //  * Base prompt: sizes of the first request (Phase 3 budget helper requestSizes) for both execution modes.
 import { readFileSync, writeFileSync } from "node:fs";
+
+// The benchmarks measure the harness, not session titling or trust prompts: the fake servers serve a fixed
+// script, and a title side request would consume a scripted turn (same settings as test/preload.ts).
+process.env.RIGWELL_NO_AUTO_TITLE ??= "1";
+process.env.RIGWELL_TRUST_CWD ??= "1";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
 import { startFakeAnthropic } from "../test/fakes/fake-anthropic.ts";
