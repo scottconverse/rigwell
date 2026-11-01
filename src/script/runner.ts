@@ -47,6 +47,12 @@ const BOOTSTRAP = `(function (call, print, image, notify, toolNames) {
 
 const out = (m: Record<string, unknown>) => { process.stdout.write(JSON.stringify(m) + "\n"); };
 
+/**
+ * Exit once everything written to stdout has been handed to the pipe. A bare process.exit(0) right after a large
+ * burst of output (the pipe is full while the host is busy) drops the tail and the final "done" message.
+ */
+const exitAfterFlush = () => { process.stdout.write("", () => process.exit(0)); setTimeout(() => process.exit(0), 5000).unref(); };
+
 interface RunMsg {
   type: "run"; code: string; inputs: Record<string, string>; toolNames: string[];
   memoryBytes: number; stackBytes: number; sliceMs: number;
@@ -126,8 +132,8 @@ process.stdin.on("data", (chunk: string) => {
     if (m.type === "run" && !started) {
       started = true;
       run(m).then(
-        () => process.exit(0),
-        (e) => { out({ type: "done", ok: false, error: { name: "Error", message: String(e?.message ?? e) } }); process.exit(0); },
+        () => exitAfterFlush(),
+        (e) => { out({ type: "done", ok: false, error: { name: "Error", message: String(e?.message ?? e) } }); exitAfterFlush(); },
       );
     } else if (m.type === "reply") {
       const d = pending.get(m.id);

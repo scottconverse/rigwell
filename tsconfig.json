@@ -9,5 +9,5 @@
     "types": ["bun"],
     "allowImportingTsExtensions": true
   },
-  "include": ["src", "test", "examples"]
+  "include": ["src", "test", "examples", "perf"]
 }
