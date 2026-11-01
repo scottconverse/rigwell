@@ -1,0 +1,1 @@
+Rename the constant MAX_RETRY to MAX_ATTEMPTS everywhere in this repo (definition and all uses). The program must still print "ok 3" when run with node main.js.

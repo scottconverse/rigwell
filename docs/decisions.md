@@ -348,3 +348,18 @@ them into the loop. Each index.ts starts with an "Integration" comment.
     ask_user (one question at a time, Space toggles multi-select, Esc cancels and interrupts) and pick_options render from the request
     params. Field names for the exit-spec plan (`plan`, `specContent` or `content`) and path (`filePath` or `path`) are guesses until the
     spec-mode phase defines them. Denial comments (`[Comment]`) are not built.
+
+## Phase 6: Eval loop
+102. **Surface:** `rigwell eval run|report|tasks` lives in `src/eval/` (one dispatch line in `src/cli/main.ts`). Trials spawn
+    `rigwell exec --input-format stream-jsonrpc` and read only wire notifications. Permission requests are declined.
+103. **Requests** are counted as `session_token_usage_changed` events that change the totals (the turn-closing event repeats the
+    previous totals). Tokens come from `agent_turn_completed.cumulativeTokenUsage`. Cost uses a per-model price table in the eval
+    config (USD per Mtok); unpriced models get no cost deltas.
+104. **Store and build id:** `$RIGWELL_HOME/eval/runs/<buildId>/<timestamp>.json`; buildId is the short commit sha of the checkout
+    or `--build`. The report compares the latest run in the window to the latest run of the most recent earlier, different build.
+105. **Regression thresholds:** any pass-rate drop; mean cost up over 20%; mean time up over 25%. Cost and time deltas prefer the set
+    of tasks that passed every trial in both builds (spec section 8 methodology).
+106. **Proposals as variants:** a variant is `settings` (passed as `--settings`) plus optional `toolExecutionMode`. The profile fields
+    `promptVariant` and `toolDescriptionOverrides` do not exist in the session yet; when a later phase reads them from settings,
+    a variant can carry them with no change here. Ship rule: all families hold, else per-model option, else do not ship.
+107. **Failure clusters:** same failKind, turn reason and normalized grader line, on at least 2 tasks and 2 models.
