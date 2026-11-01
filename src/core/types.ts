@@ -1,7 +1,7 @@
 // Shared internal types. Every module builds against these.
 
 export type AutonomyLevel = "off" | "low" | "medium" | "high";
-export type InteractionMode = "auto" | "spec";
+export type InteractionMode = "auto" | "spec" | "mission";
 export type RiskLevel = "low" | "medium" | "high";
 export type ReasoningEffort =
   | "none" | "dynamic" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";

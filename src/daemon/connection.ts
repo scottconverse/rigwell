@@ -30,11 +30,13 @@ export interface ConnectionOptions {
   extraMethods?: Record<string, (p: Record<string, unknown>) => unknown>;
   /** Extra agent tools for every session on this connection (e.g. the side pane's Browser tool). */
   extraTools?: () => Tool[];
+  /** Rewrites the tool list of every session on this connection (missions: role tools and file protection). */
+  wrapTools?: (tools: Tool[]) => Tool[];
   log?: (m: string) => void;
 }
 
 const AUTONOMY = ["off", "low", "medium", "high"];
-const MODES = ["auto", "spec"];
+const MODES = ["auto", "spec", "mission"];
 const EXEC_MODES = ["direct_only", "script_only"];
 const EFFORTS = ["none", "dynamic", "off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -89,7 +91,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
       id, cwd, settings,
       resolveModel: (mid) => findModel(env.models, mid),
       createAdapter, streamWithRetry: streamWithRetry as any,
-      toolsFor: opts.extraTools ? (o) => [...toolsForSession(o), ...opts.extraTools!()] : toolsForSession, decide, lists: env.lists,
+      toolsFor: ((base) => (opts.wrapTools ? (o: Parameters<typeof toolsForSession>[0]) => opts.wrapTools!(base(o)) : base))(opts.extraTools ? (o: Parameters<typeof toolsForSession>[0]) => [...toolsForSession(o), ...opts.extraTools!()] : toolsForSession), decide, lists: env.lists,
       scriptToolModels: env.s.scriptToolModels, scriptLimits: env.s.scriptLimits,
       toolExecutionModeOverride: override,
       skipPermissions: skip,
@@ -239,6 +241,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
           patch.compactionModelId = cm === null ? undefined : (cm as string);
           if (cm === null) s.settings.compactionModelId = undefined;
         }
+        if (p.missionSettings && typeof p.missionSettings === "object" && files) updateSessionSettings(files, { missionSettings: p.missionSettings });
         s.updateSettings(patch);
         return {};
       }
