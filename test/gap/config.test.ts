@@ -15,7 +15,7 @@ afterEach(() => { servers.splice(0).forEach((s) => s.stop()); });
 const bodyOf = (srv: FakeServer) => JSON.stringify(srv.requests[0]);
 
 async function setup(extra: Record<string, unknown> = {}, models: any[] = [{ provider: "anthropic", displayName: "F" }]) {
-  const model = await startFakeAnthropic([{ text: "ok" }, { text: "ok" }]);
+  const model = await startFakeAnthropic(Array.from({ length: 6 }, () => ({ text: "ok" })));
   servers.push(model);
   const home = makeHome(models.map((m) => ({ ...m, url: model.url })));
   const sf = join(home, "settings.json");

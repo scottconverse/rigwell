@@ -231,6 +231,7 @@ async function main() {
   const [cmd, ...argv] = process.argv.slice(2);
   if (cmd === "exec") {
     const a = parseExec(argv);
+    if (a.resume === true && a.prompt === undefined) { printSessionList(a.cwd); process.exit(0); }
     if (a.prompt !== undefined && !a.inputFormat) return execPrompt(a);
     return execJsonRpc(a);
   }
