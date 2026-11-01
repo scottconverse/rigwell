@@ -11,11 +11,11 @@ import { makeHome } from "../e2e/helpers.ts";
 
 export const MODEL = "custom:Fake-Anthropic-0";
 
-export async function startTestDaemon(url: string, sidepane?: SidePaneOptions) {
+export async function startTestDaemon(url: string, sidepane?: SidePaneOptions, ws: false | { port: number } = false) {
   const home = makeHome([{ provider: "anthropic", url, displayName: "Fake Anthropic" }]);
   process.env.RIGWELL_HOME = home;
   const dir = mkdtempSync(join(tmpdir(), "rigwell-desk-sock-"));
-  const d = await startDaemon({ socketPath: join(dir, "d.sock"), automations: false, ws: false, sidepane: sidepane ?? {} });
+  const d = await startDaemon({ socketPath: join(dir, "d.sock"), automations: false, ws, sidepane: sidepane ?? {} });
   return { d, home };
 }
 
