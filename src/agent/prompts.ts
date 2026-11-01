@@ -75,9 +75,15 @@ export interface ContextInput {
   modelId: string;
   shell: string;
   toolExecutionMode?: "direct_only" | "script_only";
+  /** prompts.md 4.2: the project instruction files block (InstructionLoader), or null/absent. */
+  instructions?: string | null;
+  /** prompts.md 4.3: the skills block (SkillRegistry), or null/absent. */
+  skills?: string | null;
+  /** Context text from SessionStart hooks, appended after the todos block. */
+  extra?: string[];
 }
 
-/** Context blocks for the first user message (prompts.md §4; skills and project instructions are Phase 5). */
+/** Context blocks for the first user message (prompts.md section 4): environment, instructions, skills, session, todos. */
 export function contextBlocks(c: ContextInput): string[] {
   const env = render(PROMPT_TEXT.ctx_environment, {
     OS_NAME: os.type(), OS_VERSION: os.release(), ARCH: os.arch(), SHELL: c.shell,
@@ -109,7 +115,7 @@ export function contextBlocks(c: ContextInput): string[] {
     GIT_STATUS_SHORT: statusLines.slice(0, STATUS_MAX).join("\n") || "(clean)", GIT_LOG_ONELINE: log, CWD_LISTING: listing,
   }).replace("Git repository: \n", "Git repository: no\n");
   const todos = render(PROMPT_TEXT.ctx_todos, { TODOS: [] });
-  return [env, session, todos];
+  return [env, ...(c.instructions ? [c.instructions] : []), ...(c.skills ? [c.skills] : []), session, todos, ...(c.extra ?? [])];
 }
 
 export function guardText(id: keyof typeof PROMPT_TEXT, vars: Vars = {}): string {

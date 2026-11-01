@@ -148,7 +148,7 @@ export function permissionPanel(id: string, params: any): Panel {
     }
     case "exit_spec_mode": {
       const plan = String(d.plan ?? d.specContent ?? d.content ?? "");
-      return { ...base, kind: "exit_spec", title: "Specification for approval", body: plan.split("\n"), savePath: d.filePath ?? d.path, options: opts };
+      return { ...base, kind: "exit_spec", title: d.title ? `Specification for approval: ${d.title}` : "Specification for approval", body: plan.split("\n"), savePath: d.filePath ?? d.path, options: opts };
     }
     case "script": {
       const body = (d.calls ?? []).map((c: any) => `line ${c.line}: ${c.toolName} ${JSON.stringify(c.toolInput ?? {})}`);
@@ -663,7 +663,7 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
       };
     }
     case "context_stats": {
-      const st = e.stats ?? {};
+      const st = withCategories(e.stats ?? {});
       const state = { ...s, contextLimit: st.limit ?? s.contextLimit, contextUsed: st.used ?? s.contextUsed };
       if (!e.show) return { state, effects: [] };
       return { state: { ...state, overlay: { title: "Context", lines: formatContext(st as ContextStats, modelName(s)) } }, effects: [] };
@@ -686,4 +686,14 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
     case "editor_result": return { state: { ...s, input: { text: e.text, cursor: e.text.length } }, effects: [] };
     case "disconnected": return { state: { ...s, running: false, working: "idle", items: [...s.items, info(e.message, "error")] }, effects: [] };
   }
+}
+
+const CATEGORY_NAMES: Record<string, string> = {
+  systemPrompt: "System prompt", tools: "System tools", mcpTools: "MCP tools", userInfo: "User info", agentsMd: "AGENTS.md",
+  customAgents: "Custom agents", skills: "Skills", messages: "Messages",
+};
+/** get_context_stats reports `breakdown` {category: tokens}; /context draws `categories` [{name, tokens}]. */
+function withCategories(st: any) {
+  if (st.categories || !st.breakdown) return st;
+  return { ...st, categories: Object.entries(st.breakdown).map(([k, v]) => ({ name: CATEGORY_NAMES[k] ?? k, tokens: Number(v) })) };
 }
