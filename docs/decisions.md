@@ -141,3 +141,63 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
     over `settings.env`; an unset variable invalidates the entry.
 56. **Not built:** the SQLite session index (the spec makes it a cache; `listSessions` scans files),
     `fileEditToolProfile` (Create + Edit for every model), the keychain (keys come from settings or env).
+
+## Phase 9: Git worktrees
+
+(Numbers continue from 56; the lead may need to renumber when merging with other phases.)
+
+57. **initialize_session param** `worktree: {enabled: true, branch?, branchMode?: "copy"|"existing", baseRef?,
+    lifecycle?: "ephemeral"|"persistent", setupProfile?, prompt?}` (`worktree: true` is shorthand). `prompt`
+    names the generated branch because the first prompt is not known at init. `runInWorktree: true` in
+    settings makes it the default when the param is absent. The result adds `worktree: {path, branch,
+    baseRef, repoRoot, lifecycle, setupProfileId?, adopted, cwd, setup?}`; session settings store the same
+    (without cwd/setup) under `worktree`. The session cwd (and transcript cwd) is the worktree path, plus
+    the request cwd's relative folder when it was a repo subfolder. A cwd already inside a managed
+    worktree is adopted.
+58. **Root and names:** default root `<rigwell home>/worktrees`; `worktreeDirectory` must be absolute.
+    Layout `<root>/<last 8 of session id>/<repo folder>`. Branch prefix `rigwell/`; slug = up to 5 words,
+    padded to 3 with `work`, `task`, `tree`; whole name at most 32 chars; `-2`.. on a clash (up to 100).
+    No prompt: `<current branch>-wt`. Created with `worktree add -b <branch> --no-track <path> <base>`.
+59. **State lives in the worktree's git dir:** `rigwell-worktree.json` (session, repo, branch, base, lifecycle,
+    profile, createdAt, lastUsedAt, pinned, reserved) and `rigwell-setup-receipt.json` (head, time,
+    lifecycle, sha1 fingerprints of untracked files). Listing scans the root; there is no separate registry.
+    "Uncommitted user work" = `status` entries minus untracked files whose path and content still match
+    the receipt (setup output). Without a receipt every untracked file counts as user work.
+60. **Secret stripping (§18.3)** removes env names that are product-prefixed (`RIGWELL_`), contain TOKEN,
+    SECRET, PASSWORD/PASSWD, CREDENTIAL, PRIVATE_KEY, API_KEY/APIKEY or ACCESS_KEY, are database/queue URLs
+    (`DATABASE_URL`, `*REDIS*_URL`...), belong to cloud/provider families (AWS_, AZURE_, GCP_, GCLOUD_,
+    GOOGLE_APPLICATION_, GITHUB_, GH_, GITLAB_, NPM_CONFIG_, ANTHROPIC_, OPENAI_, GEMINI_, MISTRAL_, GROQ_,
+    OPENROUTER_, HF_, HUGGINGFACE_), or are SSH_AUTH_SOCK/SSH_AGENT_PID/GPG_AGENT_INFO. Matching is by
+    name; values are never inspected. Scripts run with `bash -c` (or `sh`), PATH taken from a login shell
+    (only PATH is taken), `REPO_ROOT_PATH` added, setup timeout 20 min, cleanup 5 min, output tail capped
+    at 4 KB with control characters removed. Only bash/sh is built (no PowerShell).
+61. **Profiles** are YAML (`Bun.YAML`), id = file name. Repository: `<repo>/.rigwell/worktree-setups/*.yaml`,
+    runs only when the repo root is in `trustedFolders`. Local: `<rigwell home>/worktree-setups/
+    <sha256(repoRoot)>/*.yaml`, no trust check; local wins on an id clash. A profile that cannot run
+    (missing, untrusted) is reported in `worktree.setup.skipped`; the worktree is still created.
+    `index.yaml` / `lastUsedProfileId` and "deleted profiles keep name + cleanup script" are not built.
+    Setup runs inside initialize_session after the session exists, emitting `setup_step_progress`
+    notifications `{kind: "setup_script", text}`; the profile's `initialPrompt` is returned in
+    `worktree.setup.initialPrompt` for the client to send (the daemon does not send it).
+62. **Limits:** 4 concurrent creations (2 per repo), 2 removals, FIFO; auto-delete one pass at a time;
+    30 min recent-use guard (`lastUsedAt` is set at creation and by `keep`).
+63. **Auto-delete** runs before each creation. Candidates: ephemeral, over `worktreeAutoDeleteLimit`
+    (default 15), LRU first. Skipped: pinned, reserved, in use by a live session in this process, used within
+    30 min, uncommitted work, commits found on no other branch and no remote. The PR rule is skipped
+    (create_pr is not built).
+64. **Protocol methods** (`rigwell.` prefix, no session needed unless noted): `list_managed_worktrees
+    {repoRoot?}`, `get_worktree_status {worktreePath?}` (default: the session cwd), `inspect_worktree_deletion
+    {worktreePath}`, `cleanup_worktree {worktreePath, deleteLocalBranch?, deleteRemoteBranch?, force?}`,
+    `list_git_branches`, `checkout_git_branch {branch, resolve?: "stash"|"commit", message?}` (dirty tree
+    returns `{ok:false, status:"needs_resolution", changedFiles}`), `get_git_branch_divergence {against?}`,
+    `git_commit {message}` (stages all), `git_push` (to the first remote, setting upstream). The last five
+    act on the session cwd, or `worktreePath`. They replace the spec's `daemon.*` names; errors carry
+    `data.code` (dirty, in_use, branch_occupied, root_branch...).
+65. **Removal** refuses reserved, in-use (this process) and dirty worktrees unless `force`; runs the profile
+    cleanup script (trusted or local only); uses `--force` only when the tree has changes (setup output or
+    forced user work); keeps the branch unless asked. When session start fails after creation the worktree
+    and its new branch are removed.
+66. **Not built:** fetch from origin (`pullFromOrigin`), rename of a generated branch after the title,
+    HEAD watching and `branch_changed`, the 5-minute housekeeping timer and archive-time removal (needs
+    session archiving), `daemon.worktree.removed` broadcast, trust marking of the new folder, the
+    Windows PowerShell runner, PR status and `create_pr`.

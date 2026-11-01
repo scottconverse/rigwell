@@ -14,6 +14,7 @@ import { streamWithRetry } from "../adapters/retry.ts";
 import { toolsForSession } from "../tools/registry.ts";
 import { decide } from "../permissions/gate.ts";
 import { DEFAULT_COMMAND_LISTS } from "../permissions/lists.ts";
+import { discardSessionWorktree, handleWorktreeMethod, releaseWorktree, runSessionSetup, startSessionWorktree, worktreeSettings, type SessionWorktree } from "../worktree/connect.ts";
 
 export interface ConnectionOptions {
   /** The client can answer rigwell.request_permission (stream-jsonrpc). False for plain `exec "prompt"`. */
@@ -41,6 +42,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
   let session: Session | undefined;
   let files: SessionFiles | undefined;
   let closed = false;
+  let worktree: SessionWorktree | undefined;
 
   const peer: RpcPeer = new RpcPeer(write, (m, p) => handle(m, p), opts.log);
 
@@ -121,11 +123,24 @@ export function createConnection(write: (line: string) => void, opts: Connection
           interactionMode: pick<InteractionMode>(p.interactionMode, MODES, "interactionMode") ?? (d.interactionMode as InteractionMode) ?? "auto",
           autonomyLevel: opts.forced?.autonomyLevel ?? pick<AutonomyLevel>(p.autonomyLevel, AUTONOMY, "autonomyLevel") ?? (d.autonomyLevel as AutonomyLevel) ?? "off",
         };
-        files = createSession({ id, cwd, title: typeof p.title === "string" ? p.title : undefined });
-        session = build(id, cwd, settings, p, env);
-        await session.persistSettings();
+        // Optional git worktree (spec §18): the session's cwd becomes the worktree path.
+        worktree = (await startSessionWorktree(p.worktree, cwd, id, env.s, opts.log)) ?? undefined;
+        const sessionCwd = worktree?.cwd ?? cwd;
+        try {
+          files = createSession({ id, cwd: sessionCwd, title: typeof p.title === "string" ? p.title : undefined });
+          session = build(id, sessionCwd, settings, p, env);
+          if (worktree) updateSessionSettings(files, { worktree: worktreeSettings(worktree) });
+          await session.persistSettings();
+        } catch (e) {
+          if (worktree) await discardSessionWorktree(worktree);
+          throw e;
+        }
         notify({ type: "settings_updated", settings: session.settingsSnapshot() });
-        return { ...sessionResult(), availableModels: listModelInfo(env.models) };
+        const setup = worktree ? await runSessionSetup(worktree, notify) : undefined;
+        return {
+          ...sessionResult(), availableModels: listModelInfo(env.models),
+          ...(worktree ? { worktree: { ...worktreeSettings(worktree), cwd: sessionCwd, ...(setup ? { setup } : {}) } } : {}),
+        };
       }
       case "load_session": {
         if (session) throw new RpcError(ErrorCodes.CONFLICT, "This connection already has a session");
@@ -165,6 +180,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
           await session.idle();
           notify({ type: "agent_working_state_changed", newState: "idle" });
         }
+        if (worktree) releaseWorktree(worktree.info.path);
         closed = true;
         return {};
       }
@@ -204,8 +220,11 @@ export function createConnection(write: (line: string) => void, opts: Connection
         const used = s.lastCallTokenUsage.inputTokens + s.lastCallTokenUsage.cacheReadTokens + s.lastCallTokenUsage.outputTokens;
         return { used, remaining: Math.max(0, limit - used), limit, accuracy: used ? "exact" : "estimated", updatedAt: new Date().toISOString() };
       }
-      default:
+      default: {
+        const w = await handleWorktreeMethod(method, p, { cwd: session?.cwd, settings: () => environment(session?.cwd ?? process.cwd()).s, log: opts.log });
+        if (w.handled) return w.result;
         throw new RpcError(ErrorCodes.METHOD_NOT_FOUND, `Method not found or not in this build: ${METHOD_PREFIX}${method}`);
+      }
     }
   }
 
@@ -213,6 +232,6 @@ export function createConnection(write: (line: string) => void, opts: Connection
     peer,
     get session() { return session; },
     get closed() { return closed; },
-    async shutdown() { session?.interrupt(); await session?.idle(); peer.end(); },
+    async shutdown() { session?.interrupt(); await session?.idle(); if (worktree) releaseWorktree(worktree.info.path); peer.end(); },
   };
 }
