@@ -35,8 +35,33 @@ export interface TurnOutcome {
   resultKind: "text" | "structured" | null;
 }
 
+/** `compaction_state` record (spec §12.1) plus the fields Rigwell needs to rebuild the context on load. */
+export interface CompactionRecord {
+  type: "compaction_state";
+  id: string;
+  timestamp: string;
+  summaryText: string;
+  summaryTokens: number;
+  summaryKind: "llm_summary" | "provider_switch_serialization";
+  /** Last message the summary covers; messages after it are kept verbatim. */
+  anchorMessage: { id: string; index: number };
+  removedCount: number;
+  systemInfo?: unknown;
+  systemInfoText?: string;
+  loadedDeferredToolNames: string[];
+  retainedSkills: string[];
+  retainedImages: string[];
+  reason?: "automatic" | "manual";
+  /** First message after compaction: its id and its text blocks (preamble with the summary, re-injected context). */
+  preambleMessageId: string;
+  preambleBlocks: string[];
+  [k: string]: unknown;
+}
+
 export interface LoadedSession {
   start: SessionStart;
+  /** Latest compaction_state record, if any. */
+  compaction?: CompactionRecord;
   /** Messages ordered by `seq` (file order breaks ties). */
   messages: Message[];
   outcomes: TurnOutcome[];
@@ -319,6 +344,12 @@ export function appendMessage(files: SessionFiles, msg: Message, parentId: strin
   });
 }
 
+export function appendCompaction(files: SessionFiles, rec: CompactionRecord): Promise<void> {
+  return withAppendLock(files, () => {
+    appendLine(files, rec as unknown as Record<string, unknown>);
+  });
+}
+
 export function appendTurnOutcome(
   files: SessionFiles,
   o: { turnId: string; reason: string; resultKind: "text" | "structured" | null },
@@ -363,6 +394,7 @@ export function loadTranscript(files: SessionFiles): LoadedSession {
   let start: SessionStart | null = null;
   const msgs: { msg: Message; seq: number; order: number }[] = [];
   const outcomes: TurnOutcome[] = [];
+  let compaction: CompactionRecord | undefined;
   let skippedLines = 0;
   let unknownRecords = 0;
   let first = true;
@@ -389,13 +421,17 @@ export function loadTranscript(files: SessionFiles): LoadedSession {
       else skippedLines++;
     } else if (o.type === "agent_turn_outcome") {
       outcomes.push({ type: "agent_turn_outcome", turnId: o.turnId, reason: o.reason, resultKind: o.resultKind ?? null });
+    } else if (o.type === "compaction_state") {
+      if (typeof o.summaryText === "string" && o.anchorMessage && typeof o.anchorMessage.id === "string" && Array.isArray(o.preambleBlocks)) {
+        compaction = o as CompactionRecord; // the latest one wins
+      } else skippedLines++;
     } else if (o.type !== "session_start") {
       unknownRecords++;
     }
   });
   if (!start) throw new Error(`transcript ${files.transcriptPath}: empty`);
   msgs.sort((a, b) => a.seq - b.seq || a.order - b.order);
-  return { start, messages: msgs.map((x) => x.msg), outcomes, files, skippedLines, unknownRecords };
+  return { start, compaction, messages: msgs.map((x) => x.msg), outcomes, files, skippedLines, unknownRecords };
 }
 
 /** Newest-first (mtime) scan; no index. With `cwd`, only that project's folder. */

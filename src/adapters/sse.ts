@@ -22,7 +22,7 @@ function parseBlock(raw: string): SSEEvent | null {
   return { event, data: data.join("\n") };
 }
 
-export async function* parseSSE(body: ReadableStream<Uint8Array>): AsyncGenerator<SSEEvent> {
+export async function* parseSSE(body: ReadableStream<Uint8Array>, onChunk?: () => void): AsyncGenerator<SSEEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
@@ -30,6 +30,7 @@ export async function* parseSSE(body: ReadableStream<Uint8Array>): AsyncGenerato
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      onChunk?.();
       buf += decoder.decode(value, { stream: true });
       let m: RegExpExecArray | null;
       while ((m = /\r?\n\r?\n/.exec(buf))) {
@@ -49,37 +50,76 @@ export async function* parseSSE(body: ReadableStream<Uint8Array>): AsyncGenerato
   }
 }
 
-/** POST and stream SSE events. Throws ModelError for HTTP, network, abort and timeout failures. */
+/** Response header a server can set to change the hard time limit for that one response (ms). */
+export const RESPONSE_LIMIT_HEADER = "x-response-time-limit-ms";
+
+/**
+ * POST and stream SSE events. Throws ModelError for HTTP, network, abort and timeout failures.
+ * `timeoutMs` is the hard limit for the whole response; `idleMs` (optional) cuts a stream that sends no bytes
+ * for that long (spec §4.2). Both surface as retryable "timeout" errors with `cause` set.
+ */
 export async function* sseRequest(
   url: string,
   init: { headers: Record<string, string>; body: string },
   userSignal: AbortSignal | undefined,
   timeoutMs: number,
+  idleMs?: number,
 ): AsyncGenerator<SSEEvent> {
+  const started = Date.now();
   const timeoutCtl = new AbortController();
-  const timer = setTimeout(() => timeoutCtl.abort(), timeoutMs);
-  const all = userSignal ? [timeoutCtl.signal, userSignal] : [timeoutCtl.signal];
+  const idleCtl = new AbortController();
+  let limit = timeoutMs;
+  let timer = setTimeout(() => timeoutCtl.abort(), limit);
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  const armIdle = () => {
+    if (!idleMs) return;
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => idleCtl.abort(), idleMs);
+  };
+  armIdle();
+  const all = [timeoutCtl.signal, idleCtl.signal, ...(userSignal ? [userSignal] : [])];
   const signal = AbortSignal.any(all);
+  const timeoutError = (): ModelError | null => {
+    if (userSignal?.aborted) return null;
+    if (idleCtl.signal.aborted) {
+      return new ModelError("timeout", `Stream idle: no data for ${idleMs} ms`, { retryable: true, cause: "idle", elapsedMs: Date.now() - started, limitMs: idleMs });
+    }
+    if (timeoutCtl.signal.aborted) {
+      return new ModelError("timeout", `Response ran past the time limit (${limit} ms)`, { retryable: true, cause: "hard_limit", elapsedMs: Date.now() - started, limitMs: limit });
+    }
+    return null;
+  };
   try {
     let res: Response;
     try {
       res = await fetch(url, { method: "POST", headers: init.headers, body: init.body, signal });
     } catch (e) {
-      throw classifyThrown(e, userSignal, timeoutCtl.signal);
+      throw timeoutError() ?? classifyThrown(e, userSignal);
+    }
+    const hdr = Number(res.headers.get(RESPONSE_LIMIT_HEADER));
+    if (Number.isFinite(hdr) && hdr > 0) {
+      limit = hdr;
+      clearTimeout(timer);
+      timer = setTimeout(() => timeoutCtl.abort(), Math.max(1, limit - (Date.now() - started)));
     }
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw errorFromResponse(res.status, res.headers, text);
     }
     if (!res.body) throw networkError("response had no body");
+    armIdle();
     try {
-      for await (const ev of parseSSE(res.body)) yield ev;
+      for await (const ev of parseSSE(res.body, armIdle)) yield ev;
     } catch (e) {
       if (e instanceof ModelError) throw e;
-      throw classifyThrown(e, userSignal, timeoutCtl.signal);
+      throw timeoutError() ?? classifyThrown(e, userSignal);
     }
+    // The body can end quietly when the abort closes it: report the cut instead of a normal end.
+    const cut = timeoutError();
+    if (cut) throw cut;
   } finally {
     clearTimeout(timer);
+    if (idleTimer) clearTimeout(idleTimer);
     timeoutCtl.abort(); // cancels the connection if the consumer stopped early
   }
 }

@@ -8,18 +8,21 @@ export type ReasoningEffort =
 
 // ---------- Transcript content (stored shape, see spec §12.1) ----------
 
-export type TextBlock = { type: "text"; text: string };
+/** `cache` is a request-time marker (cache breakpoint); the request builder sets it on copies, it is never stored. */
+export type TextBlock = { type: "text"; text: string; cache?: boolean };
 export type ThinkingBlock = { type: "thinking"; thinking: string; signature?: string; signatureProvider?: string };
 export type ToolUseBlock = {
   type: "tool_use"; id: string; name: string; input: Record<string, unknown>;
   /** Set on calls made from inside a Script (spec §3.1.7). */
   scriptExecution?: { runId: string; outerToolUseId: string };
+  cache?: boolean;
 };
 export type ToolResultBlock = {
   type: "tool_result";
   tool_use_id: string;
   content: string;
   is_error?: boolean;
+  cache?: boolean;
 };
 export type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock;
 
@@ -93,6 +96,8 @@ export interface ModelRequest {
   maxOutputTokens: number;
   reasoningEffort?: ReasoningEffort;
   signal?: AbortSignal;
+  /** Stream guards (spec §4.2). Absent: the adapter defaults (no idle limit, 10 minute hard limit). */
+  limits?: { idleTimeoutMs?: number; hardLimitMs?: number };
 }
 
 /**
@@ -122,7 +127,11 @@ export class ModelError extends Error {
   constructor(
     public kind: ModelErrorKind,
     message: string,
-    public opts: { status?: number; retryable?: boolean; retryAfterMs?: number } = {},
+    public opts: {
+      status?: number; retryable?: boolean; retryAfterMs?: number;
+      /** Why a "timeout" happened: no bytes for the idle limit, or the response ran past the hard limit. */
+      cause?: "idle" | "hard_limit"; elapsedMs?: number; limitMs?: number;
+    } = {},
   ) {
     super(message);
     this.name = "ModelError";
