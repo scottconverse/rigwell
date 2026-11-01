@@ -52,8 +52,10 @@ export class Sandbox {
     // The child gets a nearly empty environment: nothing it could leak even if the guest were broken.
     const env: Record<string, string> = { PATH: process.env.PATH ?? "" };
     this.proc = Bun.spawn([process.execPath, RUNNER_PATH], { stdin: "pipe", stdout: "pipe", stderr: "ignore", env });
-    void this.pump();
-    void this.proc.exited.then(() => this.finish({ ok: false, error: { name: "Error", message: "The Script sandbox process exited unexpectedly." } }));
+    const pumped = this.pump();
+    // The child writes its last output and "done", then exits. The exit event can arrive before the pump has handled
+    // the buffered stdout, so wait for the pipe to drain (bounded) before treating the exit as a crash.
+    void this.proc.exited.then(() => Promise.race([pumped, new Promise((r) => setTimeout(r, 2000))])).then(() => this.finish({ ok: false, error: { name: "Error", message: "The Script sandbox process exited unexpectedly." } }));
     this.timer = setTimeout(() => {
       this.finish({ ok: false, timedOut: true, error: { name: "TimeoutError", message: `The Script ran past its time limit (${this.limits.totalMs} ms) and was stopped.` } });
     }, this.limits.totalMs);
