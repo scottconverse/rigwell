@@ -12,7 +12,7 @@ export type CommandRunner = (cmd: string[], input?: string) => { code: number; s
 
 export const spawnRunner: CommandRunner = (cmd, input) => {
   try {
-    const r = Bun.spawnSync(cmd, { stdin: input === undefined ? "ignore" : new TextEncoder().encode(input), stdout: "pipe", stderr: "pipe" });
+    const r = Bun.spawnSync(cmd, { stdin: input === undefined ? "ignore" : (Buffer.from(input) as any), stdout: "pipe", stderr: "pipe" });
     return { code: r.exitCode ?? 1, stdout: r.stdout.toString() };
   } catch {
     return { code: 127, stdout: "" };

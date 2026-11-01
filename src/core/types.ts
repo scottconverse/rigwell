@@ -254,7 +254,7 @@ export interface PermissionContext {
   cwd: string;
 }
 
-export type ConfirmationType = "edit" | "create" | "exec" | "mcp_tool" | "exit_spec_mode" | "apply_patch" | "fetch_url";
+export type ConfirmationType = "edit" | "create" | "exec" | "mcp_tool" | "exit_spec_mode" | "apply_patch" | "fetch_url" | "recommend_mission" | "upgrade_model";
 
 export type ToolExecutionMode = "direct_only" | "script_only";
 

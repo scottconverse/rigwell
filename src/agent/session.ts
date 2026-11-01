@@ -64,6 +64,12 @@ export type TurnReason =
   | "model_provider_unavailable" | "model_rate_limited"
   | "structured_output_missing" | "structured_output_invalid" | "structured_output_schema_invalid";
 
+export interface SessionTag { name: string; metadata?: Record<string, string> }
+/** Settings swapped in while list_tools works out what a session would offer. */
+export interface ToolPreview {
+  modelId?: string; interactionMode?: InteractionMode; autonomyLevel?: AutonomyLevel; specModeModelId?: string;
+  skipPermissions?: boolean; depth?: number; toolIds?: SessionDeps["toolIds"] | null; mode?: ToolExecutionMode;
+}
 export interface PermissionAnswer { selectedOption: string; comment?: string; editedSpecContent?: string }
 export interface AskUserAnswer { cancelled?: boolean; answers: { index: number; question: string; answer: string }[] }
 export interface OutputFormat { type: "json_schema"; schema: Record<string, unknown> }
@@ -222,6 +228,8 @@ export interface SessionDeps {
   subagentModelSettings?: { model?: string; reasoningEffort?: ReasoningEffort };
   /** Enters mission mode for this session (the missions module's enter_mission_mode). Absent: RecommendMission is not offered. */
   enterMissionMode?: () => Promise<Record<string, unknown>>;
+  /** Session tags (initialize_session / update_session_settings `tags`). */
+  tags?: SessionTag[];
   /** Settings `modelUpgradePath`: model ids from weaker to stronger. Absent or exhausted: UpgradeModel is not offered. */
   modelUpgradePath?: string[];
 }
@@ -338,11 +346,15 @@ export class Session {
   private formatWasOn = false;
   private title: { value: string; manual: boolean; asked: boolean };
   private readonly svc: SessionServices;
+  private tags: SessionTag[];
+  private tagsSet = false;
   /** Result of the latest structured turn, for agent_turn_completed. */
   lastStructured?: unknown;
 
   constructor(private deps: SessionDeps, private host: SessionHost) {
     this.todos = deps.todos ? [...deps.todos] : [];
+    this.tags = deps.tags ? [...deps.tags] : [];
+    this.tagsSet = !!deps.tags;
     this.title = { value: deps.title?.value ?? "New Session", manual: deps.title?.manual ?? false, asked: !!deps.title?.manual || (deps.title?.value ?? "New Session") !== "New Session" };
     this.svc = {
       jobs: this.jobs,
@@ -526,6 +538,7 @@ export class Session {
       ...(this.deps.toolIds?.disabled ? { disabledToolIds: this.deps.toolIds.disabled } : {}),
       ...(this.deps.toolIds?.additional ? { additionalToolIds: this.deps.toolIds.additional } : {}),
       ...(this.deps.systemPrompt ? { systemPrompt: this.deps.systemPrompt } : {}),
+      ...(this.tags.length ? { tags: this.tags } : {}),
       ...(this.deps.structuredOutputFormat ? { structuredOutputFormat: this.deps.structuredOutputFormat } : {}),
       ...(this.checkEnabled !== undefined || this.deps.compactionThresholdCheckEnabled !== undefined ? { compactionThresholdCheckEnabled: this.checkEnabled ?? this.deps.compactionThresholdCheckEnabled } : {}),
     };
@@ -550,6 +563,72 @@ export class Session {
     }
     this.notify({ type: "settings_updated", settings: this.settingsSnapshot() });
     void this.persistSettings();
+  }
+
+  /** update_session_settings `tags`: replaces the session's tags. */
+  setTags(tags: SessionTag[]) {
+    this.tags = [...tags];
+    this.tagsSet = true;
+    this.notify({ type: "settings_updated", settings: this.settingsSnapshot() });
+    void this.persistSettings();
+  }
+
+  /** update_session_settings tool id lists: the lists given replace the stored ones (null clears one). */
+  setToolIds(ids: { restrict?: string[] | null; enabled?: string[] | null; disabled?: string[] | null; additional?: string[] | null }) {
+    const next: NonNullable<SessionDeps["toolIds"]> = { ...(this.deps.toolIds ?? {}) };
+    for (const k of ["restrict", "enabled", "disabled", "additional"] as const) {
+      if (ids[k] === undefined) continue;
+      if (ids[k] === null) delete next[k]; else next[k] = ids[k]!;
+    }
+    this.deps.toolIds = Object.keys(next).length ? next : undefined;
+    this.builder.monitor.expectBreak("tool ids changed");
+    this.notify({ type: "settings_updated", settings: this.settingsSnapshot() });
+    void this.persistSettings();
+  }
+
+  /** Runs `fn` with some settings swapped in, then puts them back (the tool list is computed synchronously). */
+  private preview<T>(o: ToolPreview, fn: () => T): T {
+    const saved = { settings: { ...this.settings }, skip: this.deps.skipPermissions, sub: this.deps.subagents, ids: this.deps.toolIds, mode: this.deps.toolExecutionModeOverride };
+    try {
+      for (const k of ["modelId", "interactionMode", "autonomyLevel", "specModeModelId"] as const) if (o[k] !== undefined) (this.settings as any)[k] = o[k];
+      if (o.skipPermissions !== undefined) this.deps.skipPermissions = o.skipPermissions;
+      if (o.depth !== undefined && this.deps.subagents) this.deps.subagents = { ...this.deps.subagents, depth: o.depth };
+      if (o.toolIds !== undefined) this.deps.toolIds = o.toolIds ?? undefined;
+      if (o.mode) this.deps.toolExecutionModeOverride = o.mode;
+      return fn();
+    } finally {
+      Object.assign(this.settings, saved.settings);
+      this.deps.skipPermissions = saved.skip;
+      this.deps.subagents = saved.sub;
+      this.deps.toolIds = saved.ids;
+      this.deps.toolExecutionModeOverride = saved.mode;
+    }
+  }
+
+  /**
+   * list_tools: every tool the session could offer under the given settings, with whether it is callable now
+   * (offered directly or reachable from a Script, not removed by a tool id list) and where it comes from.
+   * restrictToolIds is a hard allowlist and hides the rest; disabledToolIds keeps a tool listed but not allowed.
+   */
+  listToolInfo(o: ToolPreview = {}): { tool: Tool; currentlyAllowed: boolean; source: "native" | "mcp" }[] {
+    const reach = () => [...this.tools(), ...this.scriptTools()];
+    const ids = o.toolIds === undefined ? this.deps.toolIds : o.toolIds ?? undefined;
+    const allowed = this.preview(o, reach);
+    const allowedNames = new Set(allowed.map((t) => t.name));
+    const wide = this.preview({ ...o, autonomyLevel: "high", skipPermissions: false, interactionMode: o.interactionMode === "spec" ? "spec" : "auto", mode: "direct_only", toolIds: ids ? { ...ids, disabled: undefined } : null }, reach);
+    const byName = new Map<string, Tool>();
+    for (const t of [...wide, ...allowed]) if (!byName.has(t.name)) byName.set(t.name, t);
+    for (const n of this.deferred.names()) {
+      const t = this.deferred.get(n);
+      if (t && !byName.has(n) && (!ids?.restrict || ids.restrict.includes(n))) byName.set(n, t);
+    }
+    return [...byName.values()].map((tool) => {
+      const deferred = this.deferred.get(tool.name) !== undefined;
+      return {
+        tool, source: this.mcp?.findTool(tool.name) ? "mcp" as const : "native" as const,
+        currentlyAllowed: allowedNames.has(tool.name) || (deferred && !(ids?.disabled ?? []).includes(tool.name)),
+      };
+    });
   }
 
   private routedSettings() {
@@ -585,6 +664,7 @@ export class Session {
       loadedDeferredToolNames: this.deferred.state().loaded, announcedDeferredToolNames: this.deferred.state().announced,
       ...(this.deps.toolIds ? { toolIds: this.deps.toolIds } : {}),
       ...(this.deps.systemPrompt ? { systemPrompt: this.deps.systemPrompt } : {}),
+      ...(this.tagsSet ? { tags: this.tags } : {}),
       ...(this.deps.structuredOutputFormat ? { structuredOutputFormat: this.deps.structuredOutputFormat } : {}),
       ...(this.deps.disableBuiltinSkills ? { disableBuiltinSkills: true } : {}),
       ...(this.compactionLimit ? { compactionTokenLimit: this.compactionLimit } : {}),
