@@ -173,7 +173,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
     };
   }
 
-  function build(id: string, cwd: string, settings: SessionSettings, p: Record<string, unknown>, env: ReturnType<typeof environment>, override: ToolExecutionMode | undefined, restored?: { allowSubagentsInScripts?: boolean; messages: Message[]; tokenUsage?: any; deferred?: { loaded: string[]; announced: string[] }; archived?: Message[]; anchor?: string; todos?: any; title?: { value: string; manual: boolean } }) {
+  function build(id: string, cwd: string, settings: SessionSettings, p: Record<string, unknown>, env: ReturnType<typeof environment>, override: ToolExecutionMode | undefined, restored?: { previousSessionId?: string; callingSessionId?: string; allowSubagentsInScripts?: boolean; messages: Message[]; tokenUsage?: any; deferred?: { loaded: string[]; announced: string[] }; archived?: Message[]; anchor?: string; todos?: any; title?: { value: string; manual: boolean } }) {
     const skip = opts.forced?.skipPermissions ?? p.skipPermissionsUnsafe === true;
     const f = files!;
     const hooksConfig = loadHooksConfig({ cwd, trustProject: env.trusted });
@@ -196,6 +196,8 @@ export function createConnection(write: (line: string) => void, opts: Connection
       autoTitle: env.s.autoSessionTitle !== false, heartbeatMs: typeof env.s.toolHeartbeatMs === "number" ? env.s.toolHeartbeatMs : undefined,
       archived: restored?.archived, compactionAnchorId: restored?.anchor,
       guardSettings: { llmRequestTimeout: env.s.llmRequestTimeout as number | undefined, loopGuards: env.s.loopGuards as any },
+      toolResultModelChars: typeof env.s.toolResultModelChars === "number" && env.s.toolResultModelChars > 0 ? env.s.toolResultModelChars : undefined,
+      previousSessionId: restored?.previousSessionId, callingSessionId: restored?.callingSessionId ?? (typeof p.callingSessionId === "string" && p.callingSessionId ? p.callingSessionId : undefined),
       enterMissionMode: opts.extraMethods?.enter_mission_mode ? async () => (await opts.extraMethods!.enter_mission_mode!({})) as Record<string, unknown> : undefined,
       modelUpgradePath: Array.isArray(env.s.modelUpgradePath) ? (env.s.modelUpgradePath as unknown[]).filter((x): x is string => typeof x === "string") : undefined,
       compaction: env.s.compaction as any, compactionTokenLimit: env.s.compactionTokenLimit,
@@ -282,7 +284,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
         worktree = (await startSessionWorktree(p.worktree, cwd, id, env.s, opts.log)) ?? undefined;
         const sessionCwd = worktree?.cwd ?? cwd;
         try {
-          files = createSession({ id, cwd: sessionCwd, title: typeof p.title === "string" ? p.title : undefined });
+          files = createSession({ id, cwd: sessionCwd, title: typeof p.title === "string" ? p.title : undefined, ...(typeof p.callingSessionId === "string" && p.callingSessionId ? { extra: { callingSessionId: p.callingSessionId } } : {}) });
           session = build(id, sessionCwd, settings, p, env, pick<ToolExecutionMode>(p.toolExecutionMode, EXEC_MODES, "toolExecutionMode"));
           if (worktree) updateSessionSettings(files, { worktree: worktreeSettings(worktree) });
           await session.persistSettings();
@@ -341,6 +343,8 @@ export function createConnection(write: (line: string) => void, opts: Connection
         };
         const savedOverride = EXEC_MODES.includes(saved.toolExecutionModeOverride as string) ? (saved.toolExecutionModeOverride as ToolExecutionMode) : undefined;
         session = build(id, cwd, settings, merged, env, savedOverride, {
+          previousSessionId: typeof loaded.start.parent === "string" ? loaded.start.parent : id,
+          callingSessionId: typeof loaded.start.callingSessionId === "string" ? loaded.start.callingSessionId : undefined,
           todos: loaded.todos, title: { value: loaded.start.title, manual: loaded.start.isSessionTitleManuallySet === true },
           allowSubagentsInScripts: saved.allowSubagentsInScripts === true || p.allowSubagentsInScripts === true || undefined,
           messages: view, archived, anchor: loaded.compaction?.anchorMessage.id, tokenUsage: saved.tokenUsage,
@@ -406,7 +410,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
           await session.idle();
           await session.stopBackgroundJobs();
           await session.end(typeof p.reason === "string" ? p.reason : "other");
-          notify({ type: "agent_working_state_changed", newState: "idle" });
+          notify({ type: "agent_working_state_changed", newState: "idle", backgroundWork: session.backgroundWork() });
         }
         if (worktree) releaseWorktree(worktree.info.path);
         closed = true;

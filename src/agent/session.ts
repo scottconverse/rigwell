@@ -6,7 +6,7 @@ import type {
   PermissionDecision, ReasoningEffort, TokenUsage, Tool, ToolResultBlock, ToolUseBlock, FileReadRecord,
   AskQuestion, ImageBlock, SessionServices, TodoItem,
 } from "../core/types.ts";
-import type { ToolContext, ToolExecutionMode, ToolOutput } from "../core/types.ts";
+import type { ModelRequest, ToolContext, ToolExecutionMode, ToolOutput } from "../core/types.ts";
 import { SnapshotRecorder } from "../snapshots/index.ts";
 import { ModelError, zeroUsage } from "../core/types.ts";
 import { JobManager, type Job } from "../jobs/manager.ts";
@@ -228,10 +228,33 @@ export interface SessionDeps {
   subagentModelSettings?: { model?: string; reasoningEffort?: ReasoningEffort };
   /** Enters mission mode for this session (the missions module's enter_mission_mode). Absent: RecommendMission is not offered. */
   enterMissionMode?: () => Promise<Record<string, unknown>>;
+  /** The session this one continues (a fork's parent, or itself on resume): SessionStart hook previous_session_id. */
+  previousSessionId?: string;
+  /** The session that started this one (SessionStart hook calling_session_id). */
+  callingSessionId?: string;
+  /** Settings `toolResultModelChars`: tool results longer than this are cut for the model (default 120000). */
+  toolResultModelChars?: number;
   /** Session tags (initialize_session / update_session_settings `tags`). */
   tags?: SessionTag[];
   /** Settings `modelUpgradePath`: model ids from weaker to stronger. Absent or exhausted: UpgradeModel is not offered. */
   modelUpgradePath?: string[];
+}
+
+/** Tool results longer than this many characters are cut for the model (head and tail); the full text stays in `content`. */
+export const MODEL_RESULT_CHARS = 120_000;
+
+/** The model-facing version of a long tool result (spec 12.1 model_content), or undefined when it fits. */
+export function capForModel(content: string, limit: number): string | undefined {
+  if (content.length <= limit) return undefined;
+  const head = Math.floor(limit * 0.6);
+  const tail = limit - head;
+  return `${content.slice(0, head)}\n[... ${content.length - limit} characters omitted from the middle; the user has the full result ...]\n${content.slice(content.length - tail)}`;
+}
+
+/** Responses API fields a model profile asks for. */
+function openaiFields(p: ModelProfile): ModelRequest["openai"] {
+  const o = { ...(p.textVerbosity ? { textVerbosity: p.textVerbosity } : {}), ...(p.serviceTier ? { serviceTier: p.serviceTier } : {}), ...(p.safetyIdentifier ? { safetyIdentifier: p.safetyIdentifier } : {}), ...(p.extendedCache ? { extendedCache: true } : {}) };
+  return Object.keys(o).length ? o : undefined;
 }
 
 /** Waits on one running Script before the turn is stopped (2 hours of 5-minute waits). */
@@ -526,8 +549,11 @@ export class Session {
   private setState(s: WorkingState) {
     if (this.workingState === s) return;
     this.workingState = s;
-    this.notify({ type: "agent_working_state_changed", newState: s });
+    this.notify({ type: "agent_working_state_changed", newState: s, ...(s === "idle" ? { backgroundWork: this.backgroundWork() } : {}) });
   }
+
+  /** Background jobs (Execute, Task, Script) still running; reported on idle working-state notifications. */
+  backgroundWork(): number { return this.jobs.list().filter((j) => j.status === "running").length; }
 
   settingsSnapshot(): Record<string, unknown> {
     return {
@@ -655,7 +681,7 @@ export class Session {
       ...(this.settings.compactionModelId ? { compactionModelId: this.settings.compactionModelId } : {}),
       specModeModelId: this.settings.specModeModelId ?? null, specModeReasoningEffort: this.settings.specModeReasoningEffort ?? null,
       effectiveRouterModel: this.routed ? this.routedSettings() : undefined,
-      toolExecutionMode: this.effectiveMode(),
+      toolExecutionMode: this.effectiveMode(), toolExecutionModeModelId: this.currentModel()?.id ?? this.activeModelId(),
       ...(this.deps.toolExecutionModeOverride ? { toolExecutionModeOverride: this.deps.toolExecutionModeOverride } : {}),
       ...(this.deps.allowSubagentsInScripts ? { allowSubagentsInScripts: true } : {}),
       assistantActiveTimeMs: this.activeTimeMs,
@@ -684,7 +710,10 @@ export class Session {
     if (this.hooks?.hasHooks() && !this.deps.isChild) {
       this.startup = (async () => {
         try {
-          const r = await this.hooks!.sessionStart(source, {}, AbortSignal.timeout(60_000));
+          const r = await this.hooks!.sessionStart(source, {
+            ...(this.deps.previousSessionId ? { previous_session_id: this.deps.previousSessionId } : {}),
+            ...(this.deps.callingSessionId ? { calling_session_id: this.deps.callingSessionId } : {}),
+          }, AbortSignal.timeout(60_000));
           Object.assign(this.hookEnv, r.envVars);
           if (r.additionalContext) this.startupContext.push(r.additionalContext);
           for (const m of r.systemMessages) await this.userNote(m);
@@ -934,6 +963,7 @@ export class Session {
         this.providerLock ??= model.provider;
         await this.push({
           id: messageId, role: "assistant", content, modelId: model.id, apiProvider: model.provider,
+          ...(this.routed && this.activeModelId() === AUTO_MODEL_ID ? { routerId: AUTO_MODEL_ID } : {}),
           reasoningEffort: this.activeEffort(), ...(done.openaiReasoning?.length ? { openaiReasoning: done.openaiReasoning } : {}),
         });
         this.lastCallContext = {
@@ -1172,6 +1202,7 @@ export class Session {
         case "tool_use_start":
           this.setState("streaming_assistant_message");
           partial.set(ev.index, { id: ev.id, name: ev.name, json: "" });
+          this.notify({ type: "tool_execution_phase_changed", toolUseId: ev.id, toolName: ev.name, phase: "streaming_input" });
           this.notify({ type: "tool_call", toolUse: { type: "tool_use", id: ev.id, name: ev.name, input: {} } });
           break;
         case "tool_input_delta": {
@@ -1357,7 +1388,7 @@ export class Session {
       model, sessionId: this.id, mode: this.effectiveMode(), tools: this.tools(), messages: this.messages,
       reasoningEffort: this.activeEffort(), signal,
       extraSystem: [...(prof.promptVariant ? [prof.promptVariant] : []), ...(this.deps.extraSystem ?? [])],
-      systemPrompt: this.deps.systemPrompt, toolDescriptions: prof.toolDescriptionOverrides, cacheStrategy: prof.cache.strategy,
+      systemPrompt: this.deps.systemPrompt, toolDescriptions: prof.toolDescriptionOverrides, cacheStrategy: prof.cache.strategy, openai: openaiFields(prof),
     };
   }
 
@@ -1409,7 +1440,8 @@ export class Session {
     for (const call of calls) {
       const phase = (p: string) => this.notify({ type: "tool_execution_phase_changed", toolUseId: call.id, toolName: call.name, phase: p });
       const finish = (content: string, isError: boolean, executed: boolean, images?: ImageBlock[]) => {
-        results.push({ type: "tool_result", tool_use_id: call.id, content, ...(isError ? { is_error: true } : {}), ...(images?.length ? { images } : {}) });
+        const cut = capForModel(content, this.deps.toolResultModelChars ?? MODEL_RESULT_CHARS);
+        results.push({ type: "tool_result", tool_use_id: call.id, content, ...(isError ? { is_error: true } : {}), ...(images?.length ? { images } : {}), ...(cut !== undefined ? { modelContent: cut } : {}) });
         this.notify({ type: "tool_result", toolUseId: call.id, messageId: `tool-result-${call.id}`, content, isError, ...(images?.length ? { images } : {}) });
         phase(executed ? "settled_after_execution" : "settled_without_execution");
       };

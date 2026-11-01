@@ -8,6 +8,10 @@
 //   reasoningField             reasoning | reasoning_content, for OpenAI-compatible adapters
 //   cache.strategy             anthropic-breakpoints | openai-auto | none
 //   fileEditToolProfile        apply-patch | create-edit (spec 4.6.4)
+//   textVerbosity              low | medium | high      Responses text.verbosity
+//   serviceTier                string                   Responses service_tier (auto, default, flex, priority)
+//   safetyIdentifier           string | true            Responses safety_identifier (true: the session id)
+//   extendedCache              boolean                  Responses prompt_cache_retention "24h", only against OpenAI's own base URL
 import type { ModelConfig, ToolExecutionMode } from "../core/types.ts";
 
 export type CacheStrategy = "anthropic-breakpoints" | "openai-auto" | "none";
@@ -21,6 +25,10 @@ export interface ModelProfile {
   reasoningField?: "reasoning" | "reasoning_content";
   cache: { strategy: CacheStrategy };
   fileEditToolProfile: FileEditToolProfile;
+  textVerbosity?: "low" | "medium" | "high";
+  serviceTier?: string;
+  safetyIdentifier?: string | true;
+  extendedCache?: boolean;
 }
 
 export interface ProfileSettings {
@@ -54,6 +62,10 @@ function overlay(base: ModelProfile, over: unknown): ModelProfile {
   if (over.reasoningField === "reasoning" || over.reasoningField === "reasoning_content") out.reasoningField = over.reasoningField;
   if (isObj(over.cache) && ["anthropic-breakpoints", "openai-auto", "none"].includes(over.cache.strategy as string)) out.cache.strategy = over.cache.strategy as CacheStrategy;
   if (over.fileEditToolProfile === "apply-patch" || over.fileEditToolProfile === "create-edit") out.fileEditToolProfile = over.fileEditToolProfile;
+  if (over.textVerbosity === "low" || over.textVerbosity === "medium" || over.textVerbosity === "high") out.textVerbosity = over.textVerbosity;
+  if (typeof over.serviceTier === "string" && over.serviceTier) out.serviceTier = over.serviceTier;
+  if (over.safetyIdentifier === true || (typeof over.safetyIdentifier === "string" && over.safetyIdentifier)) out.safetyIdentifier = over.safetyIdentifier as string | true;
+  if (typeof over.extendedCache === "boolean") out.extendedCache = over.extendedCache;
   return out;
 }
 
