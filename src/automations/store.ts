@@ -4,7 +4,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync
 import { join, resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import { rigwellHome } from "../storage/paths.ts";
-import { ScheduleError, machineTimeZone, parseSchedule, validTimeZone, type Schedule } from "./schedule.ts";
+import { ScheduleError, machineTimeZone, normalizeSchedule, parseSchedule, validTimeZone, type Schedule } from "./schedule.ts";
 
 export type RunStatus = "in_progress" | "success" | "failure" | "cancelled";
 export type FailureReason =
@@ -40,6 +40,13 @@ export interface AutomationState {
   lastRunStatus?: RunStatus;
   runCount: number;
   health?: "degraded";
+  /** Final failures (retry included) in a row; reset by a success or a resume. */
+  consecutiveFailures?: number;
+  /** Set when the automation paused itself (spec 16.3 auto-pause). */
+  pausedReason?: "missed_runs" | "consecutive_failures";
+  pausedAt?: number;
+  /** When the user last resumed it; the missed-run clock restarts here. */
+  resumedAt?: number;
   /** A failed first attempt waits here for its one retry. */
   retry?: { at: number; trigger: TriggerKind; payload?: string; scheduledFor?: number };
 }
@@ -231,8 +238,14 @@ export function readSecrets(a: Automation): Secrets { return readJson<Secrets>(j
 export function writeSecrets(a: Automation, s: Secrets) { atomicWrite(join(a.dir, "secrets.json"), JSON.stringify(s, null, 2)); }
 export const newSecret = () => randomBytes(24).toString("hex");
 
-export function createAutomationFolder(root: string, fm: Frontmatter, body: string, source: "home" | "project"): Automation {
-  validateFrontmatter(fm);
+/** Natural-language schedules are turned into cron once, at save time (spec 16.2). */
+function withSavedSchedule(fm: Frontmatter): Frontmatter {
+  return typeof fm.schedule === "string" ? { ...fm, schedule: normalizeSchedule(fm.schedule) } : fm;
+}
+
+export function createAutomationFolder(root: string, fmIn: Frontmatter, body: string, source: "home" | "project"): Automation {
+  validateFrontmatter(fmIn);
+  const fm = withSavedSchedule(fmIn);
   mkdirSync(root, { recursive: true });
   let folder = slugify(fm.name), n = 1;
   while (existsSync(join(root, folder))) folder = `${slugify(fm.name)}-${++n}`;
@@ -250,7 +263,7 @@ export function updateAutomationFolder(a: Automation, fmPatch: Partial<Frontmatt
   const fm = { ...a.fm, ...fmPatch } as Frontmatter;
   for (const k of Object.keys(fm) as (keyof Frontmatter)[]) if (fm[k] === undefined || fm[k] === null) delete fm[k];
   validateFrontmatter(fm);
-  atomicWrite(join(a.dir, "HEARTBEAT.md"), serializeHeartbeat(fm, body ?? a.body));
+  atomicWrite(join(a.dir, "HEARTBEAT.md"), serializeHeartbeat(withSavedSchedule(fm), body ?? a.body));
 }
 
 export function deleteAutomationFolder(a: Automation) { rmSync(a.dir, { recursive: true, force: true }); }

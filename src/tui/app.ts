@@ -7,6 +7,10 @@ import { join, resolve } from "node:path";
 import { RpcClient } from "../sdk/client.ts";
 import type { Transport } from "../sdk/transport.ts";
 import { listSessions } from "../storage/transcript.ts";
+import { loadSettings } from "../storage/settings.ts";
+import { focusAllows, playSound, progressSequence, runStatusLine, soundSettings, statusLineConfig } from "./attention.ts";
+import { loadCustomEntries, parseLoop } from "./customcmd.ts";
+import { buildView, statusLineInput } from "./views.ts";
 import { parseKeys, PASTE_OFF, PASTE_ON } from "./keys.ts";
 import { render, stripAnsi } from "./render.ts";
 import { initialState, reduce } from "./reducer.ts";
@@ -18,6 +22,10 @@ export interface TuiOptions {
   /** initialize_session params (modelId, autonomyLevel, interactionMode, skipPermissionsUnsafe...). */
   sessionParams?: Record<string, unknown>;
   version?: string;
+  /** How the session is reached, for /diagnostics: "in-process", "daemon socket <path>", "WebSocket <url>". */
+  connection?: string;
+  /** Runtime settings file (--settings), read for sounds and the status line. */
+  settingsPath?: string;
   homeDir?: string;
   stdin?: NodeJS.ReadStream;
   stdout?: NodeJS.WriteStream;
@@ -52,9 +60,18 @@ export async function runTui(opts: TuiOptions): Promise<number> {
   };
   const schedule = () => { if (!renderQueued) { renderQueued = true; setImmediate(draw); } };
 
+  let focused: boolean | undefined;
+  let progress: "working" | "waiting" | "idle" = "idle";
+  const settingsNow = () => loadSettings({ cwd, runtimeSettingsPath: opts.settingsPath }).settings as Record<string, any>;
+  const setProgress = () => {
+    const next = state.panels.some((p) => p.action.type === "request") ? "waiting" : state.running ? "working" : "idle";
+    if (next !== progress) { progress = next; if (tty) stdout.write(progressSequence(next)); }
+  };
+
   function dispatch(e: TuiEvent) {
     const step = reduce(state, e);
     state = step.state;
+    setProgress();
     for (const eff of step.effects) void run(eff);
     schedule();
     if (state.quit && !finishing) void finish(0);
@@ -84,6 +101,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
       ? await c.request("load_session", { sessionId: load, cwd })
       : await c.request("initialize_session", { machineId: "default", cwd, sessionOriginHint: "tui", ...params });
     dispatch({ type: "session_ready", result, fresh: true });
+    void refreshExtras();
   }
 
   /** Switch session; if that fails, say why and start a fresh one so the UI stays usable. */
@@ -98,7 +116,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     try {
       switch (eff.type) {
         case "send":
-          await client!.request("add_user_message", { text: eff.text, messageId: eff.messageId, userMessageSource: "tui" }).catch((e) => {
+          await client!.request("add_user_message", { text: eff.text, messageId: eff.messageId, userMessageSource: "tui", ...(eff.queuePlacement ? { queuePlacement: eff.queuePlacement } : {}) }).catch((e) => {
             info(`Could not send: ${errText(e)}`, "error");
             dispatch({ type: "notification", n: { type: "agent_turn_completed", reason: "error" }, now: Date.now() });
           });
@@ -123,7 +141,14 @@ export async function runTui(opts: TuiOptions): Promise<number> {
         }
         case "resume": await switchTo({}, eff.sessionId); return;
         case "list_sessions": {
-          const list = listSessions(cwd).map((x) => ({ id: x.id, title: x.title, updatedAt: new Date(x.mtimeMs).toISOString() }));
+          // rigwell.list_sessions hides subagent and empty sessions (spec §12.1); fall back to a local scan when it is missing.
+          let list: { id: string; title?: string; updatedAt?: string; pinned?: boolean }[];
+          try {
+            const r = await client!.request("list_sessions", { cwd });
+            list = ((r?.sessions ?? []) as any[]).map((x) => ({ id: x.sessionId, title: x.title, updatedAt: x.updatedAt, pinned: x.pinned }));
+          } catch {
+            list = listSessions(cwd).map((x) => ({ id: x.id, title: x.title, updatedAt: new Date(x.mtimeMs).toISOString() }));
+          }
           dispatch({ type: "sessions", sessions: list });
           return;
         }
@@ -176,6 +201,24 @@ export async function runTui(opts: TuiOptions): Promise<number> {
           dispatch({ type: "editor_result", text: readFileSync(file, "utf8").replace(/\n$/, "") });
           return;
         }
+        case "view": {
+          const v = eff.name === "loop" ? await loopView(eff.args) : await buildView(eff.name, eff.args, { request: (m, p) => client!.request(m, p), state, connection: opts.connection ?? "in-process", settingsPath: opts.settingsPath });
+          dispatch({ type: "overlay", title: v.title, lines: v.lines });
+          if (eff.name === "statusline") void refreshStatusLine();
+          if (eff.name === "mcp") void refreshExtras();
+          return;
+        }
+        case "open_rewind": dispatch({ type: "open_rewind" }); return;
+        case "rewind": {
+          const msg = state.items.find((i) => i.kind === "user" && i.id === eff.messageId);
+          try {
+            const r = await client!.request("rewind_session", { messageId: eff.messageId, restoreFiles: eff.restoreFiles });
+            dispatch({ type: "rewound", messageId: eff.messageId, text: msg?.kind === "user" ? msg.text : "", removedCount: r?.removedCount ?? 0, restoredFiles: r?.restoredFiles ?? [] });
+          } catch (e) { info(`/rewind-conversation: ${errText(e)}`, "error"); }
+          return;
+        }
+        case "attention": await attention(eff.kind); return;
+        case "status_line": await refreshStatusLine(); return;
         case "rpc": {
           try {
             const r = await client!.request(eff.method, eff.params);
@@ -192,26 +235,95 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     }
   }
 
-  const onResize = () => schedule();
+  async function loopView(args: string): Promise<{ title: string; lines: string[] }> {
+    const title = "Loop";
+    const cmd = parseLoop(args);
+    try {
+      if (cmd.kind === "error") return { title, lines: [cmd.message] };
+      if (cmd.kind === "list") {
+        const r = await client!.request("list_crons", { sessionId: state.sessionId });
+        const crons = (r?.crons ?? []) as any[];
+        return { title, lines: crons.length ? crons.map((c) => `${c.id}  [${c.status}]  ${c.schedule?.expression ?? ""}  ${String(c.prompt ?? "").split("\n")[0].slice(0, 70)}`) : ["No loops in this session."] };
+      }
+      if (cmd.kind === "stop") {
+        const r = await client!.request("list_crons", { sessionId: state.sessionId });
+        const ids = ((r?.crons ?? []) as any[]).map((c) => c.id).filter((id) => cmd.id === "all" || id === cmd.id);
+        for (const id of ids) await client!.request("delete_cron", { id });
+        return { title, lines: [ids.length ? `Stopped ${ids.length} loop${ids.length === 1 ? "" : "s"}.` : `No loop matches "${cmd.id}".`] };
+      }
+      let prompt = cmd.prompt;
+      if (!prompt) {
+        for (const f of [join(cwd, ".rigwell", "loop.md"), join(opts.homeDir ?? "", "loop.md")]) if (opts.homeDir !== "" && existsSync(f)) { prompt = readFileSync(f, "utf8").trim(); break; }
+        if (!prompt) return { title, lines: ["No prompt given and no loop.md found in <project>/.rigwell or the data folder."] };
+      }
+      const r = await client!.request("create_cron", { sessionId: state.sessionId, prompt, interval: cmd.interval, source: "loop_command", recurring: true });
+      return { title, lines: [`Loop ${r?.cron?.id ?? ""} created: every ${cmd.interval}. It fires only while this session is open in the daemon.`, "/loop list, /loop stop [id|all]"] };
+    } catch (e) {
+      return { title, lines: [/not found|unknown method/i.test(errText(e)) ? "Loops need the daemon: start it with `rigwell daemon` and run the TUI with --daemon." : `Loop: ${errText(e)}`] };
+    }
+  }
+
+  async function attention(kind: "completion" | "awaiting") {
+    const st = soundSettings(settingsNow());
+    if (!focusAllows(st.soundFocusMode, focused)) return;
+    const bell = () => { if (tty) stdout.write("\x07"); };
+    if (kind === "completion") {
+      if (st.enableCompletionBell) bell();
+      await playSound(st.completionSound, st.soundVolume, { bell });
+    } else {
+      await playSound(st.awaitingInputSound, st.soundVolume, { bell });
+    }
+  }
+
+  let slFailed = false;
+  async function refreshStatusLine() {
+    const cfg = statusLineConfig(settingsNow());
+    if (!cfg) { if (state.statusLine || state.statusLineHint) dispatch({ type: "status_line", text: undefined }); return; }
+    const r = runStatusLine(cfg, statusLineInput(state), cwd);
+    slFailed = !r.ok;
+    dispatch(r.ok ? { type: "status_line", text: r.text, padding: cfg.padding } : { type: "status_line", text: undefined, hint: r.hint, padding: cfg.padding });
+  }
+
+  async function refreshExtras() {
+    try {
+      const { entries, skills } = loadCustomEntries(cwd);
+      let mcps: number | undefined, issues = 0;
+      try {
+        const m = await client?.request("list_mcp_servers", {});
+        mcps = (m?.servers ?? []).length;
+        issues += m?.summary?.failed ?? 0;
+      } catch { /* no MCP manager yet */ }
+      issues += loadSettings({ cwd, runtimeSettingsPath: opts.settingsPath }).warnings.length;
+      dispatch({ type: "extras", custom: entries, skills, mcps, issues });
+    } catch (e) { opts.log?.(`tui: could not load commands and skills: ${errText(e)}`); }
+  }
+
+  const onResize = () => { dispatch({ type: "resize", rows: stdout.rows || 24, cols: stdout.columns || 80 }); };
   function enterTerminal() {
     if (!tty) return;
-    stdout.write("\x1b[?1049h" + PASTE_ON + "\x1b[2J");
+    stdout.write("\x1b[?1049h" + PASTE_ON + "\x1b[?1004h\x1b[2J");
     stdin.setRawMode(true);
     schedule();
   }
   function leaveTerminal() {
     if (!tty) return;
     stdin.setRawMode(false);
-    stdout.write(PASTE_OFF + "\x1b[?25h\x1b[?1049l");
+    stdout.write("\x1b[?1004l" + PASTE_OFF + "\x1b[?25h\x1b[?1049l");
   }
 
-  const timer = tty ? setInterval(() => { if (state.running) dispatch({ type: "tick", now: Date.now() }); }, 1000) : undefined;
+  let ticks = 0;
+  const timer = tty ? setInterval(() => {
+    if (state.running) dispatch({ type: "tick", now: Date.now() });
+    // The status line refreshes about every 5 s while idle (and after each turn); a failing command is retried every 30 s.
+    if (!state.running && ++ticks % (slFailed ? 30 : 5) === 0) void refreshStatusLine();
+  }, 1000) : undefined;
 
   async function finish(code: number) {
     if (finishing) return;
     finishing = true;
     if (timer) clearInterval(timer);
     stdin.off("data", onData);
+    if (tty && progress !== "idle") stdout.write(progressSequence("idle"));
     stdout.off("resize", onResize);
     leaveTerminal();
     const c = client;
@@ -230,7 +342,10 @@ export async function runTui(opts: TuiOptions): Promise<number> {
   }
 
   function onData(chunk: Buffer | string) {
-    for (const key of parseKeys(chunk.toString())) dispatch({ type: "key", key, now: Date.now() });
+    let data = chunk.toString();
+    // Focus reporting (CSI I / CSI O) feeds soundFocusMode; it is not a key.
+    data = data.replace(/\x1b\[([IO])/g, (_m, c) => { focused = c === "I"; return ""; });
+    for (const key of parseKeys(data)) dispatch({ type: "key", key, now: Date.now() });
   }
 
   try {
@@ -241,6 +356,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     return 1;
   }
   enterTerminal();
+  onResize();
   stdin.on("data", onData);
   stdout.on("resize", onResize);
   stdin.on("end", () => {

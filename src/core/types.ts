@@ -45,6 +45,8 @@ export interface Message {
   content: ContentBlock[];
   /** llm_only: model sees it, UI hides it. user_only: UI only. Absent: both. */
   visibility?: "llm_only" | "user_only";
+  /** Who sent a user message: "automation" for prompts injected by crons and automations. Absent for typed messages. */
+  userMessageSource?: string;
   // assistant-only metadata
   modelId?: string;
   apiProvider?: string;
@@ -66,7 +68,7 @@ export const zeroUsage = (): TokenUsage => ({
 
 // ---------- Models ----------
 
-export type ProviderKind = "anthropic" | "openai";
+export type ProviderKind = "anthropic" | "openai" | "generic-chat-completion-api";
 
 /** One resolved model (from settings `customModels`, spec §12.2). */
 export interface ModelConfig {
@@ -88,6 +90,11 @@ export interface ModelConfig {
   reasoningField?: "reasoning" | "reasoning_content";
   /** Which file-edit tools the model gets (spec 4.6.4). */
   fileEditToolProfile?: "apply-patch" | "create-edit";
+  /** Chat Completions quirk profile: mistral, together, baseten, databricks, google (spec 4.6.6). */
+  apiProvider?: string;
+  /** Chat Completions body overrides: model level, and per api-provider (applied last). */
+  chatCompletionRequest?: Record<string, unknown>;
+  chatCompletionRequestByProvider?: Record<string, Record<string, unknown>>;
 }
 
 /** A tool as sent to the model. */
@@ -196,6 +203,8 @@ export interface ToolContext {
   imagesSupported?: boolean;
   /** Session services for the tools that need them (TaskOutput, TaskStop, TodoWrite, AskUser, StructuredOutput). */
   session?: SessionServices;
+  /** File snapshots (rewind): Edit/Create call before(abs) ahead of writing and after(abs) once written. Never throws. */
+  snapshots?: { before(abs: string): void; after(abs: string): void };
 }
 
 /** What the session offers its own tools. */

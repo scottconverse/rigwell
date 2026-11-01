@@ -8,11 +8,35 @@ import type { RigwellSettings } from "../storage/settings.ts";
 import { WorktreeError, WorktreeManager, resolveRoot, type Lifecycle, type ManagedWorktree } from "./manager.ts";
 import { checkoutBranch, commit, listBranches, push } from "./actions.ts";
 import { repoTopLevel } from "./git.ts";
-import type { SetupProfile } from "./profiles.ts";
+import { deleteLocalProfile, listProfiles, readProfileIndex, setLastUsedProfile, type SetupProfile } from "./profiles.ts";
+import { forgetTrusted, markTrusted } from "./trust.ts";
+import { HeadWatcher } from "./watch.ts";
+import { Housekeeper } from "./housekeeping.ts";
+import { findSession } from "../storage/transcript.ts";
+import { readSessionSettings, updateSessionSettings } from "../storage/session-settings.ts";
+import { loadSettings } from "../storage/settings.ts";
+import { rigwellHome } from "../storage/paths.ts";
 
-/** Worktrees with a live session in this process; auto-delete and remove skip them. */
-const active = new Set<string>();
-export const releaseWorktree = (p: string) => void active.delete(p);
+/** Worktrees with a live session in this process (path -> session id); auto-delete and remove skip them. */
+const active = new Map<string, string>();
+export const releaseWorktree = (p: string) => { active.delete(p); heads.remove(p); };
+
+// ---- notifications (spec 18.5 and 18.6): the daemon subscribes and broadcasts to its clients ----
+// Wire names: rigwell.worktree.removed {worktreePath, sessionId, repoRoot, branch}
+//             rigwell.worktree.branch_changed {worktreePath, sessionId?, branch, previousBranch}
+export type WorktreeNotifier = (method: "worktree.removed" | "worktree.branch_changed", params: Record<string, unknown>) => void;
+const listeners = new Set<WorktreeNotifier>();
+export function onWorktreeNotification(fn: WorktreeNotifier): () => void { listeners.add(fn); return () => void listeners.delete(fn); }
+const emit: WorktreeNotifier = (m, p) => { for (const l of listeners) { try { l(m, p); } catch { /* a listener never breaks git work */ } } };
+
+const heads = new HeadWatcher({
+  onChange: (c) => {
+    emit("worktree.branch_changed", { worktreePath: c.worktreePath, sessionId: active.get(c.worktreePath), branch: c.branch, previousBranch: c.previousBranch });
+    if (c.branch) void new WorktreeManager({ root: path.dirname(path.dirname(c.worktreePath)) }).updateMeta(c.worktreePath, { branch: c.branch }).catch(() => {});
+  },
+});
+/** Test and shutdown hook: stops every HEAD watch. */
+export const closeHeadWatchers = () => heads.close();
 
 export function managerFor(s: RigwellSettings, log?: (m: string) => void): WorktreeManager {
   const trusted = new Set(Object.keys(s.trustedFolders ?? {}).map((p) => path.resolve(p)));
@@ -21,7 +45,41 @@ export function managerFor(s: RigwellSettings, log?: (m: string) => void): Workt
     root: resolveRoot(s.worktreeDirectory, log), autoDeleteLimit: limit, log,
     isTrusted: (repo) => trusted.has(path.resolve(repo)),
     inUse: (p) => active.has(p),
+    trust: { mark: markTrusted, forget: forgetTrusted },
+    onRemoved: (e) => { heads.remove(e.path); active.delete(e.path); emit("worktree.removed", { worktreePath: e.path, sessionId: e.sessionId, repoRoot: e.repoRoot, branch: e.branch }); },
   });
+}
+
+/** Starts the 5-minute housekeeping timer for the daemon. Returns a stop function. */
+export function startWorktreeHousekeeping(opts: { log?: (m: string) => void } = {}): { stop(): void; tick(): ReturnType<Housekeeper["tick"]> } {
+  const hk = new Housekeeper({ manager: () => managerFor(userSettings(), opts.log), log: opts.log });
+  hk.start();
+  return { stop: () => hk.stop(), tick: () => hk.tick() };
+}
+
+const userSettings = () => loadSettings({ cwd: rigwellHome() }).settings;
+
+/**
+ * A session was archived: remove its ephemeral worktree when that loses nothing (spec 18.5 housekeeping).
+ * The archive_session method calls this after it writes `archivedAt`. Returns the removed path or null.
+ */
+export async function onSessionArchived(sessionId: string, settings: RigwellSettings = userSettings(), log?: (m: string) => void): Promise<string | null> {
+  return await managerFor(settings, log).removeForArchivedSession(sessionId);
+}
+
+/** The session got its generated title: rename a generated branch (spec 18.2) and keep session settings in step. */
+export async function onSessionTitleUpdated(sessionId: string, title: string, settings: RigwellSettings = userSettings(), log?: (m: string) => void): Promise<string | null> {
+  const mgr = managerFor(settings, log);
+  const wt = await mgr.forSession(sessionId);
+  if (!wt) return null;
+  const next = await mgr.renameGeneratedBranch(wt.path, title);
+  if (next) {
+    const files = findSession(sessionId);
+    const cur = files ? readSessionSettings(files) : null;
+    if (files && cur?.worktree && typeof cur.worktree === "object") updateSessionSettings(files, { worktree: { ...(cur.worktree as object), branch: next } });
+    await heads.check(wt.path); // report now; the file watch would also catch it after its debounce
+  }
+  return next;
 }
 
 export interface WorktreeRequest {
@@ -33,6 +91,7 @@ export interface WorktreeRequest {
   setupProfile?: string;
   /** First prompt, used to name the generated branch. */
   prompt?: string;
+  pullFromOrigin?: boolean;
 }
 
 function parseRequest(raw: unknown, s: RigwellSettings): WorktreeRequest | null {
@@ -48,7 +107,7 @@ function parseRequest(raw: unknown, s: RigwellSettings): WorktreeRequest | null 
   if (mode !== undefined && mode !== "copy" && mode !== "existing") throw bad("worktree.branchMode must be copy or existing");
   const life = str("lifecycle");
   if (life !== undefined && life !== "ephemeral" && life !== "persistent") throw bad("worktree.lifecycle must be ephemeral or persistent");
-  return { enabled: true, branch: str("branch"), branchMode: mode as any, baseRef: str("baseRef"), lifecycle: life as Lifecycle, setupProfile: str("setupProfile"), prompt: str("prompt") };
+  return { enabled: true, branch: str("branch"), branchMode: mode as any, baseRef: str("baseRef"), lifecycle: life as Lifecycle, setupProfile: str("setupProfile"), prompt: str("prompt"), pullFromOrigin: r.pullFromOrigin === true };
 }
 
 export interface SessionWorktree {
@@ -73,7 +132,8 @@ export async function startSessionWorktree(raw: unknown, cwd: string, sessionId:
   if (!req) {
     const adopted = await manager.containing(cwd);
     if (!adopted) return null;
-    active.add(adopted.path);
+    active.set(adopted.path, sessionId);
+    void heads.add(adopted.path).catch(() => {});
     return { manager, info: adopted, cwd, adopted: true };
   }
   const top = await repoTopLevel(cwd);
@@ -81,9 +141,11 @@ export async function startSessionWorktree(raw: unknown, cwd: string, sessionId:
   try {
     const info = await manager.create({
       repoRoot: top, sessionId, prompt: req.prompt, branchMode: req.branchMode, branch: req.branch,
-      baseRef: req.baseRef, lifecycle: req.lifecycle, setupProfileId: req.setupProfile,
+      baseRef: req.baseRef, lifecycle: req.lifecycle, setupProfileId: req.setupProfile, pullFromOrigin: req.pullFromOrigin,
     });
-    active.add(info.path);
+    active.set(info.path, sessionId);
+    void heads.add(info.path).catch(() => {});
+    if (req.setupProfile) { try { setLastUsedProfile(top, req.setupProfile); } catch { /* the index is a convenience */ } }
     const rel = path.relative(top, cwd);
     const out: SessionWorktree = { manager, info, cwd: rel ? path.join(info.path, rel) : info.path, adopted: false };
     if (req.setupProfile) {
@@ -147,6 +209,11 @@ export async function handleWorktreeMethod(method: string, p: Record<string, unk
         const worktrees = await mgr().list(typeof p.repoRoot === "string" ? { repoRoot: p.repoRoot } : undefined);
         return ok({ worktrees });
       }
+      case "list_worktree_setup_profiles": {
+        const repoRoot = path.resolve(need(p, "repoRoot"));
+        return ok({ profiles: listProfiles(repoRoot).map((x) => ({ id: x.id, name: x.name, source: x.source, hasScript: !!x.script, hasCleanup: !!x.cleanupScript })), lastUsedProfileId: readProfileIndex(repoRoot).lastUsedProfileId });
+      }
+      case "delete_worktree_setup_profile": return ok({ deleted: deleteLocalProfile(path.resolve(need(p, "repoRoot")), need(p, "profileId")) });
       case "get_worktree_status": return ok({ status: await mgr().status(target()) });
       case "inspect_worktree_deletion": return ok(await mgr().inspectDeletion(path.resolve(need(p, "worktreePath"))));
       case "cleanup_worktree": {

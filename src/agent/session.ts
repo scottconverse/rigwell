@@ -6,7 +6,8 @@ import type {
   PermissionDecision, ReasoningEffort, TokenUsage, Tool, ToolResultBlock, ToolUseBlock, FileReadRecord,
   AskQuestion, ImageBlock, SessionServices, TodoItem,
 } from "../core/types.ts";
-import type { ToolExecutionMode, ToolOutput } from "../core/types.ts";
+import type { ToolContext, ToolExecutionMode, ToolOutput } from "../core/types.ts";
+import { SnapshotRecorder } from "../snapshots/index.ts";
 import { ModelError, zeroUsage } from "../core/types.ts";
 import { JobManager, type Job } from "../jobs/manager.ts";
 import { ToolCallError } from "../script/bindings.ts";
@@ -38,6 +39,7 @@ import { schemaProblem, validate } from "./json-schema.ts";
 import {
   createAskUserTool, createStructuredOutputTool, createTaskOutputTool, createTaskStopTool, createTodoWriteTool, renderTodoList,
 } from "../tools/session-tools.ts";
+import { attachSandbox, sandboxStatus } from "../sandbox/controller.ts";
 
 export type WorkingState =
   | "idle" | "thinking" | "streaming_assistant_message" | "waiting_for_tool_confirmation" | "executing_tool"
@@ -78,7 +80,7 @@ export interface PendingPrompt {
 }
 
 /** A user message waiting for its turn. */
-export interface QueuedUserMessage { text: string; messageId: string; content?: ContentBlock[]; outputFormat?: OutputFormat | null }
+export interface QueuedUserMessage { text: string; messageId: string; source?: string; content?: ContentBlock[]; outputFormat?: OutputFormat | null }
 
 /** What a session needs from the connection that owns it. */
 export interface SessionHost {
@@ -286,6 +288,9 @@ export class Session {
   archived: Message[];
   private compactionAnchor?: string;
   private compactedOnce = false;
+  /** File snapshots for rewind: the user message of the running turn is the boundary. */
+  private snapRec?: SnapshotRecorder;
+  private turnMessageId?: string;
   private callsSinceCompaction = 0;
   /** Context size after the last model call (tokens) and the message count it covered. */
   private lastCallContext?: { tokens: number; count: number };
@@ -354,6 +359,7 @@ export class Session {
     this.instrBlock = this.instructions.load().block;
     this.skills = new SkillRegistry({ cwd: deps.cwd, includeBuiltins: !deps.disableBuiltinSkills, projectTrusted: deps.projectTrusted }).load();
     this.skillToolOn = this.skills.skillToolAvailable();
+    attachSandbox(this.id, deps.autoRejectPermissionRequests || !host.requestPermission ? undefined : (p) => host.requestPermission!(p) as Promise<{ selectedOption: string }>);
     this.hooks = deps.hooksFor?.({
       sessionId: this.id, transcriptPath: deps.transcriptPath ?? "", notify: (n) => this.notify(n), permissionMode: () => this.permissionMode(),
     });
@@ -498,6 +504,7 @@ export class Session {
   settingsSnapshot(): Record<string, unknown> {
     return {
       ...this.settings, toolExecutionMode: this.effectiveMode(), availableAutonomyLevels: ["off", "low", "medium", "high"],
+      sandbox: sandboxStatus(this.id, this.cwd),
       ...(this.routed ? { effectiveRouterModel: this.routedSettings(), routedModelId: this.routed.modelId, routedReasoningEffort: this.activeEffort() } : {}),
       ...(this.deps.toolIds?.restrict ? { restrictToolIds: this.deps.toolIds.restrict } : {}),
       ...(this.deps.toolIds?.enabled ? { enabledToolIds: this.deps.toolIds.enabled } : {}),
@@ -609,11 +616,11 @@ export class Session {
 
   /** Accepts a user message. Returns at once; the turn runs in the background. */
   addUserMessage(
-    text: string, messageId: string = crypto.randomUUID(),
+    text: string, messageId: string = crypto.randomUUID(), source?: string,
     opts: { content?: ContentBlock[]; placement?: "end_of_turn" | "end_of_loop"; outputFormat?: OutputFormat | null } = {},
   ) {
     const entry: QueuedUserMessage = {
-      text, messageId, ...(opts.content?.length ? { content: opts.content } : {}), ...(opts.outputFormat !== undefined ? { outputFormat: opts.outputFormat } : {}),
+      text, messageId, ...(source ? { source } : {}), ...(opts.content?.length ? { content: opts.content } : {}), ...(opts.outputFormat !== undefined ? { outputFormat: opts.outputFormat } : {}),
     };
     // end_of_loop while a turn runs is steering: it is delivered after the next tool call batch (spec 13.3).
     if (opts.placement === "end_of_loop" && this.running) this.steer.push(entry);
@@ -652,7 +659,12 @@ export class Session {
     if (this.currentRun) return;
     const p = this.drain();
     this.currentRun = p;
-    void p.then(() => { if (this.currentRun === p) this.currentRun = undefined; });
+    // A message queued after drain() made its last queue check but before currentRun was cleared would be stranded
+    // (kick() saw a run in progress): start another run for it.
+    void p.then(() => {
+      if (this.currentRun === p) this.currentRun = undefined;
+      if (!this.currentRun && this.queue.length) this.kick();
+    });
   }
 
   /** Resolves when no turn is running. */
@@ -736,6 +748,7 @@ export class Session {
     const toolCallsAtStart = this.toolCalls;
     this.halt = undefined;
     this.turnChildUsage = zeroUsage();
+    this.turnMessageId = turnId;
     let blocked = false;
     let structuredNudged = false;
     let todoNudged = false;
@@ -802,7 +815,7 @@ export class Session {
         for (const n of [...this.deferred.takeNotices(), this.deferred.announcement()]) {
           if (n) await this.push({ id: `deferred-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: n }] });
         }
-        await this.push({ id: turnId, role: "user", ...(visibility ? { visibility } : {}), content: entry?.content ?? [{ type: "text", text: prompt }] });
+        await this.push({ id: turnId, role: "user", ...(visibility ? { visibility } : {}), ...(entry?.source ? { userMessageSource: entry.source } : {}), content: entry?.content ?? [{ type: "text", text: prompt }] });
       }
 
       const repeat = new RepeatTracker();
@@ -1376,7 +1389,7 @@ export class Session {
       try {
         this.toolCalls++;
         out = await tool.run(input, {
-          ...this.toolContext(signal), toolUseId: call.id, jobs: this.jobs,
+          ...this.toolContext(signal), toolUseId: call.id, jobs: this.jobs, snapshots: this.snapshotHooks(call.id),
           onProgress: (p) => this.notify({ type: "tool_progress_update", toolUseId: call.id, toolName: call.name, update: { ...p, timestamp: new Date().toISOString() } }),
         });
         finish(out.content, !!out.isError, true, out.images);
@@ -1401,6 +1414,14 @@ export class Session {
   }
 
   /** A file tool touched `path`: look for instruction files and skills in the folders on the way (spec 12.2, 5.8). */
+  /** Snapshot hooks for Edit/Create (rewind). Absent for child sessions and when RIGWELL_SNAPSHOTS=off. */
+  private snapshotHooks(toolUseId: string): ToolContext["snapshots"] {
+    const turn = this.turnMessageId;
+    if (!turn || this.deps.isChild || process.env.RIGWELL_SNAPSHOTS === "off") return undefined;
+    this.snapRec ??= new SnapshotRecorder(this.id, this.deps.log);
+    return this.snapRec.hooks(turn, this.archived.length + this.messages.findIndex((m) => m.id === turn), toolUseId);
+  }
+
   private noteTouched(tool: string, input: Record<string, unknown>) {
     if (!["Read", "Edit", "Create"].includes(tool) || typeof input.path !== "string" || !input.path) return;
     try {
@@ -1554,7 +1575,7 @@ export class Session {
     }
     try {
       this.toolCalls++;
-      const out = await tool.run(input, { ...this.toolContext(meta.signal), toolUseId: id });
+      const out = await tool.run(input, { ...this.toolContext(meta.signal), toolUseId: id, snapshots: this.snapshotHooks(id) });
       await finish(out.content, !!out.isError);
       if (!out.isError) this.noteTouched(name, input);
       return out;
