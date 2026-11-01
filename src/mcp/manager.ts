@@ -37,8 +37,8 @@ export interface McpManagerOptions {
   /** Delay before reconnecting after an unexpected drop. Default 1000. */
   reconnectDelayMs?: number;
   maxDrops?: number;
-  /** Factory hook for tests. */
-  clientFactory?: (cfg: McpServerConfig, cwd?: string) => McpClient;
+  /** Client constructor hook for tests. */
+  clientCtor?: (cfg: McpServerConfig, cwd?: string) => McpClient;
 }
 
 export class McpManager {
@@ -88,7 +88,7 @@ export class McpManager {
 
   private async connect(e: Entry): Promise<void> {
     const epoch = e.epoch;
-    const client = this.o.clientFactory ? this.o.clientFactory(e.cfg, this.o.cwd) : new McpClient(e.cfg, { cwd: this.o.cwd });
+    const client = this.o.clientCtor ? this.o.clientCtor(e.cfg, this.o.cwd) : new McpClient(e.cfg, { cwd: this.o.cwd });
     try {
       await client.connect(this.o.connectTimeoutMs ?? 30000);
       const defs = await client.listTools(this.o.connectTimeoutMs ?? 30000);
