@@ -11,6 +11,7 @@ const USAGE = `Usage:
   rigwell exec --input-format stream-jsonrpc --output-format stream-jsonrpc [options]
   rigwell exec [options] "<prompt>"
   rigwell daemon [--socket <path>]
+  rigwell eval <run|report|tasks> [options]   (see rigwell eval --help)
 
 Options for exec:
   --auto <low|medium|high>     autonomy level (default: off, read-only)
@@ -137,6 +138,7 @@ async function main() {
     if (a.prompt !== undefined && !a.inputFormat) return execPrompt(a);
     return execJsonRpc(a);
   }
+  if (cmd === "eval") return (await import("../eval/cli.ts")).evalMain(argv);
   if (cmd === "daemon") {
     const i = argv.indexOf("--socket");
     const path = i >= 0 ? resolve(argv[i + 1] ?? fail("--socket needs a value")) : defaultSocketPath();
