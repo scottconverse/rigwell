@@ -83,7 +83,7 @@ test("picker rules: current project only, newest first, subagent and no-visible-
   const mk = async (id: string, dir: string, at: string, opts: { visible?: boolean; subagent?: boolean } = {}) => {
     const f = createSession({ id, cwd: dir });
     const ts = new Date(at).toISOString();
-    const lines = [{ type: "message", id: "context-" + id, parentId: null, timestamp: ts, seq: 0, message: { role: "user", visibility: "llm_only", content: [{ type: "text", text: "ctx" }] } }];
+    const lines: object[] = [{ type: "message", id: "context-" + id, parentId: null, timestamp: ts, seq: 0, message: { role: "user", visibility: "llm_only", content: [{ type: "text", text: "ctx" }] } }];
     if (opts.visible !== false) lines.push({ type: "message", id: "u-" + id, parentId: null, timestamp: ts, seq: 1, message: { role: "user", content: [{ type: "text", text: `hi from ${id}` }] } });
     appendFileSync(f.transcriptPath, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
     if (opts.subagent) updateSessionSettings(f, { tags: [{ name: "subagent", metadata: { subagent: 1 } }] });
