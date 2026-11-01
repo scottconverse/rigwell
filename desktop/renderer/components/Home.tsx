@@ -22,7 +22,7 @@ export function Home({ go, initialFolder }: { go(route: string): void; initialFo
     if (!folder) { setError("Choose a folder first."); return; }
     setBusy(true); setError("");
     try {
-      const ctl = await SessionController.create({ cwd: folder, modelId: settings.modelId, autonomyLevel: settings.autonomyLevel, interactionMode: settings.interactionMode, reasoningEffort: settings.reasoningEffort });
+      const ctl = await SessionController.create({ cwd: folder, title: text.split("\n")[0].slice(0, 60), modelId: settings.modelId, autonomyLevel: settings.autonomyLevel, interactionMode: settings.interactionMode, reasoningEffort: settings.reasoningEffort });
       const id = ctl.getSnapshot().sessionId!;
       live.set(id, ctl);
       app.rememberFolder(folder);
