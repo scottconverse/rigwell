@@ -32,7 +32,7 @@ import { renderAdditionalSkills, SkillRegistry } from "../skills/skills.ts";
 import { McpManager, isMcpAllowed, mcpTool, rememberMcp, type McpServerConfig } from "../mcp/index.ts";
 import { isStarted, runTask, TaskError, type ChildOptions, type ChildOutcome, type ParentContext, type TaskInput, type TaskLimits } from "../subagents/task.ts";
 import { agentCatalog, type CustomAgent } from "../subagents/agents.ts";
-import { exitSpecModeTool, saveSpec, skillTool, specFileName, specSaveFolder, taskTool } from "./extra-tools.ts";
+import { exitSpecModeTool, recommendMissionTool, upgradeModelTool, saveSpec, skillTool, specFileName, specSaveFolder, taskTool } from "./extra-tools.ts";
 import { TaskJob } from "../jobs/task.ts";
 import { resolveProfile, type ModelProfile, type ProfileSettings } from "./profiles.ts";
 import { schemaProblem, validate } from "./json-schema.ts";
@@ -220,6 +220,10 @@ export interface SessionDeps {
   compactionTokenLimitPerModel?: Record<string, number>;
   /** Settings `subagentModelSettings`: { model?, reasoningEffort? } for every Task subagent without a model of its own. */
   subagentModelSettings?: { model?: string; reasoningEffort?: ReasoningEffort };
+  /** Enters mission mode for this session (the missions module's enter_mission_mode). Absent: RecommendMission is not offered. */
+  enterMissionMode?: () => Promise<Record<string, unknown>>;
+  /** Settings `modelUpgradePath`: model ids from weaker to stronger. Absent or exhausted: UpgradeModel is not offered. */
+  modelUpgradePath?: string[];
 }
 
 /** Waits on one running Script before the turn is stopped (2 hours of 5-minute waits). */
@@ -493,7 +497,11 @@ export class Session {
   tools(): Tool[] {
     const script = [this.scripts.scriptTool(), this.scripts.jobTool()];
     const task = this.taskOffered() ? [this.makeTaskTool()] : [];
-    const exit = this.specMode && this.interactive ? [exitSpecModeTool()] : [];
+    const exit = [
+      ...(this.specMode && this.interactive ? [exitSpecModeTool()] : []),
+      ...(this.recommendMissionOffered() ? [recommendMissionTool()] : []),
+      ...(this.nextUpgradeModel() && this.interactive && !this.deps.isChild ? [upgradeModelTool()] : []),
+    ];
     if (this.effectiveMode() === "script_only") {
       return this.byIds([...script, ...this.sessionTools(), ...(this.allowTaskInScripts() ? [] : task), ...exit]);
     }
@@ -1372,6 +1380,12 @@ export class Session {
         finish(out.content, !!out.isError, true);
         continue;
       }
+      if (call.name === "RecommendMission" || call.name === "UpgradeModel") {
+        phase("executing");
+        const out = call.name === "RecommendMission" ? await this.recommendMission(call, input) : await this.upgradeModel(call, input);
+        finish(out.content, !!out.isError, true);
+        continue;
+      }
 
       let d = this.gate(call.name, input, unrated);
       if (skipAsk && (d.decision === "ask" || d.decision === "missing_risk")) d = { decision: "allow", reason: "allowed by a hook" };
@@ -1645,7 +1659,7 @@ export class Session {
     if (calls.length < 2 || !this.host.requestPermission || this.deps.autoRejectPermissionRequests || this.hooks?.hasHooks()) return undefined;
     const asks: { call: ToolUseBlock; d: Extract<PermissionDecision, { decision: "ask" }> }[] = [];
     for (const call of calls) {
-      if (!tools.has(call.name) || call.name === "ExitSpecMode") continue;
+      if (!tools.has(call.name) || call.name === "ExitSpecMode" || call.name === "RecommendMission" || call.name === "UpgradeModel") continue;
       const d = this.gate(call.name, call.input);
       if (d.decision === "ask" && !d.options) asks.push({ call, d });
     }
@@ -1862,6 +1876,60 @@ export class Session {
       (comment ? `The user added: ${comment}\n` : "") +
       (saved ? `The plan is saved at ${saved}. ` : "") + "Carry it out now.";
     return { content: text, data: { approved: true, ...(saved ? { savedTo: saved } : {}) } };
+  }
+
+  /** RecommendMission is offered in a normal session with a client that can answer, when mission mode can be entered. */
+  private recommendMissionOffered(): boolean {
+    return !!this.deps.enterMissionMode && this.interactive && !this.deps.isChild && this.settings.interactionMode === "auto";
+  }
+
+  /** The next model on the settings `modelUpgradePath` (known models only), or undefined. */
+  nextUpgradeModel(): string | undefined {
+    const path = this.deps.modelUpgradePath;
+    if (!path?.length) return undefined;
+    const cur = this.settings.modelId;
+    const at = path.indexOf(cur);
+    const rest = at < 0 ? path : path.slice(at + 1);
+    return rest.find((id) => id !== cur && !!this.deps.resolveModel(id));
+  }
+
+  /** RecommendMission {reason}: asks (recommend_mission); on approval enters mission mode through the missions module. */
+  private async recommendMission(call: ToolUseBlock, input: Record<string, unknown>): Promise<ToolOutput> {
+    const reason = typeof input.reason === "string" ? input.reason.trim() : "";
+    if (!reason) return { content: "reason is required: say why this work suits a mission.", isError: true };
+    if (!this.recommendMissionOffered()) return { content: "Mission mode cannot be recommended here.", isError: true };
+    const r = await this.askRaw(call, {
+      decision: "ask", confirmationType: "recommend_mission", impactLevel: "low", alwaysLevel: null, details: { reason },
+      options: [{ label: "Yes, switch to mission mode", value: "proceed_once" }, { label: "No, keep working here", value: "cancel" }],
+    });
+    if (r.verdict === "rejected" || r.verdict === "no_approver") return { content: "No one can be asked right now. Carry on in this session.", isError: true };
+    const comment = r.answer?.comment?.trim();
+    if (r.verdict === "cancel") return { content: `The user declined mission mode. Carry on in this session. ${comment ? `The user said: ${comment}` : ""}`.trim(), data: { accepted: false } };
+    let res: Record<string, unknown>;
+    try { res = await this.deps.enterMissionMode!(); } catch (e) { return { content: `Could not enter mission mode: ${(e as Error)?.message ?? e}`, isError: true }; }
+    if (res.entered !== true) {
+      return { content: "The user accepted, but the folder is not ready for a mission (readiness check failed). Tell the user what the check found and carry on here.", data: { accepted: true, entered: false, readiness: res.readiness } };
+    }
+    return { content: `The user accepted. Mission mode is on: plan the mission with the user and propose it with ProposeMission. ${comment ? `The user added: ${comment}` : ""}`.trim(), data: { accepted: true, entered: true } };
+  }
+
+  /** UpgradeModel {reason}: asks (upgrade_model); on approval the session model becomes the next one on the upgrade path. */
+  private async upgradeModel(call: ToolUseBlock, input: Record<string, unknown>): Promise<ToolOutput> {
+    const reason = typeof input.reason === "string" ? input.reason.trim() : "";
+    if (!reason) return { content: "reason is required: say why a stronger model is needed.", isError: true };
+    const next = this.nextUpgradeModel();
+    if (!next) return { content: "No stronger model is configured (settings modelUpgradePath).", isError: true };
+    const from = this.settings.modelId;
+    const r = await this.askRaw(call, {
+      decision: "ask", confirmationType: "upgrade_model", impactLevel: "medium", alwaysLevel: null, details: { reason, fromModelId: from, toModelId: next },
+      options: [{ label: `Yes, switch to ${next}`, value: "proceed_once" }, { label: "No, keep the current model", value: "cancel" }],
+    });
+    if (r.verdict === "rejected" || r.verdict === "no_approver") return { content: "No one can be asked right now. Carry on with the current model.", isError: true };
+    const comment = r.answer?.comment?.trim();
+    if (r.verdict === "cancel") return { content: `The user declined the model upgrade. Carry on with the current model. ${comment ? `The user said: ${comment}` : ""}`.trim(), data: { approved: false } };
+    // updateSettings queues the tool-mode notice when the new model changes the tool mode.
+    this.updateSettings({ modelId: next });
+    return { content: `The user approved. This session now uses ${next} (was ${from}), from the next request on.`, data: { approved: true, from, to: next } };
   }
 
   // ---------- subagents (spec 5.9) ----------

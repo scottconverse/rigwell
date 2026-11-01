@@ -34,6 +34,9 @@ export function decide(tool: string, input: Record<string, unknown>, ctx: Permis
     case "TodoWrite":
     case "AskUser":
     case "StructuredOutput":
+    // RecommendMission and UpgradeModel ask the user themselves (the session handles them).
+    case "RecommendMission":
+    case "UpgradeModel":
       return { decision: "allow" };
     // Network: ask at Off, auto at Low and above (spec 5.5.4).
     case "FetchUrl":
