@@ -92,7 +92,7 @@ function printSessionList(cwd: string) {
   const rows = listSessionEntries({ cwd });
   if (!rows.length) { process.stdout.write("No sessions to resume in this folder.\n"); return; }
   rows.forEach((r, i) => {
-    const when = new Date(r.updatedAt * 1000).toISOString().replace("T", " ").slice(0, 16);
+    const when = r.updatedAt.replace("T", " ").slice(0, 16);
     process.stdout.write(`${String(i + 1).padStart(3)}. ${r.pinned ? "* " : ""}${r.title}  [${r.sessionId}]  ${when}\n`);
   });
   process.stdout.write("Resume one with: rigwell -r <session id>\n");

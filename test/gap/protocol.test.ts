@@ -196,7 +196,7 @@ describe("session RPCs", () => {
     let list = (await f.call("list_sessions", { cwd: repo })).sessions;
     expect(list.length).toBe(2);
     expect(list[0]).toMatchObject({ sessionId: a.sessionId, title: "Manual title", pinned: true, archivedAt: null, isSubagent: false, hasUserVisibleMessages: true, cwd: repo });
-    expect(typeof list[0].updatedAt).toBe("number");
+    expect(list[0].updatedAt).toMatch(/^\d{4}-\d\d-\d\dT/);
 
     const g = driver({ canPrompt: false });
     const loaded = await g.call("load_session", { sessionId: a.sessionId, cwd: repo });
