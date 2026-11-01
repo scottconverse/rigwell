@@ -225,3 +225,37 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
     HEAD watching and `branch_changed`, the 5-minute housekeeping timer and archive-time removal (needs
     session archiving), `daemon.worktree.removed` broadcast, trust marking of the new folder, the
     Windows PowerShell runner, PR status and `create_pr`.
+
+## Phase 5: Hooks, MCP, skills, subagents, instruction files
+
+Standalone modules (src/hooks, src/mcp, src/skills, src/subagents, src/instructions, shared src/config); the lead wires
+them into the loop. Each index.ts starts with an "Integration" comment.
+
+74. **Config folders.** `src/config/levels.ts` resolves hooks.json / mcp.json locations: folder levels (nearer first), project
+    `<root>/.rigwell`, user `$RIGWELL_HOME`; "no project" when the root is or contains home. Hooks: `hooks.json` (legacy
+    `hooks/hooks.json`) replaces the settings `hooks` key per event within a folder; levels concatenate, highest priority
+    first. `trustProject: false` skips project and folder hooks (untrusted folder). Env vars given to hooks:
+    `RIGWELL_PROJECT_DIR`, `CLAUDE_PROJECT_DIR`, plus `CLAUDE_ENV_FILE`/`RIGWELL_ENV_FILE` on SessionStart.
+75. **Hook outcomes.** Exit 3 aborts, `continue:false` stops, then deny/exit 2 (config order), then allow, then ask. A legacy
+    `decision: block|approve` is treated as deny/allow in PreToolUse. `updatedInput` from several hooks is merged in config
+    order; `rerunChecks` is true unless the decision is allow. Stop hook: `stop_hook_active` is tracked by `HookRunner`
+    (true after a continuation) with no hard cap on continuations (spec leaves the cap for Scott to decide).
+    SessionStart's 60 s wait is the caller's (pass an AbortSignal). Plugin env and sandbox wrapping are not built.
+76. **MCP.** OAuth is not built (spec marks it later); a 401/403 on an http server fails with a message and `headers` can carry
+    a token. `mcp.json` format `{"mcpServers": {name: {type?, command, args, env | url, headers, disabled}}}` (a bare map also
+    loads); add_mcp_server writes the user file only. Protocol version `2025-06-18`. A server that drops 6 times is
+    status `failed` with a "suppressed" error and contributes no tools; drops before that reconnect after 1 s.
+    Model-facing tool name `server__tool` (server name sanitized to `[A-Za-z0-9_-]`); Script binding `server.tool`.
+77. **Skills.** Locations: project `<root>/.rigwell|.agents|.agent/skills/<name>/SKILL.md` (also `skill.mdx`), personal
+    `$RIGWELL_HOME/skills`, `~/.agents/skills`, `~/.agent/skills`, dynamic (on touched paths), built-in. Zero built-in
+    skills ship (content needs approval); the mechanism takes injected built-ins. No parse cache (files are small). The
+    "additional skills" reminder text is `<skills_added>...</skills_added>` (own wording). Skill result =
+    one-line "now active" note + `<skill name filePath>` body; `args` go on an "Arguments:" line inside the tag.
+78. **Custom agents.** Folder `agents/` (`$RIGWELL_HOME/agents`, `<root>/.rigwell/agents`); `mcpServers` is parsed and passed
+    through in the child options. Project agents shadow personal ones. Task core limits: depth 1, 5 per root, 10 per
+    process, clamped 25/100, in `TaskLimits` (one per process). Read-only agents (tools only Read/LS/Grep/Glob/Skill) are
+    capped at low autonomy. The child prompt is exactly the `prompt`; the agent body is passed as `agentSystemPrompt`.
+79. **Instruction files.** One file per folder (first of CLAUDE.md, Claude.md, AGENTS.md, Agents.md, agents.md); the
+    folders `D`, `D/.rigwell`, `D/.agents`, `D/.agent` are each checked. Symlink rule "inside its own folder" is
+    implemented as "inside the project boundary" (repo root, or cwd outside a repo or when home is inside the repo root).
+    Skipped files appear in the block as `not loaded: <reason>`. Truncated files end with a one-line note.
