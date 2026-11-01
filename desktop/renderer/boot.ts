@@ -13,3 +13,5 @@ for (const [k, v] of Object.entries(r.attrs)) root.setAttribute(k, v);
 for (const [k, v] of Object.entries(r.vars)) root.style.setProperty(k, v);
 root.style.backgroundColor = r.background;
 root.style.colorScheme = r.attrs["data-theme"];
+// Evidence for tests and diagnostics: what the page looked like on the first frame.
+requestAnimationFrame(() => { (window as unknown as { __firstFrame?: unknown }).__firstFrame = { theme: root.getAttribute("data-theme"), bg: getComputedStyle(root).backgroundColor }; });

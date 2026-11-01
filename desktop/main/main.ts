@@ -113,7 +113,7 @@ function createWindow(route = "/"): BrowserWindow {
   win.webContents.setWindowOpenHandler(({ url }) => { if (isAllowedExternal(url)) void shell.openExternal(url); return { action: "deny" }; });
   win.webContents.on("will-navigate", (e, url) => { if (!isTrustedSender(url, [APP_PAGE])) { e.preventDefault(); if (isAllowedExternal(url)) void shell.openExternal(url); } });
   // A reload or navigation drops this window's daemon connections; its terminals live on in the daemon (spec 17.2).
-  win.webContents.on("did-start-navigation", (_e, _url, _inPlace, isMainFrame) => { if (isMainFrame) { broker.closeWindow(id); viewing.delete(id); } });
+  win.webContents.on("did-start-navigation", (_e, _url, inPlace, isMainFrame) => { if (isMainFrame && !inPlace) { broker.closeWindow(id); viewing.delete(id); } });
   win.webContents.on("render-process-gone", (_e, d) => log(`[window] renderer gone: ${d.reason}`));
   win.on("unresponsive", () => log("[window] unresponsive"));
   win.webContents.on("did-finish-load", () => { win.webContents.setZoomLevel(settings.windowZoomLevel); });
@@ -361,7 +361,7 @@ async function boot() {
   supervisor.on("state", (s) => status(s));
   supervisor.on("restarting", () => status("restarting"));
   supervisor.on("ready", () => { status("running"); });
-  supervisor.on("exited", () => broker.closeAll());
+  supervisor.on("exited", () => broker.closeAll(true));
   supervisor.on("failed", (err: Error) => {
     status("failed", err.message);
     void dialog.showMessageBox({ type: "error", message: "The background service could not start", detail: err.message });

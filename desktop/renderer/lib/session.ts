@@ -33,7 +33,7 @@ const empty = (cwd: string): SessionState => ({
   phase: "connecting", cwd, title: "New Session", items: [], working: "idle", settings: {}, models: [], tokens: { input: 0, output: 0 }, prompts: [], sideChat: [],
 });
 
-export type CreateOptions = { cwd: string; modelId?: string; autonomyLevel?: string; interactionMode?: string; reasoningEffort?: string };
+export type CreateOptions = { cwd: string; title?: string; modelId?: string; autonomyLevel?: string; interactionMode?: string; reasoningEffort?: string };
 
 export class SessionController extends Store<SessionState> {
   conn?: DaemonConn;

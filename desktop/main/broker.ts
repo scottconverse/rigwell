@@ -93,7 +93,13 @@ export class DaemonBroker {
     for (const c of [...this.conns.values()]) if (c.windowId === windowId) this.closeConnection(windowId, c.id);
   }
 
-  closeAll() { for (const c of [...this.conns.values()]) this.closeConnection(c.windowId, c.id); }
+  /** Closes every connection. With `notify`, windows are told (the daemon went away); on quit they are not. */
+  closeAll(notify = false) {
+    for (const c of [...this.conns.values()]) {
+      this.closeConnection(c.windowId, c.id);
+      if (notify) this.host.deliver(c.windowId, "daemon:closed", { connId: c.id });
+    }
+  }
 
   /** All connections died (daemon restarted): tell their windows. */
   private dropOpen(c: Conn) {

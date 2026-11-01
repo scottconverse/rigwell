@@ -22,7 +22,7 @@ export async function startTestDaemon(url: string, sidepane?: SidePaneOptions, w
 export interface TestClient {
   rpc: RpcClient;
   notes: any[];
-  call<T = any>(method: string, params?: Record<string, unknown>): Promise<T>;
+  call(method: string, params?: Record<string, unknown>): Promise<any>;
   waitFor(pred: (n: any) => boolean, ms?: number): Promise<any>;
   close(): Promise<void>;
 }
