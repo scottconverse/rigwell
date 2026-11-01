@@ -402,6 +402,11 @@ export class Session {
   /** True when a client can answer AskUser questions. */
   private canAsk(): boolean { return !!this.host.requestAskUser && !this.deps.autoRejectPermissionRequests && !this.deps.isChild; }
 
+  private askObservers = new Set<(phase: "start" | "end") => void>();
+  /** Told when AskUser starts waiting for the user and when the answer arrives (Missions planning: awaiting_input). */
+  onAskUser(cb: (phase: "start" | "end") => void) { this.askObservers.add(cb); }
+  private asking(phase: "start" | "end") { for (const cb of this.askObservers) { try { cb(phase); } catch { /* observer errors never stop the turn */ } } }
+
   /** Swaps the connection that owns this session (a client reconnected); pending prompts stay open. */
   setHost(h: SessionHost) { this.host = h; }
 
@@ -1717,8 +1722,10 @@ export class Session {
     const requestId = crypto.randomUUID();
     const params = { requestId, toolCallId, questions: p.questions };
     this.setState("waiting_for_tool_confirmation");
+    this.asking("start");
     void this.hooks?.notification("elicitation_dialog", p.questions[0]?.question ?? "The agent has a question for you");
     const raw = await this.prompt<AskUserAnswer>("ask_user", requestId, params, () => send(params), { cancelled: true, answers: [] });
+    this.asking("end");
     this.setState("executing_tool");
     const answers = Array.isArray(raw?.answers)
       ? raw.answers.filter((a) => a && typeof a.answer === "string").map((a) => ({
