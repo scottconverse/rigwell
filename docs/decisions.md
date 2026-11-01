@@ -142,11 +142,35 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
 56. **Not built:** the SQLite session index (the spec makes it a cache; `listSessions` scans files),
     `fileEditToolProfile` (Create + Edit for every model), the keychain (keys come from settings or env).
 
+## Phase 10: Local automations
+
+57. **Folders:** `$RIGWELL_HOME/automations/<slug>/` and `<project>/.rigwell/automations/<slug>/`. The folder name is a slug of
+    the name; the id is the UUID in `memory/state.json`. `state.json` also holds `createdAt`, `health` (`degraded`) and the
+    pending `retry`. Extra frontmatter beyond the spec: `timezone` (IANA, default machine zone), `autonomy` (default `high`),
+    `payloadRegex`, `maxRunsPerHour`. A webhook automation needs no `schedule`.
+58. **Schedules:** presets, 5-field cron (ranges, steps, names, 7 = Sunday, day-of-month OR day-of-week) and
+    `every <n><m|h|d>` intervals counted from `createdAt`. Natural language is not parsed. Zone offsets are re-read every 15
+    minutes of scan time. A local time that does not exist (spring-forward gap) never matches; a repeated one (fall back) can
+    match twice.
+59. **Scheduler:** `tick()` is explicit and the clock is injected; the daemon calls it every 60 s. Due and catch-up are one
+    rule: the first slot after `lastRunAt` (else `createdAt`) that is `<= now` runs once; `catchUp` is true when it is a minute
+    or more late, `missedSlots` counts the others. Sleep = a gap over 150 s between ticks, then dispatch is held 150 s. Retries
+    are due when `retry.at <= now` and count toward the same caps (2 dispatches per tick, 3 concurrent).
+60. **Runs:** headless in-process connection (`canPrompt` false), autonomy from the automation (never skip-all). An unresolved
+    model falls back to the default and records `modelFallback`; with no default the run fails `dispatch_exception`. The session
+    closes as soon as the turn ends (no 15 s grace). `targetSessionId` loads that session and adds the prompt.
+61. **Not built:** auto-pause after 10 days, `mcp_unavailable` flagging, `host_slept` reason, agent tools
+    (`CreateAutomation` etc., `Loop`), the `/loop` slash command, natural-language schedules. Project automation folders are
+    scanned only for `projectDirs` given to the service or used by `create_automation` with `projectDir` (not persisted).
+62. **Webhook:** `POST /hooks/<id>` on `127.0.0.1`, default port 47821 (`settings.automations.webhookPort`, host via
+    `webhookHost`). The listener exists only while some valid automation has `trigger: webhook`. Auth: `Authorization: Bearer
+    <secret>` or `X-Rigwell-Signature: sha256=<hmac of body>`. Responses: 202 `{runId}`, 200 `{status: filtered|deduped}`,
+    401, 404, 409 (paused or running), 413 (256 KB), 429 capped. Dedupe window 60 s. Deliveries go to `memory/deliveries.json`.
+63. **Crons:** `$RIGWELL_HOME/crons/<scope>/<sessionId>/<id>.json`, with the prompt stored in the record. The "previous prompt
+    still queued" check is `session.isRunning`. Methods are `rigwell.*` (listed in `src/automations/index.ts`), not `daemon.*`.
 ## Phase 9: Git worktrees
 
-(Numbers continue from 56; the lead may need to renumber when merging with other phases.)
-
-57. **initialize_session param** `worktree: {enabled: true, branch?, branchMode?: "copy"|"existing", baseRef?,
+64. **initialize_session param** `worktree: {enabled: true, branch?, branchMode?: "copy"|"existing", baseRef?,
     lifecycle?: "ephemeral"|"persistent", setupProfile?, prompt?}` (`worktree: true` is shorthand). `prompt`
     names the generated branch because the first prompt is not known at init. `runInWorktree: true` in
     settings makes it the default when the param is absent. The result adds `worktree: {path, branch,
@@ -154,16 +178,16 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
     (without cwd/setup) under `worktree`. The session cwd (and transcript cwd) is the worktree path, plus
     the request cwd's relative folder when it was a repo subfolder. A cwd already inside a managed
     worktree is adopted.
-58. **Root and names:** default root `<rigwell home>/worktrees`; `worktreeDirectory` must be absolute.
+65. **Root and names:** default root `<rigwell home>/worktrees`; `worktreeDirectory` must be absolute.
     Layout `<root>/<last 8 of session id>/<repo folder>`. Branch prefix `rigwell/`; slug = up to 5 words,
     padded to 3 with `work`, `task`, `tree`; whole name at most 32 chars; `-2`.. on a clash (up to 100).
     No prompt: `<current branch>-wt`. Created with `worktree add -b <branch> --no-track <path> <base>`.
-59. **State lives in the worktree's git dir:** `rigwell-worktree.json` (session, repo, branch, base, lifecycle,
+66. **State lives in the worktree's git dir:** `rigwell-worktree.json` (session, repo, branch, base, lifecycle,
     profile, createdAt, lastUsedAt, pinned, reserved) and `rigwell-setup-receipt.json` (head, time,
     lifecycle, sha1 fingerprints of untracked files). Listing scans the root; there is no separate registry.
     "Uncommitted user work" = `status` entries minus untracked files whose path and content still match
     the receipt (setup output). Without a receipt every untracked file counts as user work.
-60. **Secret stripping (§18.3)** removes env names that are product-prefixed (`RIGWELL_`), contain TOKEN,
+67. **Secret stripping (§18.3)** removes env names that are product-prefixed (`RIGWELL_`), contain TOKEN,
     SECRET, PASSWORD/PASSWD, CREDENTIAL, PRIVATE_KEY, API_KEY/APIKEY or ACCESS_KEY, are database/queue URLs
     (`DATABASE_URL`, `*REDIS*_URL`...), belong to cloud/provider families (AWS_, AZURE_, GCP_, GCLOUD_,
     GOOGLE_APPLICATION_, GITHUB_, GH_, GITLAB_, NPM_CONFIG_, ANTHROPIC_, OPENAI_, GEMINI_, MISTRAL_, GROQ_,
@@ -171,7 +195,7 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
     name; values are never inspected. Scripts run with `bash -c` (or `sh`), PATH taken from a login shell
     (only PATH is taken), `REPO_ROOT_PATH` added, setup timeout 20 min, cleanup 5 min, output tail capped
     at 4 KB with control characters removed. Only bash/sh is built (no PowerShell).
-61. **Profiles** are YAML (`Bun.YAML`), id = file name. Repository: `<repo>/.rigwell/worktree-setups/*.yaml`,
+68. **Profiles** are YAML (`Bun.YAML`), id = file name. Repository: `<repo>/.rigwell/worktree-setups/*.yaml`,
     runs only when the repo root is in `trustedFolders`. Local: `<rigwell home>/worktree-setups/
     <sha256(repoRoot)>/*.yaml`, no trust check; local wins on an id clash. A profile that cannot run
     (missing, untrusted) is reported in `worktree.setup.skipped`; the worktree is still created.
@@ -179,13 +203,13 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
     Setup runs inside initialize_session after the session exists, emitting `setup_step_progress`
     notifications `{kind: "setup_script", text}`; the profile's `initialPrompt` is returned in
     `worktree.setup.initialPrompt` for the client to send (the daemon does not send it).
-62. **Limits:** 4 concurrent creations (2 per repo), 2 removals, FIFO; auto-delete one pass at a time;
+69. **Limits:** 4 concurrent creations (2 per repo), 2 removals, FIFO; auto-delete one pass at a time;
     30 min recent-use guard (`lastUsedAt` is set at creation and by `keep`).
-63. **Auto-delete** runs before each creation. Candidates: ephemeral, over `worktreeAutoDeleteLimit`
+70. **Auto-delete** runs before each creation. Candidates: ephemeral, over `worktreeAutoDeleteLimit`
     (default 15), LRU first. Skipped: pinned, reserved, in use by a live session in this process, used within
     30 min, uncommitted work, commits found on no other branch and no remote. The PR rule is skipped
     (create_pr is not built).
-64. **Protocol methods** (`rigwell.` prefix, no session needed unless noted): `list_managed_worktrees
+71. **Protocol methods** (`rigwell.` prefix, no session needed unless noted): `list_managed_worktrees
     {repoRoot?}`, `get_worktree_status {worktreePath?}` (default: the session cwd), `inspect_worktree_deletion
     {worktreePath}`, `cleanup_worktree {worktreePath, deleteLocalBranch?, deleteRemoteBranch?, force?}`,
     `list_git_branches`, `checkout_git_branch {branch, resolve?: "stash"|"commit", message?}` (dirty tree
@@ -193,11 +217,11 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
     `git_commit {message}` (stages all), `git_push` (to the first remote, setting upstream). The last five
     act on the session cwd, or `worktreePath`. They replace the spec's `daemon.*` names; errors carry
     `data.code` (dirty, in_use, branch_occupied, root_branch...).
-65. **Removal** refuses reserved, in-use (this process) and dirty worktrees unless `force`; runs the profile
+72. **Removal** refuses reserved, in-use (this process) and dirty worktrees unless `force`; runs the profile
     cleanup script (trusted or local only); uses `--force` only when the tree has changes (setup output or
     forced user work); keeps the branch unless asked. When session start fails after creation the worktree
     and its new branch are removed.
-66. **Not built:** fetch from origin (`pullFromOrigin`), rename of a generated branch after the title,
+73. **Not built:** fetch from origin (`pullFromOrigin`), rename of a generated branch after the title,
     HEAD watching and `branch_changed`, the 5-minute housekeeping timer and archive-time removal (needs
     session archiving), `daemon.worktree.removed` broadcast, trust marking of the new folder, the
     Windows PowerShell runner, PR status and `create_pr`.
