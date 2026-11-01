@@ -1,6 +1,8 @@
 // Slash commands kept for v1 (spec §13.2, "v1" column = check mark).
 // The custom subagents command is `/agents` here (the spec table's name is not used in Rigwell).
 
+import type { CustomEntry } from "./types.ts";
+
 export interface SlashCommand {
   name: string;
   aliases?: string[];
@@ -8,6 +10,8 @@ export interface SlashCommand {
   args?: string;
   /** Asks "stop the current run?" first when the agent is running (spec §13.2). */
   stopsRun?: boolean;
+  /** Set for custom commands and skills listed after the built-in ones. */
+  custom?: CustomEntry;
 }
 
 export const COMMANDS: SlashCommand[] = [
@@ -25,15 +29,17 @@ export const COMMANDS: SlashCommand[] = [
   { name: "rename", desc: "Rename the session", args: "<title>" },
   { name: "copy", desc: "Copy the last assistant message" },
   { name: "cwd", aliases: ["cd"], desc: "Change the working folder", args: "<dir>", stopsRun: true },
-  { name: "mcp", desc: "MCP server settings" },
+  { name: "mcp", desc: "MCP servers", args: "[add <name> <url|cmd> | remove <name>]" },
   { name: "hooks", desc: "Manage hooks" },
   { name: "skills", desc: "Skills settings" },
   { name: "commands", desc: "Manage custom slash commands" },
   { name: "agents", desc: "Manage custom subagents" },
-  { name: "statusline", desc: "Configure the custom status line" },
+  { name: "statusline", desc: "Show and test the custom status line" },
   { name: "vim", desc: "Toggle vim keys in the input" },
   { name: "themes", desc: "Colour theme (dark or light)", args: "[dark|light]" },
-  { name: "diagnostics", desc: "Config problems and logs" },
+  { name: "automations", desc: "Scheduled automations", args: "[pause|resume|run|delete|history <id>]" },
+  { name: "loop", desc: "Repeat a prompt on an interval", args: "<30m|2h> <prompt> | list | stop [id|all]" },
+  { name: "diagnostics", desc: "Versions, connection, MCP and config problems" },
   { name: "quit", aliases: ["exit"], desc: "Quit" },
 ];
 
@@ -42,20 +48,26 @@ export function findCommand(name: string): SlashCommand | undefined {
   return COMMANDS.find((c) => c.name === n || c.aliases?.includes(n));
 }
 
+export const customAsCommand = (e: CustomEntry): SlashCommand => ({
+  name: e.name, desc: `${e.desc}${e.kind === "skill" ? " (skill)" : ""}`, args: e.argHint, custom: e,
+});
+
 /** Commands matching the text typed after "/" (prefix match on name or alias; all when empty). */
-export function matchCommands(prefix: string): SlashCommand[] {
+export function matchCommands(prefix: string, custom: CustomEntry[] = []): SlashCommand[] {
   const p = prefix.toLowerCase();
-  return COMMANDS.filter((c) => c.name.startsWith(p) || c.aliases?.some((a) => a.startsWith(p)));
+  return [...COMMANDS, ...custom.map(customAsCommand)].filter((c) => c.name.startsWith(p) || c.aliases?.some((a) => a.startsWith(p)));
 }
 
 export const KEY_HELP: [string, string][] = [
-  ["Enter", "Send; while running, steer (sent after the run ends, ahead of queued messages)"],
+  ["Enter", "Send; while running, steer (delivered after the next tool call)"],
   ["Ctrl+Enter", "Queue (sent when the agent finishes); Alt+Enter where Ctrl+Enter is not reported"],
   ["\\ + Enter", "New line"],
   ["Esc", "Cancel the run; leave Bash mode; close a panel or menu"],
   ["Double Esc / Ctrl+C", "Clear the input (Ctrl+C on empty input twice quits)"],
   ["Double Esc on empty input", "Rewind to an earlier message"],
   ["Up / Down", "Input history, or move between lines"],
+  ["PageUp / PageDown, Alt+PgUp/PgDn", "Scroll the transcript one page"],
+  ["Alt+Up / Alt+Down", "Scroll the transcript one user turn"],
   ["@", "File path picker"],
   ["/", "Command menu (Up/Down, Tab or Enter, Esc)"],
   ["!", "Bash mode: run a shell command directly (on empty input)"],
@@ -66,7 +78,7 @@ export const KEY_HELP: [string, string][] = [
   ["Ctrl+O", "Toggle detailed view (tool output and diffs)"],
   ["Ctrl+P", "Edit the input in $EDITOR"],
   ["Alt+X", "Toggle auto-compress"],
-  ["Ctrl+R / Ctrl+G / Ctrl+X", "Review / pull the top / clear pending messages"],
+  ["Ctrl+R / Ctrl+G / Ctrl+X", "Review / pull the top / clear queued messages"],
   ["?", "Show or hide this help (on empty input)"],
 ];
 
