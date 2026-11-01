@@ -33,6 +33,7 @@ import { isStarted, runTask, TaskError, type ChildOptions, type ChildOutcome, ty
 import { agentCatalog, type CustomAgent } from "../subagents/agents.ts";
 import { exitSpecModeTool, saveSpec, skillTool, specFileName, specSaveFolder, taskTool } from "./extra-tools.ts";
 import { TaskJob } from "../jobs/task.ts";
+import { attachSandbox, sandboxStatus } from "../sandbox/controller.ts";
 
 export type WorkingState =
   | "idle" | "thinking" | "streaming_assistant_message" | "waiting_for_tool_confirmation" | "executing_tool"
@@ -281,6 +282,7 @@ export class Session {
     this.instrBlock = this.instructions.load().block;
     this.skills = new SkillRegistry({ cwd: deps.cwd }).load();
     this.skillToolOn = this.skills.skillToolAvailable();
+    attachSandbox(this.id, deps.autoRejectPermissionRequests || !host.requestPermission ? undefined : (p) => host.requestPermission!(p) as Promise<{ selectedOption: string }>);
     this.hooks = deps.hooksFor?.({
       sessionId: this.id, transcriptPath: deps.transcriptPath ?? "", notify: (n) => this.notify(n), permissionMode: () => this.permissionMode(),
     });
@@ -390,6 +392,7 @@ export class Session {
   settingsSnapshot(): Record<string, unknown> {
     return {
       ...this.settings, toolExecutionMode: this.effectiveMode(), availableAutonomyLevels: ["off", "low", "medium", "high"],
+      sandbox: sandboxStatus(this.id, this.cwd),
       ...(this.routed ? { effectiveRouterModel: this.routedSettings() } : {}),
     };
   }
