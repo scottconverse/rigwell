@@ -382,7 +382,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
       }
       case "list_sessions": {
         const limit = typeof p.limit === "number" && p.limit > 0 ? Math.floor(p.limit) : undefined;
-        return { sessions: listSessionEntries({ cwd: typeof p.cwd === "string" ? resolve(p.cwd) : undefined, includeArchived: p.includeArchived === true, limit }) };
+        return { sessions: listSessionEntries({ cwd: typeof p.cwd === "string" ? resolve(p.cwd) : undefined, includeArchived: p.includeArchived === true, includeBtwForks: p.includeBtwForks === true, limit }) };
       }
       case "interrupt_session": need().interrupt(); return {};
       case "close_session": {

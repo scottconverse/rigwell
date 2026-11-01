@@ -47,7 +47,8 @@ function displayTitle(title: string, first: string): string {
   return one.length > 80 ? one.slice(0, 79) + "..." : one;
 }
 
-export function listSessionEntries(o: { cwd?: string; includeArchived?: boolean; limit?: number } = {}): SessionListEntry[] {
+/** Side-chat forks (tag btw-fork, spec 17.4) are hidden unless `includeBtwForks` is set. */
+export function listSessionEntries(o: { cwd?: string; includeArchived?: boolean; includeBtwForks?: boolean; limit?: number } = {}): SessionListEntry[] {
   const rows: SessionListEntry[] = [];
   for (const s of listSessions(o.cwd)) {
     const settings = readSessionSettings({ settingsPath: s.transcriptPath.replace(/\.jsonl$/, ".settings.json") }) ?? {};
@@ -58,6 +59,7 @@ export function listSessionEntries(o: { cwd?: string; includeArchived?: boolean;
     try { mtimeMs = statSync(s.transcriptPath).mtimeMs; } catch { /* keep */ }
     const { value: visible, first } = firstVisibleUserMessage(s.transcriptPath, mtimeMs);
     if (isSubagent || !visible) continue;
+    if (!o.includeBtwForks && tags.some((t) => t?.name === "btw-fork")) continue;
     if (archivedAt && !o.includeArchived) continue;
     rows.push({
       sessionId: s.id, title: displayTitle(typeof settings.title === "string" && settings.title ? settings.title : s.title, first), cwd: s.cwd ?? "",
