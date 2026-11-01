@@ -270,3 +270,18 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
     Script and script_job and adds the system_script block; direct_only sends the core tools plus Script and script_job. The effective
     mode is reported in `settingsSnapshot` and the context block. When `update_session_settings` changes the model and the mode
     changes with it, a `llm_only` notice is appended before the next user message.
+
+## Phase 6: Eval loop
+86. **Surface:** `rigwell eval run|report|tasks` lives in `src/eval/` (one dispatch line in `src/cli/main.ts`). Trials spawn
+    `rigwell exec --input-format stream-jsonrpc` and read only wire notifications. Permission requests are declined.
+87. **Requests** are counted as `session_token_usage_changed` events that change the totals (the turn-closing event repeats the
+    previous totals). Tokens come from `agent_turn_completed.cumulativeTokenUsage`. Cost uses a per-model price table in the eval
+    config (USD per Mtok); unpriced models get no cost deltas.
+88. **Store and build id:** `$RIGWELL_HOME/eval/runs/<buildId>/<timestamp>.json`; buildId is the short commit sha of the checkout
+    or `--build`. The report compares the latest run in the window to the latest run of the most recent earlier, different build.
+89. **Regression thresholds:** any pass-rate drop; mean cost up over 20%; mean time up over 25%. Cost and time deltas prefer the set
+    of tasks that passed every trial in both builds (spec section 8 methodology).
+90. **Proposals as variants:** a variant is `settings` (passed as `--settings`) plus optional `toolExecutionMode`. The profile fields
+    `promptVariant` and `toolDescriptionOverrides` do not exist in the session yet; when a later phase reads them from settings,
+    a variant can carry them with no change here. Ship rule: all families hold, else per-model option, else do not ship.
+91. **Failure clusters:** same failKind, turn reason and normalized grader line, on at least 2 tasks and 2 models.
