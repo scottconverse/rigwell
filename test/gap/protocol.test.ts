@@ -276,7 +276,7 @@ describe("permissions", () => {
     const d = driver({ canPrompt: true, answer: (m) => (m === "request_permission" ? { selectedOption: "cancel", comment: "use b.txt instead" } : {}) });
     await d.call("initialize_session", { cwd: repo, modelId: "custom:F-0", autonomyLevel: "low" });
     expect((await d.turn("make a file")).reason).toBe("permission_rejected");
-    expect(JSON.stringify(d.conn.session!.messages)).toContain("The user said: use b.txt instead");
+    expect(JSON.stringify(d.conn.session!.messages)).toContain("[Comment] use b.txt instead");
     expect(existsSync(join(repo, "a.txt"))).toBe(false);
     await d.call("close_session", {});
   }, 30000);
