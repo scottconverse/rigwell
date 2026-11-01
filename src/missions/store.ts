@@ -161,6 +161,8 @@ export class MissionStore {
   /** System write (the runner): bypasses the orchestrator-only rule. */
   writeFeatures(f: Feature[]) {
     atomicWrite(this.path("features.json"), JSON.stringify({ features: f }, null, 2) + "\n");
+    // Remember our own write time so the handoff gate can tell it from an orchestrator edit.
+    try { writeFileSync(this.path("features.sysmtime"), String(statSync(this.path("features.json")).mtimeMs)); } catch { /* best effort */ }
     this.ev.features?.(f);
   }
   updateFeature(id: string, fn: (f: Feature) => void): Feature | undefined {
@@ -199,6 +201,8 @@ export class MissionStore {
     appendFileSync(this.path("worker-transcripts.jsonl"), JSON.stringify(entry) + "\n");
   }
 
+  /** mtime of features.json as the system last wrote it (0 when unknown). */
+  systemFeaturesMtime(): number { try { return Number(readFileSync(this.path("features.sysmtime"), "utf8")) || 0; } catch { return 0; } }
   /** mtime (ms) of a mission file, 0 when missing. */
   mtime(name: string): number { try { return statSync(this.path(name)).mtimeMs; } catch { return 0; } }
   listSkillDirs(): string[] { try { return readdirSync(this.path("skills")); } catch { return []; } }

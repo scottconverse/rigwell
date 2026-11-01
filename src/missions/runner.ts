@@ -134,7 +134,7 @@ export class MissionRunner {
   private handoffDealtWith(h: HandoffRecord): boolean {
     const t = Date.parse(h.timestamp);
     if (this.store.readLog().some((e) => e.type === "handoff_items_dismissed" && Date.parse(e.timestamp) >= t)) return true;
-    return this.store.mtime("features.json") > t || this.store.mtime("mission.md") > t;
+    return this.store.mtime("features.json") > Math.max(t, this.store.systemFeaturesMtime()) || this.store.mtime("mission.md") > t;
   }
 
   scopeExceeded(): boolean {
