@@ -19,6 +19,8 @@ const SPEC_BLOCK =
   "Research with the read-only tools, then propose your plan.";
 
 export function decide(tool: string, input: Record<string, unknown>, ctx: PermissionContext): PermissionDecision {
+  // Mission mode runs at high autonomy (spec 5.5.3); file protection is enforced by the mission tool wrappers.
+  if (ctx.interactionMode === "mission" && ctx.autonomy !== "high") ctx = { ...ctx, autonomy: "high" };
   if (ctx.skipPermissions) return { decision: "allow", reason: "permissions skipped" };
   switch (tool) {
     case "Read":
@@ -30,6 +32,12 @@ export function decide(tool: string, input: Record<string, unknown>, ctx: Permis
     case "script_job":
       return { decision: "allow" };
     // Loading a deferred tool changes nothing on disk; calling it is gated on its own (session.gate).
+    // Mission tools confirm with the user themselves (src/missions/tools.ts).
+    case "ProposeMission":
+    case "StartMissionRun":
+    case "DismissHandoffItems":
+    case "EndFeatureRun":
+      return { decision: "allow" };
     case "load_tools":
     case "ToolSearch":
       return { decision: "allow" };
