@@ -85,7 +85,7 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
     const ctx = ctxs.get(conn);
     if (ctx) sidepane?.connectionClosed(ctx);
     ctxs.delete(conn);
-    void conn.shutdown();
+    void conn.shutdown({ park: true });
   };
   const server = Bun.listen<Data>({
     unix: opts.socketPath,

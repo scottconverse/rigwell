@@ -4,7 +4,7 @@
 // Merge: plain objects deep-merge; arrays and scalars REPLACE (command lists included: the
 // higher level's list is the whole list; no concatenation).
 // Project/folder config is always loaded (no trustedFolders gate) in Phase 1.
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AutonomyLevel, InteractionMode, ReasoningEffort } from "../core/types.ts";
 import type { SandboxSettings } from "../sandbox/policy.ts";
@@ -132,6 +132,8 @@ const contains = (outer: string, inner: string) => {
 export function loadSettings(opts: {
   cwd: string;
   runtimeSettingsPath?: string;
+  /** false: the folder is not trusted, so the project and folder levels are skipped (spec 12.2 trustedFolders). Default true. */
+  trusted?: boolean;
   /** Override for tests; defaults to $HOME. */
   homeDir?: string;
 }): LoadedSettings {
@@ -155,8 +157,8 @@ export function loadSettings(opts: {
   };
 
   pair("user", userDir);
-  if (projectDir) pair("project", projectDir);
-  if (gitRoot) {
+  if (projectDir && opts.trusted !== false) pair("project", projectDir);
+  if (gitRoot && opts.trusted !== false) {
     // cwd up to (excluding) git root; farthest first so nearer wins.
     const chain: string[] = [];
     for (let d = cwd; d !== gitRoot && contains(gitRoot, d); d = path.dirname(d)) chain.push(d);
@@ -182,4 +184,38 @@ export function loadSettings(opts: {
   }
   const sources = [...used.reverse(), { level: "builtin" as const, path: "" }];
   return { settings, sources, warnings };
+}
+
+// ---------- trusted folders (spec 12.2) ----------
+
+/**
+ * Is `cwd` trusted? Rules, simplest safe first: RIGWELL_TRUST_CWD=1 (or `rigwell ... --trust`, which sets it) trusts the
+ * working folder for this process; otherwise a folder is trusted when it, or a folder above it, is listed in the USER
+ * settings `trustedFolders` (a project file can never trust itself).
+ */
+export function isFolderTrusted(cwd: string, trustedFolders: RigwellSettings["trustedFolders"], env: Record<string, string | undefined> = process.env): boolean {
+  if (env.RIGWELL_TRUST_CWD === "1" || env.RIGWELL_TRUST_CWD === "true") return true;
+  const abs = path.resolve(cwd);
+  return Object.keys(trustedFolders ?? {}).some((k) => contains(path.resolve(k), abs));
+}
+
+/** True when the folder (or the repo around it) has project configuration that trust would unlock. */
+export function hasProjectConfig(cwd: string): boolean {
+  const top = findGitRoot(path.resolve(cwd)) ?? path.resolve(cwd);
+  for (let d = path.resolve(cwd); contains(top, d); d = path.dirname(d)) {
+    for (const n of [".rigwell", ".agents", ".agent", "AGENTS.md", "CLAUDE.md"]) if (existsSync(path.join(d, n))) return true;
+    if (d === top) break;
+  }
+  return false;
+}
+
+/** Remembers a trusted folder in the user settings file. */
+export function trustFolder(cwd: string): void {
+  const file = path.join(rigwellHome(), "settings.json");
+  let cur: Record<string, unknown> = {};
+  try { const j = JSON.parse(readFileSync(file, "utf8")); if (isPlain(j)) cur = j; } catch { /* new file */ }
+  const tf = isPlain(cur.trustedFolders) ? { ...cur.trustedFolders } : {};
+  tf[path.resolve(cwd)] = { trustedAt: Date.now() };
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify({ ...cur, trustedFolders: tf }, null, 2) + "\n");
 }

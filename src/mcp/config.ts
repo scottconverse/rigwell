@@ -41,11 +41,12 @@ export function normalizeServer(name: string, raw: unknown, source: McpSource): 
 export interface LoadedMcpConfig { servers: McpServerConfig[]; warnings: string[]; configError?: { path: string; message: string } }
 
 /** Load mcp.json from folder/project/user levels; the higher level wins on a name clash. */
-export function loadMcpConfig(opts: { cwd: string; homeDir?: string }): LoadedMcpConfig {
+export function loadMcpConfig(opts: { cwd: string; homeDir?: string; /** false: untrusted folder, user level only (spec 12.2). */ trustProject?: boolean }): LoadedMcpConfig {
   const warnings: string[] = [];
   const byName = new Map<string, McpServerConfig>();
   let configError: LoadedMcpConfig["configError"];
   for (const { level, dir } of configDirs(opts.cwd, opts.homeDir)) {
+    if (level !== "user" && opts.trustProject === false) continue;
     const file = path.join(dir, "mcp.json");
     const f = readJsonObject(file);
     if (f.warning) { warnings.push(f.warning); configError ??= { path: file, message: f.warning }; }

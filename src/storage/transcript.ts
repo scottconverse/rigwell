@@ -4,7 +4,7 @@ import {
   readSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import type { ContentBlock, Message, OpenAIReasoning, ReasoningEffort } from "../core/types.ts";
+import type { ContentBlock, Message, OpenAIReasoning, ReasoningEffort, TodoItem } from "../core/types.ts";
 import { hostId, projectSessionsDir, projectSlug, sessionsDir, validateSessionId } from "./paths.ts";
 
 export interface SessionFiles {
@@ -65,6 +65,8 @@ export interface LoadedSession {
   /** Messages ordered by `seq` (file order breaks ties). */
   messages: Message[];
   outcomes: TurnOutcome[];
+  /** The latest todo_state record (spec 12.1), if any. */
+  todos?: TodoItem[];
   files: SessionFiles;
   /** Lines that were not valid JSON objects. */
   skippedLines: number;
@@ -393,6 +395,23 @@ export function appendRewind(files: SessionFiles, rec: Omit<RewindRecord, "type"
   });
 }
 
+/** `todo_state` record (spec 12.1): the whole list after a TodoWrite. */
+export function appendTodoState(files: SessionFiles, todos: TodoItem[], messageIndex: number): Promise<void> {
+  return withAppendLock(files, () => {
+    appendLine(files, {
+      type: "todo_state", id: crypto.randomUUID(), timestamp: new Date().toISOString(),
+      todos: { todos: todos.map((t) => ({ id: t.id, status: t.status, content: t.content, priority: t.priority ?? "medium" })) }, messageIndex,
+    });
+  });
+}
+
+/** Renames the session: an appended `session_title` record (the transcript stays append-only). */
+export function appendTitle(files: SessionFiles, title: string, manual: boolean): Promise<void> {
+  return withAppendLock(files, () => {
+    appendLine(files, { type: "session_title", id: crypto.randomUUID(), timestamp: new Date().toISOString(), title, isSessionTitleManuallySet: manual });
+  });
+}
+
 export function appendTurnOutcome(
   files: SessionFiles,
   o: { turnId: string; reason: string; resultKind: "text" | "structured" | null },
@@ -439,6 +458,8 @@ export function loadTranscript(files: SessionFiles): LoadedSession {
   const outcomes: TurnOutcome[] = [];
   let compaction: CompactionRecord | undefined;
   const rewound: Message[] = [];
+  let todos: TodoItem[] | undefined;
+  let titleRec: { title: string; manual: boolean } | undefined;
   const everyId: { id: string; seq: number; order: number }[] = [];
   let skippedLines = 0;
   let unknownRecords = 0;
@@ -483,6 +504,16 @@ export function loadTranscript(files: SessionFiles): LoadedSession {
         // A summary whose anchor was rewound away no longer describes the kept messages.
         if (compaction && cut.some((x) => x.msg.id === compaction!.anchorMessage.id)) compaction = undefined;
       }
+    } else if (o.type === "todo_state") {
+      const list = o.todos?.todos;
+      if (Array.isArray(list)) {
+        todos = list.filter((t: any) => t && typeof t.content === "string").map((t: any) => ({
+          id: String(t.id ?? ""), content: t.content, status: ["pending", "in_progress", "completed"].includes(t.status) ? t.status : "pending",
+          ...(t.priority === "low" || t.priority === "medium" || t.priority === "high" ? { priority: t.priority } : {}),
+        }));
+      }
+    } else if (o.type === "session_title") {
+      if (typeof o.title === "string") titleRec = { title: o.title, manual: o.isSessionTitleManuallySet === true };
     } else if (o.type !== "session_start") {
       unknownRecords++;
     }
@@ -490,7 +521,8 @@ export function loadTranscript(files: SessionFiles): LoadedSession {
   if (!start) throw new Error(`transcript ${files.transcriptPath}: empty`);
   msgs.sort((a, b) => a.seq - b.seq || a.order - b.order);
   everyId.sort((a, b) => a.seq - b.seq || a.order - b.order);
-  return { start, compaction, messages: msgs.map((x) => x.msg), rewound, allMessageIds: everyId.map((x) => x.id), outcomes, files, skippedLines, unknownRecords };
+  const finalStart = titleRec ? { ...(start as SessionStart), title: titleRec.title, isSessionTitleManuallySet: titleRec.manual } : start;
+  return { start: finalStart, compaction, messages: msgs.map((x) => x.msg), rewound, allMessageIds: everyId.map((x) => x.id), outcomes, ...(todos ? { todos } : {}), files, skippedLines, unknownRecords };
 }
 
 /** Newest-first (mtime) scan; no index. With `cwd`, only that project's folder. */

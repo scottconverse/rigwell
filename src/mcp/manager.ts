@@ -31,6 +31,8 @@ interface Entry {
 
 export interface McpManagerOptions {
   cwd?: string;
+  /** false: the folder is not trusted, so project mcp.json files are skipped (spec 12.2). */
+  projectTrusted?: boolean;
   /** Called on every status change (emit `mcp_status_changed` notifications from it). */
   onStatusChanged?: (info: McpServerStatusInfo) => void;
   connectTimeoutMs?: number;
@@ -51,7 +53,7 @@ export class McpManager {
 
   /** Load mcp.json (user/project/folder) and start those servers plus `extra` (initialize_session). Does not block. */
   startFromConfig(extra: McpServerConfig[] = []): Promise<void> {
-    const loaded = loadMcpConfig({ cwd: this.o.cwd ?? process.cwd() });
+    const loaded = loadMcpConfig({ cwd: this.o.cwd ?? process.cwd(), trustProject: this.o.projectTrusted });
     this.configError = loaded.configError;
     this.warnings.push(...loaded.warnings);
     const names = new Set(extra.map((c) => c.name));
