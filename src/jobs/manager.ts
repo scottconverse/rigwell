@@ -7,7 +7,7 @@ export type JobStatus = "running" | "completed" | "failed" | "timed_out";
 
 export interface Job {
   readonly id: string;
-  readonly kind: "script" | "execute";
+  readonly kind: "script" | "execute" | "task";
   readonly title: string;
   status: JobStatus;
   /** Resolves once the job has reached a final status. */

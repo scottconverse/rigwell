@@ -1,5 +1,6 @@
 // One agent session: holds the transcript, runs turns, emits notifications (spec §3.1.7, §4).
-import { basename } from "node:path";
+import { homedir } from "node:os";
+import { basename, join, resolve } from "node:path";
 import type {
   AutonomyLevel, CommandLists, ContentBlock, InteractionMode, Message, ModelAdapter, ModelConfig,
   PermissionDecision, ReasoningEffort, TokenUsage, Tool, ToolResultBlock, ToolUseBlock, FileReadRecord,
@@ -22,6 +23,15 @@ import { DeferredRegistry, type DeferredState } from "./deferred.ts";
 import { RequestBuilder } from "./request.ts";
 import { contextBreakdown } from "./context-stats.ts";
 import { estimateTokens } from "./budget.ts";
+import type { HookRunner } from "../hooks/index.ts";
+import type { PermissionModeName } from "../hooks/runner.ts";
+import { InstructionLoader } from "../instructions/index.ts";
+import { renderAdditionalSkills, SkillRegistry } from "../skills/skills.ts";
+import { McpManager, isMcpAllowed, mcpTool, rememberMcp, type McpServerConfig } from "../mcp/index.ts";
+import { isStarted, runTask, TaskError, type ChildOptions, type ChildOutcome, type ParentContext, type TaskInput, type TaskLimits } from "../subagents/task.ts";
+import { agentCatalog, type CustomAgent } from "../subagents/agents.ts";
+import { exitSpecModeTool, saveSpec, skillTool, specFileName, specSaveFolder, taskTool } from "./extra-tools.ts";
+import { TaskJob } from "../jobs/task.ts";
 
 export type WorkingState =
   | "idle" | "thinking" | "streaming_assistant_message" | "waiting_for_tool_confirmation" | "executing_tool"
@@ -41,11 +51,11 @@ export class SessionBusyError extends Error {
 }
 
 export type TurnReason =
-  | "completed" | "cancelled" | "permission_rejected" | "error" | "no_approver_available"
+  | "completed" | "cancelled" | "permission_rejected" | "error" | "no_approver_available" | "prompt_rejected"
   | "model_authentication_failed" | "model_request_rejected" | "model_provider_unreachable"
   | "model_provider_unavailable" | "model_rate_limited";
 
-export interface PermissionAnswer { selectedOption: string; comment?: string }
+export interface PermissionAnswer { selectedOption: string; comment?: string; editedSpecContent?: string }
 
 /** What a session needs from the connection that owns it. */
 export interface SessionHost {
@@ -69,6 +79,33 @@ export interface SessionSettings {
   autonomyLevel: AutonomyLevel;
   /** Model that writes compaction summaries (default: the session model). */
   compactionModelId?: string;
+  /** Spec mode can use its own model and effort (spec 5.5.7). */
+  specModeModelId?: string;
+  specModeReasoningEffort?: ReasoningEffort;
+}
+
+/** Storage for a subagent's own transcript (spec 5.9 "Child session"). */
+export interface ChildStore {
+  persistence: SessionPersistence;
+  transcriptPath: string;
+}
+
+/** What a session needs to run subagents (Task tool). Absent: no Task tool. */
+export interface SubagentDeps {
+  limits: TaskLimits;
+  agents: CustomAgent[];
+  /** 0 for a top-level session. */
+  depth: number;
+  rootSessionId: string;
+  /** Creates the child's transcript (session_start with callingSessionId/callingToolUseId, tags). */
+  openChild(o: { id: string; cwd: string; title: string; callingSessionId: string; callingToolUseId: string; agentName?: string; depth: number }): ChildStore;
+}
+
+export interface HooksFactoryArgs {
+  sessionId: string;
+  transcriptPath: string;
+  notify: (n: any) => void;
+  permissionMode: () => PermissionModeName;
 }
 
 export interface SessionDeps {
@@ -78,7 +115,7 @@ export interface SessionDeps {
   resolveModel: (id: string) => ModelConfig | undefined;
   createAdapter: (m: ModelConfig) => ModelAdapter;
   streamWithRetry: (a: ModelAdapter, req: any, opts: any) => AsyncIterable<any>;
-  toolsFor: (o: { autonomy: AutonomyLevel; skipPermissions: boolean }) => Tool[];
+  toolsFor: (o: { autonomy: AutonomyLevel; skipPermissions: boolean; specMode?: boolean }) => Tool[];
   decide: (tool: string, input: Record<string, unknown>, ctx: any) => PermissionDecision;
   lists: CommandLists;
   skipPermissions: boolean;
@@ -109,6 +146,22 @@ export interface SessionDeps {
   /** Restored from a compaction_state record: messages before the anchor (UI only) and the anchor's id. */
   archived?: Message[];
   compactionAnchorId?: string;
+  /** Builds the hook runner for this session (and for each subagent). Absent: no hooks. */
+  hooksFor?: (a: HooksFactoryArgs) => HookRunner | undefined;
+  transcriptPath?: string;
+  /** MCP servers from initialize_session / load_session. Present (even empty): the session starts an McpManager. */
+  mcp?: { servers: McpServerConfig[] };
+  /** Script runs may start subagents (initialize_session allowSubagentsInScripts). */
+  allowSubagentsInScripts?: boolean;
+  subagents?: SubagentDeps;
+  /** Settings `specSaveDir`. */
+  specSaveDir?: string;
+  /** Custom subagent: its system prompt, appended after the base blocks. */
+  extraSystem?: string[];
+  /** Custom subagent: only these tools (by name) are offered. */
+  toolFilter?: string[];
+  /** True for a subagent session: only tool hooks run. */
+  isChild?: boolean;
 }
 
 /** Waits on one running Script before the turn is stopped (2 hours of 5-minute waits). */
@@ -119,6 +172,12 @@ function modeNotice(mode: ToolExecutionMode): string {
     ? "<system-reminder>The model changed. From now on you reach tools only through Script (tools.Name({...}) inside a program, as the Script description shows), plus script_job for background jobs. The direct tools are no longer sent.</system-reminder>"
     : "<system-reminder>The model changed. From now on the tools (Read, Execute, Grep, Glob, Edit, Create) are available to call directly. Script and script_job are still available.</system-reminder>";
 }
+
+const specOnNotice = (canPropose: boolean) =>
+  "<system-reminder>Spec mode is now on. Investigate with the read-only tools and change nothing: Edit and Create only work for plan files under .rigwell/specs/, and Execute only for read-only (low risk) commands. " +
+  (canPropose ? "When your plan is ready, propose it with ExitSpecMode." : "Present your plan as your answer.") + "</system-reminder>";
+const SPEC_OFF_NOTICE =
+  "<system-reminder>Spec mode is off: the user switched the mode by hand. Nothing was approved. All tools are available again; follow the user's next message.</system-reminder>";
 
 const AUTONOMY_RANK: Record<AutonomyLevel, number> = { off: 0, low: 1, medium: 2, high: 3 };
 
@@ -178,6 +237,29 @@ export class Session {
   private lastCallContext?: { tokens: number; count: number };
   /** The model "auto" routing picked for the latest request. */
   private routed?: RouteChoice;
+  // ---- Phase 5 wiring ----
+  readonly hooks?: HookRunner;
+  readonly instructions: InstructionLoader;
+  readonly skills: SkillRegistry;
+  private instrBlock: string | null = null;
+  private skillToolOn = false;
+  readonly mcp?: McpManager;
+  private mcpNames = new Set<string>();
+  /** Env exported by SessionStart hooks, passed to Execute. */
+  private hookEnv: Record<string, string> = {};
+  /** Resolves when the SessionStart hooks finished (turn 1 waits for it, at most 60 s). */
+  private startup?: Promise<void>;
+  private startupContext: string[] = [];
+  /** A hook asked to end the turn (stop) or the agent (abort). */
+  private halt?: { kind: "stop" | "abort"; message: string };
+  private readonly startedAt = Date.now();
+  private ended = false;
+  private toolCalls = 0;
+  /** Outcome of the latest finished turn (a subagent's report is its final text). */
+  lastTurn?: { reason: TurnReason; text: string };
+  private children = new Map<string, TokenUsage>();
+  private lastChildUsage = zeroUsage();
+  private turnChildUsage = zeroUsage();
 
   constructor(private deps: SessionDeps, private host: SessionHost) {
     this.id = deps.id;
@@ -191,6 +273,22 @@ export class Session {
     this.compactedOnce = !!deps.compactionAnchorId;
     this.deferred = new DeferredRegistry(deps.deferred);
     this.builder = new RequestBuilder(deps.log);
+    this.instructions = new InstructionLoader({ cwd: deps.cwd });
+    this.instrBlock = this.instructions.load().block;
+    this.skills = new SkillRegistry({ cwd: deps.cwd }).load();
+    this.skillToolOn = this.skills.skillToolAvailable();
+    this.hooks = deps.hooksFor?.({
+      sessionId: this.id, transcriptPath: deps.transcriptPath ?? "", notify: (n) => this.notify(n), permissionMode: () => this.permissionMode(),
+    });
+    if (deps.mcp) {
+      this.mcp = new McpManager({
+        cwd: deps.cwd,
+        onStatusChanged: (info) => {
+          this.syncMcpTools();
+          this.notify({ type: "mcp_status_changed", server: info, summary: this.mcp?.listServers().summary });
+        },
+      });
+    }
     this.scripts = new ScriptService({
       sessionId: this.id, jobs: this.jobs, limits: deps.scriptLimits,
       toolNames: () => this.scriptTools().map((t) => t.name),
@@ -204,21 +302,56 @@ export class Session {
   }
 
   /** Effective tool mode: the per-session override, else the model allowlist (spec §4.1). */
-  effectiveMode(modelId: string = this.settings.modelId): ToolExecutionMode {
+  effectiveMode(modelId: string = this.activeModelId()): ToolExecutionMode {
     if (this.deps.toolExecutionModeOverride) return this.deps.toolExecutionModeOverride;
     const list = this.deps.scriptToolModels ?? [];
     const apiName = this.deps.resolveModel(modelId)?.model;
     return list.includes(modelId) || (apiName !== undefined && list.includes(apiName)) ? "script_only" : "direct_only";
   }
 
-  /** Tools Script and direct calls can reach (autonomy gates apply). */
-  private coreTools(): Tool[] {
-    return this.deps.toolsFor({ autonomy: this.settings.autonomyLevel, skipPermissions: this.deps.skipPermissions });
+  get specMode(): boolean { return this.settings.interactionMode === "spec"; }
+
+  /** The model this session asks now: in spec mode the spec model when one is set (spec 5.5.7). */
+  activeModelId(): string {
+    return this.specMode && this.settings.specModeModelId ? this.settings.specModeModelId : this.settings.modelId;
+  }
+  activeEffort(): ReasoningEffort {
+    return this.specMode && this.settings.specModeReasoningEffort ? this.settings.specModeReasoningEffort : this.settings.reasoningEffort;
   }
 
-  /** Core tools plus ToolSearch and load_tools: what a Script binds (loaded deferred tools bind by name on call). */
+  /** The permission mode name hooks see (spec 5.6). */
+  permissionMode(): PermissionModeName {
+    if (this.specMode) return "spec";
+    return this.settings.autonomyLevel === "off" ? "off" : (`auto-${this.settings.autonomyLevel}` as PermissionModeName);
+  }
+
+  /** True when a client can answer prompts (not headless exec). */
+  private get interactive(): boolean { return !!this.host.requestPermission && !this.deps.autoRejectPermissionRequests; }
+
+  /** Task is offered at high autonomy or with skipped permissions, at depth 0 (spec 5.5.6), never in spec mode. */
+  taskOffered(): boolean {
+    const sub = this.deps.subagents;
+    if (!sub || sub.depth >= sub.limits.maxDepth || this.specMode) return false;
+    return this.settings.autonomyLevel === "high" || this.deps.skipPermissions;
+  }
+  private allowTaskInScripts(): boolean { return this.deps.allowSubagentsInScripts === true; }
+
+  /** Core tools and Skill: what both direct calls and a Script can reach (autonomy gates apply). */
+  private baseTools(): Tool[] {
+    let t = this.deps.toolsFor({ autonomy: this.settings.autonomyLevel, skipPermissions: this.deps.skipPermissions, specMode: this.specMode });
+    if (this.skillToolOn) t = [...t, skillTool(this.skills)];
+    if (this.deps.toolFilter) t = t.filter((x) => this.deps.toolFilter!.includes(x.name));
+    return t;
+  }
+
+  private makeTaskTool(): Tool {
+    return taskTool(agentCatalog(this.deps.subagents?.agents ?? []), (input, ctx) => this.runTaskTool(input, ctx));
+  }
+
+  /** What a Script binds: base tools, Task when allowed in Scripts, ToolSearch and load_tools (loaded deferred tools bind by name on call). */
   private scriptTools(): Tool[] {
-    return [...this.coreTools(), this.deferred.toolSearchTool(), this.deferred.loadToolsTool()];
+    const task = this.taskOffered() && this.allowTaskInScripts() ? [this.makeTaskTool()] : [];
+    return [...this.baseTools(), ...task, this.deferred.toolSearchTool(), this.deferred.loadToolsTool()];
   }
 
   /** Makes a tool deferred: announced by name, schema sent only after load_tools. MCP tools register through here. */
@@ -229,12 +362,17 @@ export class Session {
 
   /**
    * Tools sent to the model: Script and script_job always; the core tools, load_tools and call_tool too in
-   * direct_only. Loading a deferred tool never changes this list (spec §6.2).
+   * direct_only. Task (when offered) is direct unless Scripts may start subagents in script_only mode; ExitSpecMode
+   * only while spec mode is on and a client can answer. Loading a deferred tool never changes this list (spec §6.2).
    */
   tools(): Tool[] {
-    const core = this.coreTools();
     const script = [this.scripts.scriptTool(), this.scripts.jobTool()];
-    return this.effectiveMode() === "script_only" ? script : [...core, this.deferred.loadToolsTool(), this.deferred.callToolTool(), ...script];
+    const task = this.taskOffered() ? [this.makeTaskTool()] : [];
+    const exit = this.specMode && this.interactive ? [exitSpecModeTool()] : [];
+    if (this.effectiveMode() === "script_only") {
+      return [...script, ...(this.allowTaskInScripts() ? [] : task), ...exit];
+    }
+    return [...this.baseTools(), ...task, ...exit, this.deferred.loadToolsTool(), this.deferred.callToolTool(), ...script];
   }
 
   private notify(n: Record<string, unknown>) { this.host.notify(n); }
@@ -252,12 +390,18 @@ export class Session {
     };
   }
 
-  updateSettings(p: Partial<SessionSettings>) {
+  updateSettings(p: Partial<SessionSettings>, o: { quietModeChange?: boolean } = {}) {
     const causes: string[] = [];
-    if (p.modelId !== undefined && p.modelId !== this.settings.modelId) causes.push("model changed");
+    const modelBefore = this.activeModelId();
+    const modeBefore = this.settings.interactionMode;
     if (p.autonomyLevel !== undefined && p.autonomyLevel !== this.settings.autonomyLevel) causes.push("autonomy changed (tool list)");
-    if (causes.length) this.builder.monitor.expectBreak(causes.join(", "));
     Object.assign(this.settings, Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined)));
+    if (this.activeModelId() !== modelBefore) causes.push("model changed");
+    if (this.settings.interactionMode !== modeBefore) {
+      causes.push("interaction mode changed (tool list)");
+      if (!o.quietModeChange) this.pendingNotices.push(this.specMode ? specOnNotice(this.interactive) : SPEC_OFF_NOTICE);
+    }
+    if (causes.length) this.builder.monitor.expectBreak(causes.join(", "));
     const mode = this.effectiveMode();
     if (mode !== this.lastMode) {
       this.lastMode = mode;
@@ -269,26 +413,74 @@ export class Session {
 
   private routedSettings() {
     const r = this.routed!;
-    const eff = this.settings.reasoningEffort;
+    const eff = this.activeEffort();
     return { modelId: r.modelId, reasoningEffort: eff, reason: r.reason, fallbacks: r.fallbacks.map((f) => ({ modelId: f, reasoningEffort: eff })) };
   }
 
   /** Everything the UI shows: messages replaced by a summary, then the live history. */
   uiMessages(): Message[] { return [...this.archived, ...this.messages]; }
 
+  /** This session's usage plus every subagent's (spec 12.1 inclusiveTokenUsage). */
+  inclusiveUsage(): TokenUsage {
+    let u = this.tokenUsage;
+    for (const c of this.children.values()) u = addUsage(u, c);
+    return u;
+  }
+
   async persistSettings() {
     await this.deps.persistence.saveSettings({
       model: this.settings.modelId, reasoningEffort: this.settings.reasoningEffort,
       interactionMode: this.settings.interactionMode, autonomyLevel: this.settings.autonomyLevel,
       ...(this.settings.compactionModelId ? { compactionModelId: this.settings.compactionModelId } : {}),
+      specModeModelId: this.settings.specModeModelId ?? null, specModeReasoningEffort: this.settings.specModeReasoningEffort ?? null,
       effectiveRouterModel: this.routed ? this.routedSettings() : undefined,
       toolExecutionMode: this.effectiveMode(),
       ...(this.deps.toolExecutionModeOverride ? { toolExecutionModeOverride: this.deps.toolExecutionModeOverride } : {}),
+      ...(this.deps.allowSubagentsInScripts ? { allowSubagentsInScripts: true } : {}),
       assistantActiveTimeMs: this.activeTimeMs,
-      tokenUsage: this.tokenUsage, inclusiveTokenUsage: this.tokenUsage, lastCallTokenUsage: this.lastCallTokenUsage,
+      tokenUsage: this.tokenUsage, inclusiveTokenUsage: this.inclusiveUsage(), lastCallTokenUsage: this.lastCallTokenUsage,
+      ...(this.children.size ? { childInclusiveTokenUsageBySessionId: Object.fromEntries(this.children) } : {}),
       ...(this.providerLock ? { providerLock: this.providerLock, apiProviderLock: this.providerLock } : {}),
       loadedDeferredToolNames: this.deferred.state().loaded, announcedDeferredToolNames: this.deferred.state().announced,
     });
+  }
+
+  /**
+   * Starts what must not delay the first turn: the MCP servers (in parallel, not awaited) and the SessionStart hooks
+   * (turn 1 waits for them, at most 60 s). Call once after construction.
+   */
+  start(source: "startup" | "resume" = "startup") {
+    if (this.mcp) {
+      try { this.mcp.startFromConfig(this.deps.mcp!.servers).catch((e) => this.deps.log?.(`[mcp] start failed: ${(e as Error)?.message ?? e}`)); }
+      catch (e) { this.deps.log?.(`[mcp] start failed: ${(e as Error)?.message ?? e}`); }
+    }
+    if (this.hooks?.hasHooks() && !this.deps.isChild) {
+      this.startup = (async () => {
+        try {
+          const r = await this.hooks!.sessionStart(source, {}, AbortSignal.timeout(60_000));
+          Object.assign(this.hookEnv, r.envVars);
+          if (r.additionalContext) this.startupContext.push(r.additionalContext);
+          for (const m of r.systemMessages) await this.userNote(m);
+        } catch (e) { this.deps.log?.(`[hooks] SessionStart failed: ${(e as Error)?.message ?? e}`); }
+      })();
+    }
+  }
+
+  /** Runs the SessionEnd hooks and stops the MCP servers. Once per session. */
+  async end(reason = "other") {
+    if (this.ended) return;
+    this.ended = true;
+    if (this.hooks?.hasHooks() && !this.deps.isChild) {
+      await this.hooks.sessionEnd(reason, Date.now() - this.startedAt, this.messages.length).catch(() => {});
+    }
+    await this.mcp?.shutdown().catch(() => {});
+  }
+
+  /** A note for the user only (hook system messages, notices): stored and sent as create_message, never shown to the model. */
+  private async userNote(text: string) {
+    const m: Message = { id: crypto.randomUUID(), role: "assistant", visibility: "user_only", content: [{ type: "text", text }] };
+    await this.push(m);
+    this.notify({ type: "create_message", message: m });
   }
 
   /** Accepts a user message. Returns at once; the turn runs in the background. */
@@ -380,26 +572,59 @@ export class Session {
     let turnUsage = zeroUsage();
     let reason: TurnReason = "completed";
     let lastText = "";
+    const toolCallsAtStart = this.toolCalls;
+    this.halt = undefined;
+    this.turnChildUsage = zeroUsage();
+    let blocked = false;
 
     try {
-      if (!this.messages.some((m) => m.role === "user")) {
-        const ctx = contextBlocks({
-          cwd: this.cwd, interactionMode: this.settings.interactionMode, autonomy: this.settings.autonomyLevel,
-          modelId: this.settings.modelId, shell: this.deps.shell, toolExecutionMode: this.effectiveMode(),
-        });
-        await this.push({ id: `context-${turnId}`, role: "user", visibility: "llm_only", content: ctx.map((t) => ({ type: "text", text: t })) });
+      await this.startup;
+      this.startup = undefined;
+      // UserPromptSubmit hooks (spec 5.6): may block the prompt, rewrite it, or add context.
+      let prompt = text;
+      let promptContext = "";
+      if (!visibility && this.hooks?.hasHooks() && !this.deps.isChild) {
+        this.hooks.resetStop();
+        const r = await this.hooks.userPromptSubmit(text, turnId, false, signal);
+        for (const m of r.systemMessages) await this.userNote(m);
+        if (r.blocked) {
+          blocked = true;
+          reason = "prompt_rejected";
+          await this.userNote(`Your message was not sent: a hook blocked it. ${r.reason ?? ""}`.trim());
+        } else {
+          if (r.prompt !== undefined) prompt = r.prompt;
+          promptContext = r.additionalContext;
+        }
       }
-      for (const n of this.pendingNotices.splice(0)) {
-        await this.push({ id: `notice-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: n }] });
+      if (!blocked) {
+        const first = !this.messages.some((m) => m.role === "user");
+        if (first) {
+          const ctx = contextBlocks({
+            cwd: this.cwd, interactionMode: this.settings.interactionMode, autonomy: this.settings.autonomyLevel,
+            modelId: this.activeModelId(), shell: this.deps.shell, toolExecutionMode: this.effectiveMode(),
+            instructions: this.instrBlock, skills: this.skills.contextBlock(this.currentModel()?.maxContextLimit),
+            extra: this.startupContext.splice(0).map((t) => `<system-reminder>\nSessionStart hook:\n${t}\n</system-reminder>`),
+          });
+          await this.push({ id: `context-${turnId}`, role: "user", visibility: "llm_only", content: ctx.map((t) => ({ type: "text", text: t })) });
+        }
+        const notices = [...this.pendingNotices.splice(0)];
+        // Instruction files found under folders the agent touched, and skills found there (appended, never edited in).
+        const lazy = this.instructions.hasPending() ? this.instructions.takePending() : null;
+        if (lazy) notices.push(lazy);
+        notices.push(...this.startupContext.splice(0).map((t) => `<system-reminder>\nSessionStart hook:\n${t}\n</system-reminder>`));
+        if (promptContext) notices.push(`<system-reminder>\nUserPromptSubmit hook:\n${promptContext}\n</system-reminder>`);
+        for (const n of notices) {
+          await this.push({ id: `notice-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: n }] });
+        }
+        for (const n of [...this.deferred.takeNotices(), this.deferred.announcement()]) {
+          if (n) await this.push({ id: `deferred-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: n }] });
+        }
+        await this.push({ id: turnId, role: "user", ...(visibility ? { visibility } : {}), content: [{ type: "text", text: prompt }] });
       }
-      for (const n of [...this.deferred.takeNotices(), this.deferred.announcement()]) {
-        if (n) await this.push({ id: `deferred-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: n }] });
-      }
-      await this.push({ id: turnId, role: "user", ...(visibility ? { visibility } : {}), content: [{ type: "text", text }] });
 
       const repeat = new RepeatTracker();
       let emptyStreak = 0;
-      for (;;) {
+      while (!blocked) {
         if (signal.aborted) { reason = "cancelled"; break; }
         await this.maybeAutoCompact(signal);
         const messageId = crypto.randomUUID();
@@ -413,7 +638,7 @@ export class Session {
         this.providerLock ??= model.provider;
         await this.push({
           id: messageId, role: "assistant", content, modelId: model.id, apiProvider: model.provider,
-          reasoningEffort: this.settings.reasoningEffort, ...(done.openaiReasoning?.length ? { openaiReasoning: done.openaiReasoning } : {}),
+          reasoningEffort: this.activeEffort(), ...(done.openaiReasoning?.length ? { openaiReasoning: done.openaiReasoning } : {}),
         });
         this.lastCallContext = {
           tokens: done.usage.inputTokens + done.usage.cacheReadTokens + done.usage.cacheCreationTokens + done.usage.outputTokens,
@@ -421,7 +646,7 @@ export class Session {
         };
         this.callsSinceCompaction++;
         for (const b of content) if (b.type === "tool_use") this.notify({ type: "tool_call", toolUse: { ...b } });
-        this.notify({ type: "session_token_usage_changed", sessionId: this.id, tokenUsage: this.tokenUsage, lastCallTokenUsage: this.lastCallTokenUsage });
+        this.notifyUsage();
         const texts = content.filter((b) => b.type === "text").map((b: any) => b.text).join("");
         if (texts) lastText = texts;
 
@@ -437,12 +662,26 @@ export class Session {
           continue;
         }
         emptyStreak = 0;
-        if (!calls.length) break;
+        if (!calls.length) {
+          // Stop hooks (spec 5.6): may send the agent back to work (no cap on continuations, decision 4), end the turn, or abort.
+          if (this.hooks?.hasHooks() && !this.deps.isChild && !signal.aborted && !visibility) {
+            const r = await this.hooks.stop({ messageId, toolExecutionCount: this.toolCalls - toolCallsAtStart, elapsedMs: Date.now() - started }, signal);
+            for (const m of r.systemMessages) await this.userNote(m);
+            if (r.abort) { this.halt = { kind: "abort", message: r.abort }; reason = "error"; break; }
+            if (r.stop) { this.halt = { kind: "stop", message: r.stop }; break; }
+            if (r.continueWith) {
+              await this.push({ id: `stop-hook-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: `<system-reminder>\nA Stop hook asks you to keep working:\n${r.continueWith}\n</system-reminder>` }] });
+              continue;
+            }
+          }
+          break;
+        }
 
         const outcome = await this.runTools(calls, signal);
         // Notices about tools loaded during this batch, and tools that appeared or went away, ride in the same message.
         const extra = [...this.deferred.takeNotices(), this.deferred.announcement()]
           .filter((t): t is string => !!t).map((text) => ({ type: "text" as const, text }));
+        for (const t of outcome.extras) extra.push({ type: "text", text: t });
         // Repeated identical batches with unchanged results: nudge, then stop (waits on a running Script have their own guard).
         const names = [...new Set(calls.map((c) => c.name))].join(", ");
         const isWait = calls.some((c) => c.name === "script_job" && c.input.action === "wait");
@@ -472,12 +711,30 @@ export class Session {
       }
     }
 
+    // A hook ended the turn (stop) or the agent (abort).
+    if (this.halt) {
+      const h = this.halt;
+      this.halt = undefined;
+      try {
+        if (h.kind === "stop") await this.userNote(h.message);
+        else {
+          reason = "error";
+          this.notify({ type: "error", message: h.message, errorType: "SessionError", timestamp: new Date().toISOString(), error: { name: "HookAbort", message: h.message } });
+        }
+      } catch { /* the turn still ends */ }
+    }
+    if (reason === "cancelled" && !this.deps.isChild) void this.hooks?.notification("idle_prompt", "The user stopped the agent.", turnId);
+
     const durationMs = Date.now() - started;
     this.activeTimeMs += durationMs;
-    this.notify({ type: "session_token_usage_changed", sessionId: this.id, tokenUsage: this.tokenUsage, lastCallTokenUsage: this.lastCallTokenUsage });
+    this.lastTurn = { reason, text: lastText };
+    this.notifyUsage();
     await this.deps.persistence.appendTurnOutcome({ turnId, reason, resultKind: lastText ? "text" : null });
     await this.persistSettings();
-    this.notify({ type: "agent_turn_completed", reason, turnId, tokenUsage: turnUsage, cumulativeTokenUsage: this.tokenUsage, durationMs });
+    this.notify({
+      type: "agent_turn_completed", reason, turnId, tokenUsage: turnUsage, cumulativeTokenUsage: this.inclusiveUsage(), durationMs,
+      ...(this.children.size ? { childTokenUsage: this.turnChildUsage, cumulativeChildTokenUsage: this.cumulativeChildUsage() } : {}),
+    });
     this.setState("idle");
     this.abort = undefined;
   }
@@ -488,7 +745,7 @@ export class Session {
 
   /** The model a request would go to now: the session model, or for "auto" the routed pick (else the first candidate). */
   private currentModel(): ModelConfig | undefined {
-    const id = this.settings.modelId;
+    const id = this.activeModelId();
     if (id === AUTO_MODEL_ID && this.deps.router) {
       return this.deps.resolveModel(this.routed?.modelId ?? this.deps.router.candidates[0]?.model ?? "");
     }
@@ -506,7 +763,7 @@ export class Session {
   // ---------- model choice (auto routing, spec 4.5) ----------
 
   private async chooseModels(signal: AbortSignal): Promise<{ primary: ModelConfig; fallbacks: ModelConfig[] }> {
-    const id = this.settings.modelId;
+    const id = this.activeModelId();
     if (id === AUTO_MODEL_ID && this.deps.router) {
       const choice = await route(this.deps.router, this.messages, {
         resolveModel: this.deps.resolveModel,
@@ -660,7 +917,13 @@ export class Session {
     const before = this.workingState;
     this.setState("compacting_conversation");
     try {
-      const context = contextTextBlocks(this.messages);
+      if (this.hooks?.hasHooks() && !this.deps.isChild) {
+        const pc = await this.hooks.preCompact(o.reason === "manual" ? "manual" : "auto", {
+          customInstructions: o.customInstructions, messageCount: this.messages.length, estimatedTokens: this.estimateContextTokens(),
+        });
+        if (pc.cancel) throw new Error(`Compaction was cancelled by a PreCompact hook${pc.reason ? `: ${pc.reason}` : ""}`);
+      }
+      const context = this.refreshedContext(contextTextBlocks(this.messages));
       const reinject = this.deferred.reinjection();
       const fixed = messagesTokens([preambleMessage("x", [...context, ...(reinject ? [reinject] : [])])]);
       const keepBudget = Math.max(0, cfg.postCeilingTokens - cfg.targetTokens - fixed);
@@ -683,7 +946,7 @@ export class Session {
       if (!text) throw new ModelError("empty_response", "The summarizer returned no text.");
       if (usage) {
         this.tokenUsage = addUsage(this.tokenUsage, usage);
-        this.notify({ type: "session_token_usage_changed", sessionId: this.id, tokenUsage: this.tokenUsage, lastCallTokenUsage: this.lastCallTokenUsage });
+        this.notifyUsage();
       }
 
       const anchor = real.at(-1)!;
@@ -701,6 +964,9 @@ export class Session {
       this.archived.push(...real);
       this.messages = [preambleMessage(preambleId, blocks), ...this.messages.slice(cut)];
       this.compactionAnchor = anchor.id;
+      // Instruction files and dynamic skills are discoverable again (the preamble carries the session-start ones).
+      this.instructions.afterCompaction();
+      this.skills.afterCompaction();
       this.lastCallContext = undefined;
       this.routed = undefined; // the routed pick is cleared: routing runs again (spec 4.5)
       this.callsSinceCompaction = 0;
@@ -708,16 +974,29 @@ export class Session {
       this.builder.monitor.expectBreak("compaction");
       this.notify({ type: "session_compacted", summaryId: record.id, removedCount: real.length, visibleBoundaryMessageId: this.messages[1]?.id ?? null });
       await this.persistSettings();
+      if (this.hooks?.hasHooks() && !this.deps.isChild) {
+        void this.hooks.sessionStart("compact").then((r) => { if (r.additionalContext) this.startupContext.push(r.additionalContext); }).catch(() => {});
+      }
       return { removedCount: real.length };
     } finally {
       this.setState(before === "compacting_conversation" ? "idle" : before);
     }
   }
 
+  /** The context blocks to re-inject after a compaction: the skills block is rebuilt so skills found during the session are in it. */
+  private refreshedContext(blocks: string[]): string[] {
+    const fresh = this.skills.contextBlock(this.currentModel()?.maxContextLimit);
+    const at = blocks.findIndex((b) => b.startsWith("<skills>"));
+    if (at >= 0) return fresh ? blocks.map((b, i) => (i === at ? fresh : b)) : blocks.filter((_, i) => i !== at);
+    if (!fresh) return blocks;
+    const session = blocks.findIndex((b) => b.startsWith("<session>"));
+    return session >= 0 ? [...blocks.slice(0, session), fresh, ...blocks.slice(session)] : [...blocks, fresh];
+  }
+
   private buildInput(model: ModelConfig, signal?: AbortSignal) {
     return {
       model, sessionId: this.id, mode: this.effectiveMode(), tools: this.tools(), messages: this.messages,
-      reasoningEffort: this.settings.reasoningEffort, signal,
+      reasoningEffort: this.activeEffort(), signal, extraSystem: this.deps.extraSystem,
     };
   }
 
@@ -753,14 +1032,15 @@ export class Session {
           this.deps.log?.(`[cache] warmup: read ${ev.usage.cacheReadTokens}, created ${ev.usage.cacheCreationTokens}, uncached ${ev.usage.inputTokens}`);
         }
       }
-      this.notify({ type: "session_token_usage_changed", sessionId: this.id, tokenUsage: this.tokenUsage, lastCallTokenUsage: this.lastCallTokenUsage });
+      this.notifyUsage();
     } catch (e) {
       this.deps.log?.(`[cache] warmup failed: ${(e as Error)?.message ?? e}`);
     }
   }
 
-  private async runTools(calls: ToolUseBlock[], signal: AbortSignal): Promise<{ results: ToolResultBlock[]; stop?: TurnReason }> {
+  private async runTools(calls: ToolUseBlock[], signal: AbortSignal): Promise<{ results: ToolResultBlock[]; stop?: TurnReason; extras: string[] }> {
     const results: ToolResultBlock[] = [];
+    const extras: string[] = [];
     let stop: TurnReason | undefined;
     const tools = new Map(this.tools().map((t) => [t.name, t]));
     for (const call of calls) {
@@ -775,7 +1055,48 @@ export class Session {
       const tool = tools.get(call.name);
       if (!tool) { finish(`Unknown tool: ${call.name}. Use one of: ${[...tools.keys()].join(", ")}.`, true, false); continue; }
 
-      const d = this.gate(call.name, call.input);
+      // PreToolUse hooks run before the permission gate (spec 5.6).
+      let input = call.input;
+      let skipAsk = false;
+      let unrated = false;
+      if (this.hooks?.hasHooks()) {
+        const pre = await this.hooks.preToolUse(call.name, call.input, call.id, signal);
+        if (pre.additionalContext) extras.push(hookContext("PreToolUse", call.name, pre.additionalContext));
+        for (const m of pre.systemMessages) await this.userNote(m);
+        if (pre.decision === "abort") {
+          this.halt = { kind: "abort", message: pre.reason ?? "aborted by a hook" };
+          finish(`Not run: a hook aborted the agent. ${pre.reason ?? ""}`.trim(), true, false);
+          stop = "error";
+          continue;
+        }
+        if (pre.decision === "stop") {
+          this.halt = { kind: "stop", message: pre.reason ?? "stopped by a hook" };
+          finish("Not run: a hook stopped the turn.", true, false);
+          stop = "completed";
+          continue;
+        }
+        if (pre.decision === "deny") { finish(`Blocked by a hook: ${pre.reason ?? "no reason given"}`, true, false); continue; }
+        if (pre.updatedInput) {
+          input = { ...pre.updatedInput };
+          // A rewritten command is judged as unrated, so it asks, unless the hook keeps the model's rating (spec 5.5.2).
+          if (call.name === "Execute" && input.command !== call.input.command && !pre.preserveRiskLevel) {
+            delete input.riskLevel;
+            delete input.riskReason;
+            unrated = true;
+          }
+        }
+        skipAsk = pre.decision === "allow";
+      }
+
+      if (call.name === "ExitSpecMode") {
+        phase("executing");
+        const out = await this.exitSpecMode(call, input, signal);
+        finish(out.content, !!out.isError, true);
+        continue;
+      }
+
+      let d = this.gate(call.name, input, unrated);
+      if (skipAsk && (d.decision === "ask" || d.decision === "missing_risk")) d = { decision: "allow", reason: "allowed by a hook" };
       if (d.decision === "block" || d.decision === "missing_risk") { finish(d.message, true, false); continue; }
       if (d.decision === "ask") {
         const verdict = await this.askPermission(call, d);
@@ -793,22 +1114,51 @@ export class Session {
       }
       phase("executing");
       this.setState("executing_tool");
+      let out: ToolOutput | undefined;
       try {
-        const out = await tool.run(call.input, {
-          cwd: this.cwd, sessionId: this.id, readFiles: this.readFiles, signal, toolUseId: call.id, jobs: this.jobs,
+        this.toolCalls++;
+        out = await tool.run(input, {
+          cwd: this.cwd, sessionId: this.id, readFiles: this.readFiles, signal, toolUseId: call.id, jobs: this.jobs, env: this.hookEnv,
           onProgress: (p) => this.notify({ type: "tool_progress_update", toolUseId: call.id, toolName: call.name, update: { ...p, timestamp: new Date().toISOString() } }),
         });
         finish(out.content, !!out.isError, true);
+        if (!out.isError) this.noteTouched(call.name, input);
       } catch (e) {
         finish(`Tool failed: ${(e as Error)?.message ?? e}`, true, true);
       }
+      // PostToolUse runs once per call, so once for an outer Script (decision 3); skipped when the user cancelled.
+      if (out && this.hooks?.hasHooks() && !signal.aborted) {
+        const post = await this.hooks.postToolUse(call.name, input, { content: out.content, isError: !!out.isError }, call.id, signal);
+        for (const m of post.systemMessages) await this.userNote(m);
+        if (post.feedback) extras.push(hookContext("PostToolUse feedback", call.name, post.feedback));
+        if (post.additionalContext) extras.push(hookContext("PostToolUse", call.name, post.additionalContext));
+        if (post.abort) { this.halt = { kind: "abort", message: post.abort }; stop = "error"; }
+        else if (post.stop) { this.halt = { kind: "stop", message: post.stop }; stop = "completed"; }
+      }
       if (this.pendingStop) { stop = this.pendingStop; this.pendingStop = undefined; }
     }
-    return { results, stop };
+    return { results, stop, extras };
   }
 
-  /** Permission decision for one call. Deferred tools (MCP and others) ask unless they only read; call_tool is judged by its target. */
-  private gate(name: string, input: Record<string, unknown>): PermissionDecision {
+  /** A file tool touched `path`: look for instruction files and skills in the folders on the way (spec 12.2, 5.8). */
+  private noteTouched(tool: string, input: Record<string, unknown>) {
+    if (!["Read", "Edit", "Create"].includes(tool) || typeof input.path !== "string" || !input.path) return;
+    try {
+      const abs = resolve(this.cwd, input.path.startsWith("~/") ? join(homedir(), input.path.slice(2)) : input.path);
+      this.instructions.discoverForPath(abs);
+      const added = this.skills.discoverForPath(abs);
+      if (added.length) {
+        const t = renderAdditionalSkills(added);
+        if (t) this.pendingNotices.push(t);
+        this.skills.markAnnounced(added);
+      }
+    } catch (e) { this.deps.log?.(`[discovery] ${(e as Error)?.message ?? e}`); }
+  }
+
+  /** Permission decision for one call. Deferred tools (MCP and others) ask unless they only read or are remembered; call_tool is judged by its target. */
+  private gate(name: string, input: Record<string, unknown>, unrated = false): PermissionDecision {
+    // Skill and Task need no approval of their own: what the subagent does is gated in its own session.
+    if (name === "Skill" || name === "Task") return { decision: "allow" };
     let target: Tool | undefined;
     let args = input;
     if (name === "call_tool") {
@@ -820,16 +1170,44 @@ export class Session {
       target = this.deferred.get(name);
     }
     if (target) {
-      if (this.deps.skipPermissions || target.category === "read") return { decision: "allow" };
+      if (this.deps.skipPermissions) return { decision: "allow" };
+      const info = this.mcp?.findTool(target.name);
+      if (info) {
+        // MCP tool: ask unless remembered (spec 5.5.4, 5.5.5).
+        if (isMcpAllowed(this.cwd, info)) return { decision: "allow", reason: "remembered MCP tool" };
+        return {
+          decision: "ask", confirmationType: "mcp_tool", impactLevel: "high", alwaysLevel: null,
+          details: { toolName: info.llmName, serverName: info.server, actualToolName: info.tool, impactLevel: "high", input: args },
+          reason: `MCP tool ${info.llmName}`,
+          options: [
+            { label: "Yes, allow once", value: "proceed_once" },
+            { label: `Yes, and always allow ${info.llmName}`, value: "proceed_always_tools" },
+            { label: `Yes, and always allow all ${info.server} tools`, value: "proceed_always_server" },
+            { label: "No, cancel", value: "cancel" },
+          ],
+        };
+      }
+      if (target.category === "read") return { decision: "allow" };
       return {
         decision: "ask", confirmationType: "exec", impactLevel: "high", alwaysLevel: null,
         details: { toolName: target.name, input: args }, reason: `Deferred tool ${target.name}`,
       };
     }
-    return this.deps.decide(name, input, {
+    const pctx = {
       autonomy: this.settings.autonomyLevel, interactionMode: this.settings.interactionMode,
       skipPermissions: this.deps.skipPermissions, lists: this.deps.lists, cwd: this.cwd,
-    });
+    };
+    if (unrated && name === "Execute") {
+      const note = "A hook rewrote this command, so the model's risk rating no longer applies.";
+      const d = this.deps.decide(name, { ...input, riskLevel: "high", riskReason: note }, pctx);
+      // Only a risk-based allow is turned into a question; lists and skipped permissions keep their answer.
+      if (d.decision === "allow" && !d.reason) {
+        const command = String(input.command ?? "");
+        return { decision: "ask", confirmationType: "exec", details: { fullCommand: command, command, impactLevel: "high", riskLevelReason: note }, impactLevel: "high", alwaysLevel: "high", reason: note };
+      }
+      return d;
+    }
+    return this.deps.decide(name, input, pctx);
   }
 
   /**
@@ -838,10 +1216,11 @@ export class Session {
    * Throws ToolCallError when the call is refused; the Script sees a rejected promise.
    */
   private async callInner(
-    name: string, input: Record<string, unknown>,
+    name: string, inputIn: Record<string, unknown>,
     meta: { runId: string; n: number; outerId: string; signal: AbortSignal; foreground: boolean },
   ): Promise<ToolOutput> {
     const id = `${meta.runId}-${meta.n}`;
+    let input = inputIn;
     const use: ToolUseBlock = { type: "tool_use", id, name, input, scriptExecution: { runId: meta.runId, outerToolUseId: meta.outerId } };
     this.notify({ type: "tool_call", toolUse: use });
     await this.push({ id: `repl-tool-call:${id}`, role: "assistant", visibility: "user_only", content: [use] });
@@ -866,7 +1245,30 @@ export class Session {
     if (name === "Execute" && input.background === true) {
       return refuse("background is not available inside a Script. Start the whole Script with //@background instead.");
     }
-    const d = this.gate(name, input);
+    // PreToolUse hooks also judge calls made inside a Script (spec 5.6 "Hooks and Scripts").
+    let skipAsk = false;
+    let unrated = false;
+    if (this.hooks?.hasHooks()) {
+      const pre = await this.hooks.preToolUse(name, input, id, meta.signal);
+      for (const m of pre.systemMessages) await this.userNote(m);
+      if (pre.decision === "deny") return refuse(`PermissionDenied: this ${name} call was rejected by policy (hook): ${pre.reason ?? "no reason given"}`, "PermissionDenied");
+      if (pre.decision === "stop" || pre.decision === "abort") {
+        const kind = pre.decision;
+        if (meta.foreground && this.abort && !this.abort.signal.aborted) {
+          this.halt = { kind, message: pre.reason ?? `${kind} requested by a hook` };
+          this.pendingStop = kind === "abort" ? "error" : "completed";
+          this.abort.abort();
+        }
+        return refuse(`PermissionDenied: this ${name} call was rejected by policy (hook ${kind}): ${pre.reason ?? ""}`.trim(), "PermissionDenied");
+      }
+      if (pre.updatedInput) {
+        input = { ...pre.updatedInput };
+        if (name === "Execute" && input.command !== inputIn.command && !pre.preserveRiskLevel) { delete input.riskLevel; delete input.riskReason; unrated = true; }
+      }
+      skipAsk = pre.decision === "allow";
+    }
+    let d = this.gate(name, input, unrated);
+    if (skipAsk && (d.decision === "ask" || d.decision === "missing_risk")) d = { decision: "allow", reason: "allowed by a hook" };
     if (d.decision === "block") return refuse(d.message, "PermissionDenied");
     if (d.decision === "missing_risk") return refuse(d.message);
     if (d.decision === "ask") {
@@ -889,8 +1291,10 @@ export class Session {
       }
     }
     try {
-      const out = await tool.run(input, { cwd: this.cwd, sessionId: this.id, readFiles: this.readFiles, signal: meta.signal, toolUseId: id });
+      this.toolCalls++;
+      const out = await tool.run(input, { cwd: this.cwd, sessionId: this.id, readFiles: this.readFiles, signal: meta.signal, toolUseId: id, env: this.hookEnv });
       await finish(out.content, !!out.isError);
+      if (!out.isError) this.noteTouched(name, input);
       return out;
     } catch (e) {
       return refuse(`Tool failed: ${(e as Error)?.message ?? e}`);
@@ -920,18 +1324,36 @@ export class Session {
 
   /** Returns "approved", "rejected" (model continues), "cancel" (turn stops) or "no_approver". */
   private async askPermission(call: ToolUseBlock, d: Extract<PermissionDecision, { decision: "ask" }>) {
-    if (this.deps.autoRejectPermissionRequests) return "rejected" as const;
-    if (!this.host.requestPermission) return "no_approver" as const;
-    const options = [{ label: "Yes, allow once", value: "proceed_once" }];
-    if (d.alwaysLevel) options.push({ label: `Yes, and always allow ${d.alwaysLevel}`, value: "proceed_always" });
-    options.push({ label: "No, cancel", value: "cancel" });
+    const r = await this.askRaw(call, d);
+    if (r.verdict === "approved") {
+      // "Always allow" for an MCP tool or a whole MCP server is saved in the user settings (spec 5.5.5).
+      const info = d.confirmationType === "mcp_tool" ? this.mcp?.findTool(String(d.details.toolName ?? "")) : undefined;
+      if (info && r.option === "proceed_always_tools") rememberMcp("tool", info, String(d.details.impactLevel ?? "high"));
+      if (info && r.option === "proceed_always_server") rememberMcp("server", info);
+    }
+    return r.verdict;
+  }
+
+  /** Asks the client. `option` is the chosen value, `answer` the client's whole answer (comment, edited spec). */
+  private async askRaw(call: ToolUseBlock, d: Extract<PermissionDecision, { decision: "ask" }>): Promise<{
+    verdict: "approved" | "rejected" | "cancel" | "no_approver"; option?: string; answer?: PermissionAnswer;
+  }> {
+    if (this.deps.autoRejectPermissionRequests) return { verdict: "rejected" };
+    if (!this.host.requestPermission) return { verdict: "no_approver" };
+    let options = d.options;
+    if (!options) {
+      options = [{ label: "Yes, allow once", value: "proceed_once" }];
+      if (d.alwaysLevel) options.push({ label: `Yes, and always allow ${d.alwaysLevel}`, value: "proceed_always" });
+      options.push({ label: "No, cancel", value: "cancel" });
+    }
     this.setState("waiting_for_tool_confirmation");
     const requestId = crypto.randomUUID();
+    void this.hooks?.notification("permission_prompt", `${call.name} needs your approval`);
     let ans: PermissionAnswer;
     try {
       ans = await this.host.requestPermission({
         requestId,
-        toolUses: [{ toolUse: { type: "tool_use", id: call.id, name: call.name, input: call.input }, confirmationType: d.confirmationType, details: { ...d.details, ...(d.reason ? { riskLevelReason: d.details.riskLevelReason ?? d.reason } : {}) } }],
+        toolUses: [{ toolUse: { type: "tool_use", id: call.id, name: call.name, input: call.input }, confirmationType: d.confirmationType, details: { ...d.details, ...(d.reason && d.confirmationType !== "exit_spec_mode" ? { riskLevelReason: d.details.riskLevelReason ?? d.reason } : {}) } }],
         options,
       });
     } catch {
@@ -942,8 +1364,202 @@ export class Session {
     if (valid === "proceed_always" && d.alwaysLevel && AUTONOMY_RANK[d.alwaysLevel] > AUTONOMY_RANK[this.settings.autonomyLevel]) {
       this.updateSettings({ autonomyLevel: d.alwaysLevel });
     }
-    return valid === "cancel" ? ("cancel" as const) : ("approved" as const);
+    return { verdict: valid === "cancel" ? "cancel" : "approved", option: valid, answer: ans };
   }
+
+  // ---------- usage, MCP ----------
+
+  private notifyUsage() {
+    this.notify({
+      type: "session_token_usage_changed", sessionId: this.id, tokenUsage: this.tokenUsage, lastCallTokenUsage: this.lastCallTokenUsage,
+      ...(this.children.size ? { inclusiveTokenUsage: this.inclusiveUsage() } : {}),
+    });
+  }
+
+  private cumulativeChildUsage(): TokenUsage {
+    let u = zeroUsage();
+    for (const c of this.children.values()) u = addUsage(u, c);
+    return u;
+  }
+
+  /** Keeps the deferred registry in step with the MCP servers: tools of connected servers are registered, others removed. */
+  private syncMcpTools() {
+    if (!this.mcp) return;
+    const now = new Map(this.mcp.tools().map((t) => [t.llmName, t]));
+    for (const n of [...this.mcpNames]) {
+      if (!now.has(n)) { this.deferred.unregister(n); this.mcpNames.delete(n); }
+    }
+    for (const [n, t] of now) {
+      if (!this.mcpNames.has(n)) { this.deferred.register(mcpTool(this.mcp, t)); this.mcpNames.add(n); }
+    }
+  }
+
+  private needMcp(): McpManager {
+    if (!this.mcp) throw new Error("MCP is not enabled for this session");
+    return this.mcp;
+  }
+  listMcpServers() { return this.needMcp().listServers(); }
+  addMcpServer(p: Parameters<McpManager["addServer"]>[0]) { return this.needMcp().addServer(p); }
+  removeMcpServer(name: string, level: "user" = "user") { return this.needMcp().removeServer(name, level); }
+
+  // ---------- spec mode (spec 5.5.7) ----------
+
+  /** ExitSpecMode: always asks (exit_spec_mode); on approval saves the spec, ends spec mode at the chosen autonomy. */
+  private async exitSpecMode(call: ToolUseBlock, input: Record<string, unknown>, signal: AbortSignal): Promise<ToolOutput> {
+    const bad = (content: string): ToolOutput => ({ content, isError: true });
+    if (!this.specMode) return bad("Spec mode is not on, so there is nothing to exit.");
+    let plan = typeof input.plan === "string" ? input.plan : "";
+    if (!plan.trim()) return bad("plan is required: send the complete plan in markdown.");
+    const title = typeof input.title === "string" && input.title.trim() ? input.title.trim() : undefined;
+    const dir = specSaveFolder(this.cwd, this.deps.specSaveDir);
+    const file = specFileName(title);
+    const options = [
+      { label: "Yes, proceed (every action asks)", value: "proceed_once" },
+      { label: "Yes, and allow file edits and read-only commands (Low)", value: "proceed_auto_run_low" },
+      { label: "Yes, and allow reversible commands (Medium)", value: "proceed_auto_run_medium" },
+      { label: "Yes, and allow all commands (High)", value: "proceed_auto_run_high" },
+      { label: "Edit the spec first", value: "proceed_edit" },
+      { label: "No, keep iterating", value: "cancel" },
+    ];
+    const r = await this.askRaw(call, {
+      decision: "ask", confirmationType: "exit_spec_mode", impactLevel: "low", alwaysLevel: null, options,
+      details: { plan, title: title ?? "Specification", filePath: `${dir}/${file}`, contextSavingsPercent: 0, supportsClientStartedHandoff: false },
+    });
+    if (r.verdict === "rejected" || r.verdict === "no_approver") return bad("The plan cannot be approved here: this run has no one to ask. Present the plan as your answer.");
+    const comment = r.answer?.comment?.trim();
+    if (r.option === "cancel" || r.verdict === "cancel") {
+      return { content: `The plan was not approved. Spec mode stays on. ${comment ? `The user said: ${comment}` : "Keep investigating or revise the plan, then propose it again."}`, data: { approved: false } };
+    }
+    const edited = r.option === "proceed_edit" && typeof r.answer?.editedSpecContent === "string" && r.answer.editedSpecContent.trim() ? r.answer.editedSpecContent : undefined;
+    if (edited) plan = edited;
+    const level = /^proceed_auto_run_(low|medium|high)$/.exec(r.option ?? "")?.[1] as AutonomyLevel | undefined;
+    let saved: string | undefined;
+    try { saved = saveSpec(dir, file, title, plan); } catch (e) { this.deps.log?.(`[spec] could not save: ${(e as Error)?.message ?? e}`); }
+    // Spec mode ends: the tool says so in its result, so no separate mode-change reminder is queued.
+    this.updateSettings({ interactionMode: "auto", autonomyLevel: level ?? "off" }, { quietModeChange: true });
+    const text =
+      `The user approved the plan. Spec mode has ended and all tools are available again. ` +
+      (edited ? `The user edited the plan; this is the approved version:\n${plan}\n` : "") +
+      (comment ? `The user added: ${comment}\n` : "") +
+      (saved ? `The plan is saved at ${saved}. ` : "") + "Carry it out now.";
+    return { content: text, data: { approved: true, ...(saved ? { savedTo: saved } : {}) } };
+  }
+
+  // ---------- subagents (spec 5.9) ----------
+
+  /** The Task tool: runs a subagent as an in-process child session; background ones become jobs that wake this session. */
+  private async runTaskTool(input: Record<string, unknown>, ctx: { signal: AbortSignal; toolUseId?: string }): Promise<ToolOutput> {
+    const sub = this.deps.subagents;
+    if (!sub) return { content: "Task is not available in this session.", isError: true };
+    const parent: ParentContext = {
+      sessionId: this.id, rootSessionId: sub.rootSessionId, depth: sub.depth, cwd: this.cwd,
+      modelId: this.currentModel()?.id ?? this.activeModelId(), reasoningEffort: this.activeEffort(), autonomy: this.settings.autonomyLevel,
+    };
+    const toolUseId = ctx.toolUseId ?? crypto.randomUUID();
+    const ac = new AbortController();
+    const background = input.background === true;
+    if (!background) {
+      if (ctx.signal.aborted) ac.abort(); else ctx.signal.addEventListener("abort", () => ac.abort(), { once: true });
+    }
+    try {
+      const r = await runTask(input as unknown as TaskInput, {
+        parent, agents: sub.agents, limits: sub.limits, spawnChild: (p, o) => this.spawnChild(p, o, toolUseId), signal: ac.signal,
+      });
+      if (isStarted(r)) {
+        const job = new TaskJob(r.jobId, String(input.description ?? "subagent"), r.done.then((res) => this.afterTask(res.summary.subagentType, res.report, res.outcome.error)), () => ac.abort());
+        this.jobs.add(job);
+        this.jobs.detach(job.id);
+        return { content: JSON.stringify({ status: "running", job_id: job.id, note: "You will be woken with the report when the subagent finishes. Check or stop it with script_job." }) };
+      }
+      const after = await this.afterTask(r.summary.subagentType, r.report, r.outcome.error);
+      this.notify({
+        type: "tool_progress_update", toolUseId, toolName: "Task",
+        update: { type: "status", text: `Subagent ${r.summary.status}`, details: r.summary, subagentSessionId: r.summary.childSessionId, timestamp: new Date().toISOString() },
+      });
+      return { content: after, isError: r.summary.status !== "completed", data: { report: after } };
+    } catch (e) {
+      if (e instanceof TaskError) return { content: e.message, isError: true };
+      throw e;
+    }
+  }
+
+  /** A subagent ended: SubagentStop hooks fire (results ignored); the report is what the parent gets. */
+  private async afterTask(agent: string, report: string, error?: string): Promise<string> {
+    void this.hooks?.subagentStop(agent, report, error);
+    return report;
+  }
+
+  /** Runs one child session to the end and returns its report (the `spawnChild` of runTask). */
+  private async spawnChild(prompt: string, opts: ChildOptions, toolUseId: string): Promise<ChildOutcome> {
+    const sub = this.deps.subagents!;
+    const t0 = Date.now();
+    if (!this.deps.resolveModel(opts.modelId)) throw new Error(`Unknown model for the subagent: ${opts.modelId}`);
+    const childId = crypto.randomUUID();
+    const store = sub.openChild({ id: childId, cwd: opts.cwd, title: opts.description, callingSessionId: this.id, callingToolUseId: toolUseId, agentName: opts.agentName, depth: opts.depth });
+    const settings: SessionSettings = {
+      modelId: opts.modelId, reasoningEffort: (opts.reasoningEffort as ReasoningEffort | undefined) ?? this.settings.reasoningEffort,
+      interactionMode: "auto", autonomyLevel: opts.autonomy,
+    };
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let child: Session | undefined;
+    const arm = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { timedOut = true; child?.interrupt(); }, opts.inactivityTimeoutMs);
+    };
+    const headless = this.deps.autoRejectPermissionRequests || !this.host.requestPermission;
+    child = new Session({
+      ...this.deps,
+      id: childId, cwd: opts.cwd, settings,
+      messages: undefined, tokenUsage: undefined, deferred: undefined, archived: undefined, compactionAnchorId: undefined,
+      persistence: store.persistence, transcriptPath: store.transcriptPath,
+      mcp: undefined, subagents: { ...sub, depth: opts.depth },
+      // A subagent in a headless session never prompts: its permission requests are rejected (spec 5.5.6).
+      autoRejectPermissionRequests: headless,
+      extraSystem: opts.agentSystemPrompt ? [opts.agentSystemPrompt] : undefined,
+      toolFilter: opts.allowedTools?.length ? opts.allowedTools.filter((t) => !opts.removeTools.includes(t)) : undefined,
+      isChild: true,
+    }, {
+      notify: () => arm(),
+      requestPermission: headless ? undefined : (params) => this.host.requestPermission!(params),
+    });
+    this.notify({
+      type: "tool_progress_update", toolUseId, toolName: "Task",
+      update: { type: "status", text: `Subagent started: ${opts.description}`, subagentSessionId: childId, timestamp: new Date().toISOString() },
+    });
+    let cancelled = false;
+    const onAbort = () => { cancelled = true; child?.interrupt(); };
+    if (opts.signal) { if (opts.signal.aborted) onAbort(); else opts.signal.addEventListener("abort", onAbort, { once: true }); }
+    arm();
+    try {
+      if (!cancelled) child.addUserMessage(prompt);
+      await child.settled();
+    } finally {
+      if (timer) clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
+      await child.stopBackgroundJobs().catch(() => {});
+    }
+    const usage = child.inclusiveUsage();
+    this.children.set(childId, usage);
+    this.turnChildUsage = addUsage(this.turnChildUsage, usage);
+    this.notifyUsage();
+    void this.persistSettings();
+    const last = child.lastTurn;
+    const text = last?.text.trim() ?? "";
+    let status: ChildOutcome["status"] = "completed";
+    let error: string | undefined;
+    if (cancelled) { status = "cancelled"; error = "cancelled"; }
+    else if (timedOut) { status = "failed"; error = `no activity for ${Math.round(opts.inactivityTimeoutMs / 60_000)} minutes`; }
+    else if (last?.reason !== "completed") { status = "failed"; error = `the subagent ended with ${last?.reason ?? "no result"}`; }
+    const report = status === "completed" ? (text || "(the subagent returned no text)") : `Subagent ${status}: ${error}.${text ? `\n${text}` : ""}`;
+    return { childSessionId: childId, status, report, toolUseCount: child.toolCallCount, durationMs: Date.now() - t0, error, tokenUsage: { ...usage } };
+  }
+
+  get toolCallCount() { return this.toolCalls; }
+}
+
+function hookContext(event: string, tool: string, text: string): string {
+  return `<system-reminder>\n${event} hook (${tool}):\n${text}\n</system-reminder>`;
 }
 
 export const fileName = (p: string) => basename(p);

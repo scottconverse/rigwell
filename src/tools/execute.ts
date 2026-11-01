@@ -127,7 +127,7 @@ async function runExecute(input: Record<string, unknown>, ctx: ToolContext, back
       cwd,
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, CI: process.env.CI ?? "1", GIT_PAGER: "cat", PAGER: "cat", GIT_TERMINAL_PROMPT: "0" },
+      env: { ...process.env, ...ctx.env, CI: process.env.CI ?? "1", GIT_PAGER: "cat", PAGER: "cat", GIT_TERMINAL_PROMPT: "0" },
     });
     let timedOut = false;
     let aborted = false;

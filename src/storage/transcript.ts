@@ -143,6 +143,8 @@ export function createSession(opts: {
   title?: string;
   owner?: string;
   sessionTitleAutoStage?: string;
+  /** Extra session_start fields: parent (fork), callingSessionId and callingToolUseId (subagent). */
+  extra?: Record<string, unknown>;
 }): SessionFiles {
   const files = filesFor(projectSessionsDir(opts.cwd), opts.id);
   mkdirSync(files.dir, { recursive: true });
@@ -159,6 +161,7 @@ export function createSession(opts: {
     version: 2,
     cwd: opts.cwd,
     hostId: hostId(),
+    ...(opts.extra ?? {}),
   };
   writeFileSync(files.transcriptPath, JSON.stringify(start) + "\n", { flag: "wx" });
   return files;

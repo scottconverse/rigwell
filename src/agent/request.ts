@@ -20,6 +20,8 @@ export interface BuildInput {
   reasoningEffort?: ReasoningEffort;
   maxOutputTokens?: number;
   signal?: AbortSignal;
+  /** Extra system blocks after the base ones (a custom subagent's own prompt). */
+  extraSystem?: string[];
 }
 
 /** Messages the model sees, in order. Encrypted reasoning is dropped when the provider changed. */
@@ -101,7 +103,7 @@ export class RequestBuilder {
 
   private assemble(i: BuildInput, messages: Message[]): ModelRequest {
     return {
-      model: i.model, sessionId: i.sessionId, system: systemBlocks(i.mode),
+      model: i.model, sessionId: i.sessionId, system: [...systemBlocks(i.mode), ...(i.extraSystem ?? [])],
       tools: i.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
       messages,
       maxOutputTokens: i.maxOutputTokens ?? i.model.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,

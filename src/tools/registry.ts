@@ -23,8 +23,9 @@ export function createCoreTools(opts: { skipPermissions?: boolean } = {}): Tool[
  * session is read-only (autonomy off, permissions not skipped); with skipPermissions
  * Execute loses riskLevel/riskReason.
  */
-export function toolsForSession(opts: { autonomy: AutonomyLevel; skipPermissions: boolean }): Tool[] {
-  const readOnly = opts.autonomy === "off" && !opts.skipPermissions;
+export function toolsForSession(opts: { autonomy: AutonomyLevel; skipPermissions: boolean; specMode?: boolean }): Tool[] {
+  // Spec mode keeps Edit and Create: plan files under .rigwell/specs/ are written with them.
+  const readOnly = opts.autonomy === "off" && !opts.skipPermissions && !opts.specMode;
   return createCoreTools({ skipPermissions: opts.skipPermissions }).filter(
     (t) => !(readOnly && (t.name === "Edit" || t.name === "Create")),
   );
