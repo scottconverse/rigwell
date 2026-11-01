@@ -16,6 +16,13 @@ function mapStop(r: string | null | undefined): "end_turn" | "tool_use" | "max_t
 }
 
 function mapBlock(b: ContentBlock): Record<string, unknown> | null {
+  const o = mapBlockPlain(b);
+  // Request-time breakpoint marker set by the request builder (spec prompts.md section 4).
+  if (o && (b as { cache?: boolean }).cache && b.type !== "thinking") o.cache_control = CACHE;
+  return o;
+}
+
+function mapBlockPlain(b: ContentBlock): Record<string, unknown> | null {
   switch (b.type) {
     case "text": return b.text === "" ? null : { type: "text", text: b.text };
     case "thinking":

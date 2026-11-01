@@ -8,18 +8,21 @@ export type ReasoningEffort =
 
 // ---------- Transcript content (stored shape, see spec §12.1) ----------
 
-export type TextBlock = { type: "text"; text: string };
+/** `cache` is a request-time marker (cache breakpoint); the request builder sets it on copies, it is never stored. */
+export type TextBlock = { type: "text"; text: string; cache?: boolean };
 export type ThinkingBlock = { type: "thinking"; thinking: string; signature?: string; signatureProvider?: string };
 export type ToolUseBlock = {
   type: "tool_use"; id: string; name: string; input: Record<string, unknown>;
   /** Set on calls made from inside a Script (spec §3.1.7). */
   scriptExecution?: { runId: string; outerToolUseId: string };
+  cache?: boolean;
 };
 export type ToolResultBlock = {
   type: "tool_result";
   tool_use_id: string;
   content: string;
   is_error?: boolean;
+  cache?: boolean;
 };
 export type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock;
 

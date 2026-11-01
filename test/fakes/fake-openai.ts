@@ -1,4 +1,4 @@
-import { sse, splitChunks, startFake, type FakeServer, type FakeTurn, type FakeTurnSpec } from "./types.ts";
+import { PrefixCache, sse, splitChunks, startFake, type FakeOptions, type FakeServer, type FakeTurn, type FakeTurnSpec, type PrefixModel } from "./types.ts";
 export type { FakeServer, FakeTurn } from "./types.ts";
 
 function render(turn: FakeTurnSpec, idx: number): string[] {
@@ -56,6 +56,16 @@ function render(turn: FakeTurnSpec, idx: number): string[] {
   return f;
 }
 
-export function startFakeOpenAI(script: FakeTurn[]): Promise<FakeServer> {
-  return startFake(script, render, (_s, message) => ({ error: { message, type: "server_error", code: null } }));
+/** Responses order: tools, instructions, input items. Caching is automatic (no breakpoints). */
+export function openaiPrefix(body: any): PrefixModel {
+  const blocks: string[] = [];
+  for (const t of body.tools ?? []) blocks.push(JSON.stringify(t));
+  blocks.push(JSON.stringify(body.instructions ?? ""));
+  for (const i of body.input ?? []) blocks.push(JSON.stringify(i));
+  return { blocks, breakpoints: [] };
+}
+
+export function startFakeOpenAI(script: FakeTurn[], opts: FakeOptions = {}): Promise<FakeServer> {
+  return startFake(script, render, (_s, message) => ({ error: { message, type: "server_error", code: null } }),
+    opts.simulateCache ? { model: openaiPrefix, sim: new PrefixCache("automatic") } : undefined);
 }

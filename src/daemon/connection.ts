@@ -71,7 +71,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
     return { s, models, lists };
   }
 
-  function build(id: string, cwd: string, settings: SessionSettings, p: Record<string, unknown>, env: ReturnType<typeof environment>, override: ToolExecutionMode | undefined, restored?: { messages: Message[]; tokenUsage?: any }) {
+  function build(id: string, cwd: string, settings: SessionSettings, p: Record<string, unknown>, env: ReturnType<typeof environment>, override: ToolExecutionMode | undefined, restored?: { messages: Message[]; tokenUsage?: any; deferred?: { loaded: string[]; announced: string[] } }) {
     const skip = opts.forced?.skipPermissions ?? p.skipPermissionsUnsafe === true;
     const f = files!;
     return new Session({
@@ -84,7 +84,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
       skipPermissions: skip,
       autoRejectPermissionRequests: p.autoRejectPermissionRequests === true,
       shell: SHELL, retryBaseDelayMs: opts.retryBaseDelayMs,
-      messages: restored?.messages, tokenUsage: restored?.tokenUsage,
+      messages: restored?.messages, tokenUsage: restored?.tokenUsage, deferred: restored?.deferred, log: opts.log,
       persistence: {
         appendMessage: async (msg, parent) => { await appendMessage(f, msg, parent); },
         appendTurnOutcome: (o) => appendTurnOutcome(f, o),
@@ -166,7 +166,13 @@ export function createConnection(write: (line: string) => void, opts: Connection
           autonomyLevel: opts.forced?.autonomyLevel ?? (saved.autonomyLevel as AutonomyLevel) ?? "off",
         };
         const savedOverride = EXEC_MODES.includes(saved.toolExecutionModeOverride as string) ? (saved.toolExecutionModeOverride as ToolExecutionMode) : undefined;
-        session = build(id, cwd, settings, p, env, savedOverride, { messages: loaded.messages, tokenUsage: saved.tokenUsage });
+        session = build(id, cwd, settings, p, env, savedOverride, {
+          messages: loaded.messages, tokenUsage: saved.tokenUsage,
+          deferred: {
+            loaded: Array.isArray(saved.loadedDeferredToolNames) ? (saved.loadedDeferredToolNames as string[]) : [],
+            announced: Array.isArray(saved.announcedDeferredToolNames) ? (saved.announcedDeferredToolNames as string[]) : [],
+          },
+        });
         if (typeof saved.providerLock === "string") session.providerLock = saved.providerLock;
         return {
           ...sessionResult(), cwd, isAgentLoopInProgress: false, workingState: "idle",
@@ -224,9 +230,11 @@ export function createConnection(write: (line: string) => void, opts: Connection
       case "get_context_stats": {
         const s = need();
         const model = findModel(environment(s.cwd).models, s.settings.modelId);
-        const limit = model?.maxContextLimit ?? 200_000;
-        const used = s.lastCallTokenUsage.inputTokens + s.lastCallTokenUsage.cacheReadTokens + s.lastCallTokenUsage.outputTokens;
-        return { used, remaining: Math.max(0, limit - used), limit, accuracy: used ? "exact" : "estimated", updatedAt: new Date().toISOString() };
+        return s.contextStats(model?.maxContextLimit ?? 200_000);
+      }
+      case "warmup_cache": {
+        await need().warmupCache();
+        return {};
       }
       default: {
         if (opts.extraMethods?.[method]) return opts.extraMethods[method](p);

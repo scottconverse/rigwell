@@ -18,13 +18,26 @@ const BOOTSTRAP = `(function (call, print, image, notify, toolNames) {
     if (!r.ok) { const e = new Error(r.error.message); e.name = r.error.name || 'Error'; throw e; }
     return r.value;
   };
-  const tools = {};
-  for (const n of toolNames) tools[n] = (input) => invoke(n, input);
+  const bound = {};
+  for (const n of toolNames) bound[n] = (input) => invoke(n, input);
+  // Tools loaded later (deferred tools) are not in the list above: any other name is forwarded to the host,
+  // which rejects it unless it is a loaded tool. tools.server.tool calls the tool named server__tool.
+  const nested = (path) => new Proxy(function () {}, {
+    get(_t, p) { return typeof p === 'string' && p !== 'then' ? nested(path.concat(p)) : undefined; },
+    apply(_t, _this, args) { return invoke(path.join('__'), args[0]); },
+  });
+  const tools = new Proxy(bound, {
+    get(t, p) {
+      if (typeof p !== 'string' || p === 'then') return undefined;
+      return Object.prototype.hasOwnProperty.call(t, p) ? t[p] : nested([p]);
+    },
+    set() { return false; }, defineProperty() { return false; }, deleteProperty() { return false; },
+  });
   const results = {
     search: (query, opts) => invoke('__results_search', { query, opts: opts || {} }),
     get: (job_id, callNo) => invoke('__results_get', { job_id, call: callNo }),
   };
-  Object.freeze(tools); Object.freeze(results);
+  Object.freeze(results);
   const g = globalThis;
   g.tools = tools; g.results = results;
   g.print = (...vals) => { print(vals.map(fmt).join(' ')); };
