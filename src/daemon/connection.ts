@@ -194,6 +194,8 @@ export function createConnection(write: (line: string) => void, opts: Connection
       autoTitle: env.s.autoSessionTitle !== false, heartbeatMs: typeof env.s.toolHeartbeatMs === "number" ? env.s.toolHeartbeatMs : undefined,
       archived: restored?.archived, compactionAnchorId: restored?.anchor,
       guardSettings: { llmRequestTimeout: env.s.llmRequestTimeout as number | undefined, loopGuards: env.s.loopGuards as any },
+      enterMissionMode: opts.extraMethods?.enter_mission_mode ? async () => (await opts.extraMethods!.enter_mission_mode!({})) as Record<string, unknown> : undefined,
+      modelUpgradePath: Array.isArray(env.s.modelUpgradePath) ? (env.s.modelUpgradePath as unknown[]).filter((x): x is string => typeof x === "string") : undefined,
       compaction: env.s.compaction as any, compactionTokenLimit: env.s.compactionTokenLimit,
       compactionThresholdCheckEnabled: env.s.compactionThresholdCheckEnabled, router: routerOf(env),
       persistence: persistenceFor(f),

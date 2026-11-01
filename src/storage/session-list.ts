@@ -3,6 +3,9 @@
 import { readFileSync, statSync } from "node:fs";
 import { listSessions } from "./transcript.ts";
 import { readSessionSettings } from "./session-settings.ts";
+import { indexDbPath, openSessionIndex, queryPicker, refreshIndex } from "./session-index.ts";
+import { projectSlug } from "./paths.ts";
+import type { Database } from "bun:sqlite";
 
 export interface SessionListEntry {
   sessionId: string;
@@ -47,7 +50,43 @@ function displayTitle(title: string, first: string): string {
   return one.length > 80 ? one.slice(0, 79) + "..." : one;
 }
 
+const indexes = new Map<string, Database>();
+
+/** Rows from the SQLite index (spec 12.1 picker). Throws when the index cannot be used. */
+function listFromIndex(o: { cwd?: string; includeArchived?: boolean; limit?: number }): SessionListEntry[] {
+  const file = indexDbPath();
+  let db = indexes.get(file);
+  if (!db) { db = openSessionIndex(file); indexes.set(file, db); }
+  try {
+    refreshIndex(db, o.cwd ? projectSlug(o.cwd) : undefined);
+    return queryPicker(db, o).map((r) => ({
+      sessionId: r.sessionId, title: displayTitle(r.title, r.preview), cwd: r.cwd, updatedAt: new Date(r.lastEventAt).toISOString(), pinned: r.pinned,
+      archivedAt: r.archivedAt, isSubagent: false, hasUserVisibleMessages: true,
+    }));
+  } catch (e) {
+    try { db.close(); } catch { /* already closed */ }
+    indexes.delete(file);
+    throw e;
+  }
+}
+
+/** Closes cached index handles (tests that delete the home folder). */
+export function closeSessionIndexes() {
+  for (const db of indexes.values()) { try { db.close(); } catch { /* ignore */ } }
+  indexes.clear();
+}
+
 export function listSessionEntries(o: { cwd?: string; includeArchived?: boolean; limit?: number } = {}): SessionListEntry[] {
+  try {
+    return listFromIndex(o);
+  } catch (e) {
+    if (process.env.RIGWELL_DEBUG) console.error(`[session-index] falling back to the file scan: ${(e as Error)?.message ?? e}`);
+    return scanSessionEntries(o);
+  }
+}
+
+/** The file scan: reads every transcript and settings file. The fallback when the index is unusable. */
+export function scanSessionEntries(o: { cwd?: string; includeArchived?: boolean; limit?: number } = {}): SessionListEntry[] {
   const rows: SessionListEntry[] = [];
   for (const s of listSessions(o.cwd)) {
     const settings = readSessionSettings({ settingsPath: s.transcriptPath.replace(/\.jsonl$/, ".settings.json") }) ?? {};
