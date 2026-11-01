@@ -5,6 +5,9 @@ import { rigwellHome } from "../storage/paths.ts";
 import { createConnection, type ConnectionOptions } from "../daemon/connection.ts";
 import { startDaemon, defaultSocketPath } from "../daemon/daemon.ts";
 import type { AutonomyLevel } from "../core/types.ts";
+import { findSession } from "../storage/transcript.ts";
+import { forkSession } from "../storage/fork.ts";
+import { listSessionEntries } from "../storage/session-list.ts";
 
 const log = (m: string) => process.stderr.write(m + "\n");
 
@@ -21,10 +24,17 @@ Options for exec:
   -m, --model <id>             model id, e.g. custom:My-Model-0
   --cwd <dir>                  working directory (default: current directory)
   -s, --session-id <id>        continue an existing session (prompt mode)
+  -r, --resume [id]            resume a session; without an id, print a numbered list of sessions and exit
+                               (an id is a session id of 8 or more characters; a prompt is never taken for one)
+  --fork <id>                  copy a session into a new one and continue the copy
+  --use-spec                   start in spec mode (read-only planning)
+  --spec-model <id>            model for spec mode (implies --use-spec's model choice; the session model otherwise)
+  --spec-reasoning-effort <e>  reasoning effort for spec mode
+  --trust                      trust the working folder: its project settings, hooks, AGENTS.md, skills and agents load
+                               (same as RIGWELL_TRUST_CWD=1; folders listed in trustedFolders are always trusted)
   --settings <path>            extra settings file for this process (runtime level)
 
-Options for tui (also --auto, -m/--model, --cwd, --skip-permissions-unsafe, --settings):
-  --use-spec                   start in spec mode
+Options for tui (also --auto, -m/--model, --cwd, --skip-permissions-unsafe, --settings, -r/--resume, --fork, --use-spec, --spec-*, --trust):
   --daemon                     use the running daemon's Unix socket instead of an in-process session
   --socket <path>              daemon socket path (implies --daemon)
   --url <ws://...> --token <t> connect to the daemon over WebSocket (token defaults to daemon.json)`;
@@ -32,12 +42,13 @@ Options for tui (also --auto, -m/--model, --cwd, --skip-permissions-unsafe, --se
 interface ExecArgs {
   inputFormat?: string; outputFormat?: string; auto?: AutonomyLevel; skip: boolean;
   model?: string; cwd: string; sessionId?: string; settings?: string; prompt?: string;
+  resume?: string | true; fork?: string; useSpec: boolean; specModel?: string; specEffort?: string;
 }
 
 function fail(msg: string): never { log(`rigwell: ${msg}`); process.exit(2); }
 
 function parseExec(argv: string[]): ExecArgs {
-  const a: ExecArgs = { skip: false, cwd: process.cwd() };
+  const a: ExecArgs = { skip: false, cwd: process.cwd(), useSpec: false };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
@@ -54,6 +65,16 @@ function parseExec(argv: string[]): ExecArgs {
       case "-m": case "--model": a.model = val(); break;
       case "--cwd": a.cwd = resolve(val()); break;
       case "-s": case "--session-id": a.sessionId = val(); break;
+      case "-r": case "--resume": {
+        const next = argv[i + 1];
+        if (next !== undefined && !next.startsWith("-") && /^[A-Za-z0-9_-]{8,}$/.test(next)) { a.resume = next; i++; } else a.resume = true;
+        break;
+      }
+      case "--fork": a.fork = val(); break;
+      case "--use-spec": a.useSpec = true; break;
+      case "--spec-model": a.specModel = val(); a.useSpec = true; break;
+      case "--spec-reasoning-effort": a.specEffort = val(); a.useSpec = true; break;
+      case "--trust": process.env.RIGWELL_TRUST_CWD = "1"; break;
       case "--settings": a.settings = resolve(val()); break;
       case "-h": case "--help": log(USAGE); process.exit(0);
       default:
@@ -64,6 +85,39 @@ function parseExec(argv: string[]): ExecArgs {
   if (a.auto && a.skip) fail("--auto and --skip-permissions-unsafe cannot be used together");
   if (rest.length) a.prompt = rest.join(" ");
   return a;
+}
+
+/** `-r` without an id: a numbered list of sessions (newest first, pinned first), from list_sessions. */
+function printSessionList(cwd: string) {
+  const rows = listSessionEntries({ cwd });
+  if (!rows.length) { process.stdout.write("No sessions to resume in this folder.\n"); return; }
+  rows.forEach((r, i) => {
+    const when = new Date(r.updatedAt * 1000).toISOString().replace("T", " ").slice(0, 16);
+    process.stdout.write(`${String(i + 1).padStart(3)}. ${r.pinned ? "* " : ""}${r.title}  [${r.sessionId}]  ${when}\n`);
+  });
+  process.stdout.write("Resume one with: rigwell -r <session id>\n");
+}
+
+/** Resolves --resume / --fork / -s to the session id to load, or exits after printing the list. */
+function sessionToLoad(a: ExecArgs): string | undefined {
+  if (a.resume === true) { printSessionList(a.cwd); process.exit(0); }
+  const id = (typeof a.resume === "string" ? a.resume : undefined) ?? a.sessionId;
+  if (a.fork) {
+    const src = findSession(a.fork, a.cwd);
+    if (!src) fail(`session not found: ${a.fork}`);
+    const dest = forkSession(src!);
+    log(`[fork] ${a.fork} -> ${dest.id}`);
+    return dest.id;
+  }
+  return id;
+}
+
+/** initialize_session params for the spec flags. */
+function specParams(a: ExecArgs): Record<string, unknown> {
+  return {
+    ...(a.useSpec ? { interactionMode: "spec" } : {}), ...(a.specModel ? { specModeModelId: a.specModel } : {}),
+    ...(a.specEffort ? { specModeReasoningEffort: a.specEffort } : {}),
+  };
 }
 
 async function readStdin(onChunk: (s: string) => void) {
@@ -122,9 +176,10 @@ async function execPrompt(a: ExecArgs) {
       waiters.set(id, res);
       conn.peer.feed(JSON.stringify({ jsonrpc: "2.0", type: "request", id, method: `rigwell.${method}`, params }) + "\n");
     });
-  const init = a.sessionId
-    ? await call("load_session", { sessionId: a.sessionId, cwd: a.cwd })
-    : await call("initialize_session", { machineId: "default", cwd: a.cwd });
+  const loadId = sessionToLoad(a);
+  const init = loadId
+    ? await call("load_session", { sessionId: loadId, cwd: a.cwd })
+    : await call("initialize_session", { machineId: "default", cwd: a.cwd, ...specParams(a) });
   if (init.error) fail(init.error.message);
   log(`[session] ${init.result.sessionId} model=${init.result.settings.modelId} autonomy=${init.result.settings.autonomyLevel}`);
   const added = await call("add_user_message", { text: a.prompt });
@@ -142,7 +197,7 @@ async function execPrompt(a: ExecArgs) {
 /** `rigwell` / `rigwell tui`: the interactive UI, on an in-process session or a daemon connection. */
 async function tui(argv: string[]) {
   const TUI_ONLY_VALUE = ["--socket", "--url", "--token"];
-  const TUI_ONLY_FLAG = ["--use-spec", "--daemon"];
+  const TUI_ONLY_FLAG = ["--daemon"];
   const execArgv: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     if (TUI_ONLY_VALUE.includes(argv[i])) i++;
@@ -165,9 +220,10 @@ async function tui(argv: string[]) {
   if (a.model) sessionParams.modelId = a.model;
   if (a.auto) sessionParams.autonomyLevel = a.auto;
   if (a.skip) sessionParams.skipPermissionsUnsafe = true;
-  if (argv.includes("--use-spec")) sessionParams.interactionMode = "spec";
+  Object.assign(sessionParams, specParams(a));
+  const resumeSessionId = sessionToLoad(a);
   const connection = url ? `WebSocket ${url}` : socket || argv.includes("--daemon") ? `daemon socket ${socket ? resolve(socket) : defaultSocketPath()}` : "in-process";
-  const code = await runTui({ cwd: a.cwd, makeTransport, sessionParams, homeDir: rigwellHome(), log, connection, settingsPath: a.settings });
+  const code = await runTui({ cwd: a.cwd, makeTransport, sessionParams, resumeSessionId, homeDir: rigwellHome(), log, connection, settingsPath: a.settings });
   process.exit(code);
 }
 

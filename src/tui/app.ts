@@ -21,6 +21,8 @@ export interface TuiOptions {
   makeTransport: () => Promise<Transport>;
   /** initialize_session params (modelId, autonomyLevel, interactionMode, skipPermissionsUnsafe...). */
   sessionParams?: Record<string, unknown>;
+  /** Load this session at start instead of creating one (rigwell -r / --fork). */
+  resumeSessionId?: string;
   version?: string;
   /** How the session is reached, for /diagnostics: "in-process", "daemon socket <path>", "WebSocket <url>". */
   connection?: string;
@@ -349,7 +351,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
   }
 
   try {
-    await connect(opts.sessionParams ?? {});
+    await connect(opts.sessionParams ?? {}, opts.resumeSessionId);
   } catch (e) {
     leaveTerminal();
     process.stderr.write(`rigwell: could not start a session: ${errText(e)}\n`);
