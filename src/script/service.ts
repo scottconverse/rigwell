@@ -79,7 +79,7 @@ export class ScriptService {
           await run.done;
         }
         run.reported = true;
-        return { content: JSON.stringify(run.report()), isError: run.status !== "completed" };
+        return { content: JSON.stringify(run.report()), isError: run.status !== "completed", ...(run.images.length ? { images: run.images } : {}) };
       },
     };
   }
@@ -107,7 +107,8 @@ export class ScriptService {
           await job.done;
         }
         if (job.status !== "running") job.reported = true;
-        return ok(JSON.stringify(job.report()));
+        const imgs = (job as { images?: { type: "image"; mediaType: string; data: string }[] }).images;
+        return { content: JSON.stringify(job.report()), ...(imgs?.length && job.status !== "running" ? { images: imgs } : {}) };
       },
     };
   }

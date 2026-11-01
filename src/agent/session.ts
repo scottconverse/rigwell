@@ -4,13 +4,14 @@ import { basename, join, resolve } from "node:path";
 import type {
   AutonomyLevel, CommandLists, ContentBlock, InteractionMode, Message, ModelAdapter, ModelConfig,
   PermissionDecision, ReasoningEffort, TokenUsage, Tool, ToolResultBlock, ToolUseBlock, FileReadRecord,
+  AskQuestion, ImageBlock, SessionServices, TodoItem,
 } from "../core/types.ts";
 import type { ToolExecutionMode, ToolOutput } from "../core/types.ts";
 import { ModelError, zeroUsage } from "../core/types.ts";
 import { JobManager, type Job } from "../jobs/manager.ts";
 import { ToolCallError } from "../script/bindings.ts";
 import { ScriptService, type ScriptLimits } from "../script/service.ts";
-import { contextBlocks, guardText } from "./prompts.ts";
+import { contextBlocks, guardText, todosBlock } from "./prompts.ts";
 import { PROMPT_TEXT } from "./prompt-text.generated.ts";
 import { DEFAULT_GUARDS, RepeatTracker, detectCycle, resolveGuards, type Cycle, type GuardConfig, type GuardSettings } from "./guards.ts";
 import {
@@ -32,6 +33,11 @@ import { isStarted, runTask, TaskError, type ChildOptions, type ChildOutcome, ty
 import { agentCatalog, type CustomAgent } from "../subagents/agents.ts";
 import { exitSpecModeTool, saveSpec, skillTool, specFileName, specSaveFolder, taskTool } from "./extra-tools.ts";
 import { TaskJob } from "../jobs/task.ts";
+import { resolveProfile, type ModelProfile, type ProfileSettings } from "./profiles.ts";
+import { schemaProblem, validate } from "./json-schema.ts";
+import {
+  createAskUserTool, createStructuredOutputTool, createTaskOutputTool, createTaskStopTool, createTodoWriteTool, renderTodoList,
+} from "../tools/session-tools.ts";
 
 export type WorkingState =
   | "idle" | "thinking" | "streaming_assistant_message" | "waiting_for_tool_confirmation" | "executing_tool"
@@ -53,22 +59,45 @@ export class SessionBusyError extends Error {
 export type TurnReason =
   | "completed" | "cancelled" | "permission_rejected" | "error" | "no_approver_available" | "prompt_rejected"
   | "model_authentication_failed" | "model_request_rejected" | "model_provider_unreachable"
-  | "model_provider_unavailable" | "model_rate_limited";
+  | "model_provider_unavailable" | "model_rate_limited"
+  | "structured_output_missing" | "structured_output_invalid" | "structured_output_schema_invalid";
 
 export interface PermissionAnswer { selectedOption: string; comment?: string; editedSpecContent?: string }
+export interface AskUserAnswer { cancelled?: boolean; answers: { index: number; question: string; answer: string }[] }
+export interface OutputFormat { type: "json_schema"; schema: Record<string, unknown> }
+
+/** JSON-RPC code of a request that died because the connection closed (see protocol/rpc.ts). */
+const DISCONNECTED = -32005;
+
+/** A prompt the client has not answered yet (spec 3.1.5 pending lists). */
+export interface PendingPrompt {
+  requestId: string;
+  kind: "permission" | "ask_user";
+  params: Record<string, unknown>;
+  resolve: (answer: any) => void;
+}
+
+/** A user message waiting for its turn. */
+export interface QueuedUserMessage { text: string; messageId: string; content?: ContentBlock[]; outputFormat?: OutputFormat | null }
 
 /** What a session needs from the connection that owns it. */
 export interface SessionHost {
   notify(n: Record<string, unknown>): void;
   /** Present only when a client can answer prompts (stream-jsonrpc). */
   requestPermission?: (params: Record<string, unknown>) => Promise<PermissionAnswer>;
+  /** Present only when a client can answer AskUser questions. */
+  requestAskUser?: (params: Record<string, unknown>) => Promise<AskUserAnswer>;
 }
 
 /** Persistence hooks, implemented over src/storage. */
 export interface SessionPersistence {
   appendMessage(msg: Message, parentId: string | null): Promise<void>;
-  appendTurnOutcome(o: { turnId: string; reason: string; resultKind: "text" | null }): Promise<void>;
+  appendTurnOutcome(o: { turnId: string; reason: string; resultKind: "text" | "structured" | null }): Promise<void>;
   appendCompaction?(rec: CompactionRecord): Promise<void>;
+  /** todo_state record (spec 12.1). */
+  appendTodoState?(todos: TodoItem[], messageIndex: number): Promise<void>;
+  /** Stores a new session title (a record in the transcript plus the settings file). */
+  setTitle?(title: string, manual: boolean): Promise<void>;
   saveSettings(s: Record<string, unknown>): Promise<void>;
 }
 
@@ -115,7 +144,9 @@ export interface SessionDeps {
   resolveModel: (id: string) => ModelConfig | undefined;
   createAdapter: (m: ModelConfig) => ModelAdapter;
   streamWithRetry: (a: ModelAdapter, req: any, opts: any) => AsyncIterable<any>;
-  toolsFor: (o: { autonomy: AutonomyLevel; skipPermissions: boolean; specMode?: boolean }) => Tool[];
+  toolsFor: (o: {
+    autonomy: AutonomyLevel; skipPermissions: boolean; specMode?: boolean; fileEditProfile?: "apply-patch" | "create-edit"; extraIds?: string[];
+  }) => Tool[];
   decide: (tool: string, input: Record<string, unknown>, ctx: any) => PermissionDecision;
   lists: CommandLists;
   skipPermissions: boolean;
@@ -162,6 +193,29 @@ export interface SessionDeps {
   toolFilter?: string[];
   /** True for a subagent session: only tool hooks run. */
   isChild?: boolean;
+  /** Restored todo list (load_session). */
+  todos?: TodoItem[];
+  /** Session-wide structured output (initialize_session / load_session structuredOutputFormat). */
+  structuredOutputFormat?: OutputFormat | null;
+  /** initialize_session tool id lists (spec 3.1.5). restrict is a hard allowlist. */
+  toolIds?: { restrict?: string[]; enabled?: string[]; disabled?: string[]; additional?: string[] };
+  /** systemPrompt string (replaces the base prompt) or preset + append (base prompt, then the text). */
+  systemPrompt?: string | { type: "preset"; preset?: string; append?: string };
+  disableBuiltinSkills?: boolean;
+  /** Settings the profile and tool choices read (modelProfiles, fileEditToolProfile). */
+  profileSettings?: ProfileSettings;
+  /** false: project settings, hooks, instruction files, skills and agents were not loaded (spec 12.2 trustedFolders). */
+  projectTrusted?: boolean;
+  /** Title state: the stored title and whether the user set it. */
+  title?: { value: string; manual: boolean };
+  /** false turns off the title side request. Default: on for sessions a client can see. */
+  autoTitle?: boolean;
+  /** Milliseconds between tool_execution_heartbeat notifications for a running tool. Default 10000. */
+  heartbeatMs?: number;
+  /** Settings `compactionTokenLimitPerModel`: { modelIdOrApiName: tokens }. */
+  compactionTokenLimitPerModel?: Record<string, number>;
+  /** Settings `subagentModelSettings`: { model?, reasoningEffort? } for every Task subagent without a model of its own. */
+  subagentModelSettings?: { model?: string; reasoningEffort?: ReasoningEffort };
 }
 
 /** Waits on one running Script before the turn is stopped (2 hours of 5-minute waits). */
@@ -211,7 +265,7 @@ export class Session {
   workingState: WorkingState = "idle";
   providerLock?: string;
   private readFiles = new Map<string, FileReadRecord>();
-  private queue: { text: string; messageId: string }[] = [];
+  private queue: QueuedUserMessage[] = [];
   private running = false;
   private abort?: AbortController;
   private activeTimeMs = 0;
@@ -256,12 +310,35 @@ export class Session {
   private ended = false;
   private toolCalls = 0;
   /** Outcome of the latest finished turn (a subagent's report is its final text). */
-  lastTurn?: { reason: TurnReason; text: string };
+  lastTurn?: { reason: TurnReason; text: string; structured?: unknown };
   private children = new Map<string, TokenUsage>();
   private lastChildUsage = zeroUsage();
   private turnChildUsage = zeroUsage();
+  // ---- gap wave ----
+  /** Prompts sent to the client and not answered yet, keyed by requestId (spec 3.1.5 pending lists). */
+  private prompts = new Map<string, PendingPrompt>();
+  private todos: TodoItem[];
+  /** Mid-turn steering messages (queuePlacement end_of_loop), delivered after the next tool batch. */
+  private steer: QueuedUserMessage[] = [];
+  /** The structured-output format of the running turn, the answer recorded for it, and the bad attempts so far. */
+  private format: OutputFormat | null = null;
+  private structured?: { value: unknown };
+  private invalidStructured = 0;
+  private formatWasOn = false;
+  private title: { value: string; manual: boolean; asked: boolean };
+  private readonly svc: SessionServices;
+  /** Result of the latest structured turn, for agent_turn_completed. */
+  lastStructured?: unknown;
 
   constructor(private deps: SessionDeps, private host: SessionHost) {
+    this.todos = deps.todos ? [...deps.todos] : [];
+    this.title = { value: deps.title?.value ?? "New Session", manual: deps.title?.manual ?? false, asked: !!deps.title?.manual || (deps.title?.value ?? "New Session") !== "New Session" };
+    this.svc = {
+      jobs: this.jobs,
+      todos: { get: () => this.todos, set: (t) => this.setTodos(t) },
+      askUser: (p, id) => this.askUser(p, id),
+      setStructured: (v) => this.setStructured(v),
+    };
     this.id = deps.id;
     this.cwd = deps.cwd;
     this.settings = { ...deps.settings };
@@ -273,9 +350,9 @@ export class Session {
     this.compactedOnce = !!deps.compactionAnchorId;
     this.deferred = new DeferredRegistry(deps.deferred);
     this.builder = new RequestBuilder(deps.log);
-    this.instructions = new InstructionLoader({ cwd: deps.cwd });
+    this.instructions = new InstructionLoader({ cwd: deps.cwd, projectTrusted: deps.projectTrusted });
     this.instrBlock = this.instructions.load().block;
-    this.skills = new SkillRegistry({ cwd: deps.cwd }).load();
+    this.skills = new SkillRegistry({ cwd: deps.cwd, includeBuiltins: !deps.disableBuiltinSkills, projectTrusted: deps.projectTrusted }).load();
     this.skillToolOn = this.skills.skillToolAvailable();
     this.hooks = deps.hooksFor?.({
       sessionId: this.id, transcriptPath: deps.transcriptPath ?? "", notify: (n) => this.notify(n), permissionMode: () => this.permissionMode(),
@@ -305,9 +382,20 @@ export class Session {
   effectiveMode(modelId: string = this.activeModelId()): ToolExecutionMode {
     if (this.deps.toolExecutionModeOverride) return this.deps.toolExecutionModeOverride;
     const list = this.deps.scriptToolModels ?? [];
-    const apiName = this.deps.resolveModel(modelId)?.model;
-    return list.includes(modelId) || (apiName !== undefined && list.includes(apiName)) ? "script_only" : "direct_only";
+    const model = this.deps.resolveModel(modelId);
+    const apiName = model?.model;
+    if (list.includes(modelId) || (apiName !== undefined && list.includes(apiName))) return "script_only";
+    return resolveProfile(model, this.deps.profileSettings).toolExecutionMode;
   }
+
+  /** The active model's profile (spec 4.1). */
+  profile(): ModelProfile { return resolveProfile(this.currentModel(), this.deps.profileSettings); }
+
+  /** True when a client can answer AskUser questions. */
+  private canAsk(): boolean { return !!this.host.requestAskUser && !this.deps.autoRejectPermissionRequests && !this.deps.isChild; }
+
+  /** Swaps the connection that owns this session (a client reconnected); pending prompts stay open. */
+  setHost(h: SessionHost) { this.host = h; }
 
   get specMode(): boolean { return this.settings.interactionMode === "spec"; }
 
@@ -338,9 +426,33 @@ export class Session {
 
   /** Core tools and Skill: what both direct calls and a Script can reach (autonomy gates apply). */
   private baseTools(): Tool[] {
-    let t = this.deps.toolsFor({ autonomy: this.settings.autonomyLevel, skipPermissions: this.deps.skipPermissions, specMode: this.specMode });
+    const ids = this.deps.toolIds;
+    let t = this.deps.toolsFor({
+      autonomy: this.settings.autonomyLevel, skipPermissions: this.deps.skipPermissions, specMode: this.specMode,
+      fileEditProfile: this.profile().fileEditToolProfile, extraIds: [...(ids?.enabled ?? []), ...(ids?.additional ?? [])],
+    });
     if (this.skillToolOn) t = [...t, skillTool(this.skills)];
+    // The todo list is an interactive feature (spec 5.1).
+    if (this.interactive && !this.deps.isChild) t = [...t, createTodoWriteTool()];
     if (this.deps.toolFilter) t = t.filter((x) => this.deps.toolFilter!.includes(x.name));
+    return t;
+  }
+
+  /** Session tools that stay top level in both tool modes (spec 5.1): background job control, AskUser, StructuredOutput. */
+  private sessionTools(): Tool[] {
+    const t = [createTaskOutputTool(), createTaskStopTool()];
+    if (this.canAsk()) t.push(createAskUserTool());
+    if (this.format) t.push(createStructuredOutputTool(this.format.schema));
+    return t;
+  }
+
+  /** initialize_session tool id lists: restrictToolIds is a hard allowlist; disabledToolIds removes tools. */
+  private byIds(tools: Tool[]): Tool[] {
+    const ids = this.deps.toolIds;
+    if (!ids) return tools;
+    let t = tools;
+    if (ids.restrict) t = t.filter((x) => ids.restrict!.includes(x.name));
+    if (ids.disabled?.length) t = t.filter((x) => !ids.disabled!.includes(x.name));
     return t;
   }
 
@@ -351,7 +463,7 @@ export class Session {
   /** What a Script binds: base tools, Task when allowed in Scripts, ToolSearch and load_tools (loaded deferred tools bind by name on call). */
   private scriptTools(): Tool[] {
     const task = this.taskOffered() && this.allowTaskInScripts() ? [this.makeTaskTool()] : [];
-    return [...this.baseTools(), ...task, this.deferred.toolSearchTool(), this.deferred.loadToolsTool()];
+    return this.byIds([...this.baseTools(), ...this.sessionTools(), ...task, this.deferred.toolSearchTool(), this.deferred.loadToolsTool()]);
   }
 
   /** Makes a tool deferred: announced by name, schema sent only after load_tools. MCP tools register through here. */
@@ -370,9 +482,9 @@ export class Session {
     const task = this.taskOffered() ? [this.makeTaskTool()] : [];
     const exit = this.specMode && this.interactive ? [exitSpecModeTool()] : [];
     if (this.effectiveMode() === "script_only") {
-      return [...script, ...(this.allowTaskInScripts() ? [] : task), ...exit];
+      return this.byIds([...script, ...this.sessionTools(), ...(this.allowTaskInScripts() ? [] : task), ...exit]);
     }
-    return [...this.baseTools(), ...task, ...exit, this.deferred.loadToolsTool(), this.deferred.callToolTool(), ...script];
+    return this.byIds([...this.baseTools(), ...this.sessionTools(), ...task, ...exit, this.deferred.loadToolsTool(), this.deferred.callToolTool(), ...script]);
   }
 
   private notify(n: Record<string, unknown>) { this.host.notify(n); }
@@ -386,7 +498,14 @@ export class Session {
   settingsSnapshot(): Record<string, unknown> {
     return {
       ...this.settings, toolExecutionMode: this.effectiveMode(), availableAutonomyLevels: ["off", "low", "medium", "high"],
-      ...(this.routed ? { effectiveRouterModel: this.routedSettings() } : {}),
+      ...(this.routed ? { effectiveRouterModel: this.routedSettings(), routedModelId: this.routed.modelId, routedReasoningEffort: this.activeEffort() } : {}),
+      ...(this.deps.toolIds?.restrict ? { restrictToolIds: this.deps.toolIds.restrict } : {}),
+      ...(this.deps.toolIds?.enabled ? { enabledToolIds: this.deps.toolIds.enabled } : {}),
+      ...(this.deps.toolIds?.disabled ? { disabledToolIds: this.deps.toolIds.disabled } : {}),
+      ...(this.deps.toolIds?.additional ? { additionalToolIds: this.deps.toolIds.additional } : {}),
+      ...(this.deps.systemPrompt ? { systemPrompt: this.deps.systemPrompt } : {}),
+      ...(this.deps.structuredOutputFormat ? { structuredOutputFormat: this.deps.structuredOutputFormat } : {}),
+      ...(this.checkEnabled !== undefined || this.deps.compactionThresholdCheckEnabled !== undefined ? { compactionThresholdCheckEnabled: this.checkEnabled ?? this.deps.compactionThresholdCheckEnabled } : {}),
     };
   }
 
@@ -442,6 +561,11 @@ export class Session {
       ...(this.children.size ? { childInclusiveTokenUsageBySessionId: Object.fromEntries(this.children) } : {}),
       ...(this.providerLock ? { providerLock: this.providerLock, apiProviderLock: this.providerLock } : {}),
       loadedDeferredToolNames: this.deferred.state().loaded, announcedDeferredToolNames: this.deferred.state().announced,
+      ...(this.deps.toolIds ? { toolIds: this.deps.toolIds } : {}),
+      ...(this.deps.systemPrompt ? { systemPrompt: this.deps.systemPrompt } : {}),
+      ...(this.deps.structuredOutputFormat ? { structuredOutputFormat: this.deps.structuredOutputFormat } : {}),
+      ...(this.deps.disableBuiltinSkills ? { disableBuiltinSkills: true } : {}),
+      ...(this.compactionLimit ? { compactionTokenLimit: this.compactionLimit } : {}),
     });
   }
 
@@ -484,9 +608,43 @@ export class Session {
   }
 
   /** Accepts a user message. Returns at once; the turn runs in the background. */
-  addUserMessage(text: string, messageId: string = crypto.randomUUID()) {
-    this.queue.push({ text, messageId });
+  addUserMessage(
+    text: string, messageId: string = crypto.randomUUID(),
+    opts: { content?: ContentBlock[]; placement?: "end_of_turn" | "end_of_loop"; outputFormat?: OutputFormat | null } = {},
+  ) {
+    const entry: QueuedUserMessage = {
+      text, messageId, ...(opts.content?.length ? { content: opts.content } : {}), ...(opts.outputFormat !== undefined ? { outputFormat: opts.outputFormat } : {}),
+    };
+    // end_of_loop while a turn runs is steering: it is delivered after the next tool call batch (spec 13.3).
+    if (opts.placement === "end_of_loop" && this.running) this.steer.push(entry);
+    else this.queue.push(entry);
     this.kick();
+  }
+
+  /** Messages accepted but not yet sent to the model (load_session queuedMessages). */
+  queuedMessages(): QueuedUserMessage[] { return [...this.steer, ...this.queue]; }
+
+  /** Prompts the client has not answered (load_session pendingPermissions / pendingAskUserRequests). */
+  pendingPrompts(): PendingPrompt[] { return [...this.prompts.values()]; }
+
+  /** An answer from a reconnected client resolves the original wait (keyed by requestId). */
+  answerPrompt(requestId: string, answer: unknown): boolean {
+    const p = this.prompts.get(requestId);
+    if (!p) return false;
+    p.resolve(answer);
+    return true;
+  }
+
+  /** Sends a prompt to the client and waits. A client that disconnects leaves the prompt open for a later answer. */
+  private prompt<T>(kind: PendingPrompt["kind"], requestId: string, params: Record<string, unknown>, send: (() => Promise<T>) | undefined, fallback: T): Promise<T> {
+    return new Promise<T>((resolve) => {
+      if (!send) return resolve(fallback);
+      this.prompts.set(requestId, { requestId, kind, params, resolve: (a) => { this.prompts.delete(requestId); resolve(a as T); } });
+      send().then(
+        (a) => this.prompts.get(requestId)?.resolve(a),
+        (e) => { if ((e as { code?: number })?.code !== DISCONNECTED) this.prompts.get(requestId)?.resolve(fallback); },
+      );
+    });
   }
 
   /** Starts the turn loop unless it is already running. */
@@ -506,9 +664,12 @@ export class Session {
     this.running = true;
     try {
       for (;;) {
+        // Steering that arrived too late for a tool batch becomes an ordinary next message.
+        if (this.steer.length) this.queue.push(...this.steer.splice(0));
         while (this.queue.length) {
           const next = this.queue.shift()!;
-          await this.runTurn(next.text, next.messageId);
+          await this.runTurn(next.text, next.messageId, undefined, next);
+          if (this.steer.length) this.queue.push(...this.steer.splice(0));
         }
         // A background job finished while the model was asleep: wake it with a reminder (spec §4.3).
         const wake = this.takeWake();
@@ -565,7 +726,7 @@ export class Session {
     await this.deps.persistence.appendMessage(msg, parent);
   }
 
-  private async runTurn(text: string, turnId: string, visibility?: "llm_only") {
+  private async runTurn(text: string, turnId: string, visibility?: "llm_only", entry?: QueuedUserMessage) {
     const started = Date.now();
     this.abort = new AbortController();
     const signal = this.abort.signal;
@@ -576,6 +737,26 @@ export class Session {
     this.halt = undefined;
     this.turnChildUsage = zeroUsage();
     let blocked = false;
+    let structuredNudged = false;
+    let todoNudged = false;
+    // Structured output (spec 3.1.5): the format for this turn, else the session's.
+    this.format = entry && entry.outputFormat !== undefined ? entry.outputFormat : (this.deps.structuredOutputFormat ?? null);
+    this.structured = undefined;
+    this.invalidStructured = 0;
+    const badSchema = this.format ? schemaProblem(this.format.schema) : null;
+    if (badSchema) {
+      blocked = true;
+      reason = "structured_output_schema_invalid";
+      this.format = null;
+      this.notify({
+        type: "error", message: `The structured output schema cannot be used: ${badSchema}`, errorType: "SessionError",
+        timestamp: new Date().toISOString(), error: { name: "StructuredOutputSchemaInvalid", message: badSchema },
+      });
+    }
+    if (!!this.format !== this.formatWasOn) {
+      this.formatWasOn = !!this.format;
+      this.builder.monitor.expectBreak("structured output tool");
+    }
 
     try {
       await this.startup;
@@ -583,7 +764,7 @@ export class Session {
       // UserPromptSubmit hooks (spec 5.6): may block the prompt, rewrite it, or add context.
       let prompt = text;
       let promptContext = "";
-      if (!visibility && this.hooks?.hasHooks() && !this.deps.isChild) {
+      if (!blocked && !visibility && this.hooks?.hasHooks() && !this.deps.isChild) {
         this.hooks.resetStop();
         const r = await this.hooks.userPromptSubmit(text, turnId, false, signal);
         for (const m of r.systemMessages) await this.userNote(m);
@@ -598,12 +779,14 @@ export class Session {
       }
       if (!blocked) {
         const first = !this.messages.some((m) => m.role === "user");
+        if (first && !visibility && this.titleWanted()) void this.generateTitle(text);
         if (first) {
           const ctx = contextBlocks({
             cwd: this.cwd, interactionMode: this.settings.interactionMode, autonomy: this.settings.autonomyLevel,
             modelId: this.activeModelId(), shell: this.deps.shell, toolExecutionMode: this.effectiveMode(),
             instructions: this.instrBlock, skills: this.skills.contextBlock(this.currentModel()?.maxContextLimit),
             extra: this.startupContext.splice(0).map((t) => `<system-reminder>\nSessionStart hook:\n${t}\n</system-reminder>`),
+            todos: this.todos,
           });
           await this.push({ id: `context-${turnId}`, role: "user", visibility: "llm_only", content: ctx.map((t) => ({ type: "text", text: t })) });
         }
@@ -619,7 +802,7 @@ export class Session {
         for (const n of [...this.deferred.takeNotices(), this.deferred.announcement()]) {
           if (n) await this.push({ id: `deferred-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: n }] });
         }
-        await this.push({ id: turnId, role: "user", ...(visibility ? { visibility } : {}), content: [{ type: "text", text: prompt }] });
+        await this.push({ id: turnId, role: "user", ...(visibility ? { visibility } : {}), content: entry?.content ?? [{ type: "text", text: prompt }] });
       }
 
       const repeat = new RepeatTracker();
@@ -662,6 +845,27 @@ export class Session {
           continue;
         }
         emptyStreak = 0;
+        if (!calls.length && this.format && !this.structured) {
+          // The caller wants a structured answer: remind once, then end the turn with the matching reason.
+          if (!structuredNudged && !signal.aborted) {
+            structuredNudged = true;
+            await this.push({ id: `nudge-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: "<system-reminder>The answer must be given by calling the StructuredOutput tool. Call it now with your final answer.</system-reminder>" }] });
+            continue;
+          }
+          reason = this.invalidStructured ? "structured_output_invalid" : "structured_output_missing";
+          this.notify({
+            type: "error", errorType: "SessionError", timestamp: new Date().toISOString(),
+            message: this.invalidStructured ? "The model never gave a structured answer that fits the schema." : "The model ended without giving the structured answer.",
+            error: { name: reason, message: reason },
+          });
+          break;
+        }
+        if (!calls.length && !todoNudged && !visibility && !signal.aborted && this.todoNudgeWanted()) {
+          // A todo list left incomplete at the end of the turn: one nudge (spec 4.2).
+          todoNudged = true;
+          await this.push({ id: `todo-suggest-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: todoNudgeText(this.todos) }] });
+          continue;
+        }
         if (!calls.length) {
           // Stop hooks (spec 5.6): may send the agent back to work (no cap on continuations, decision 4), end the turn, or abort.
           if (this.hooks?.hasHooks() && !this.deps.isChild && !signal.aborted && !visibility) {
@@ -691,6 +895,18 @@ export class Session {
         if (n === g.repeatNudgeAt) extra.push({ type: "text", text: guardText("guard_repeat_nudge", vars) });
         await this.push({ id: crypto.randomUUID(), role: "user", content: [...outcome.results, ...extra] });
         if (outcome.stop) { reason = outcome.stop; break; }
+        if (this.format && this.structured) break;
+        if (this.format && this.invalidStructured >= 3) {
+          reason = "structured_output_invalid";
+          this.notify({ type: "error", errorType: "SessionError", timestamp: new Date().toISOString(), message: "The structured answer did not fit the schema after 3 tries.", error: { name: reason, message: reason } });
+          break;
+        }
+        // Steering (queuePlacement end_of_loop): delivered right after the tool results (spec 13.3).
+        for (const s of this.steer.splice(0)) {
+          const m: Message = { id: s.messageId, role: "user", content: s.content ?? [{ type: "text", text: s.text }] };
+          await this.push(m);
+          this.notify({ type: "create_message", message: m });
+        }
         if (n >= g.repeatStopAt) {
           await this.guardStop("guard_repeat_stop_user", "guard_repeat_stop_transcript", vars);
           break;
@@ -727,12 +943,18 @@ export class Session {
 
     const durationMs = Date.now() - started;
     this.activeTimeMs += durationMs;
-    this.lastTurn = { reason, text: lastText };
+    const answer = this.structured as { value: unknown } | undefined;
+    this.lastStructured = answer?.value;
+    this.lastTurn = { reason, text: lastText, ...(answer ? { structured: answer.value } : {}) };
+    this.format = null;
+    this.structured = undefined;
     this.notifyUsage();
-    await this.deps.persistence.appendTurnOutcome({ turnId, reason, resultKind: lastText ? "text" : null });
+    await this.deps.persistence.appendTurnOutcome({ turnId, reason, resultKind: this.lastTurn.structured !== undefined ? "structured" : lastText ? "text" : null });
     await this.persistSettings();
+    if (reason === "completed" && this.interactive && !this.deps.isChild && !visibility) void this.hooks?.notification("idle_prompt", "The agent finished its turn and is waiting for you.", turnId);
     this.notify({
       type: "agent_turn_completed", reason, turnId, tokenUsage: turnUsage, cumulativeTokenUsage: this.inclusiveUsage(), durationMs,
+      ...(this.lastTurn.structured !== undefined ? { structuredOutput: this.lastTurn.structured } : {}),
       ...(this.children.size ? { childTokenUsage: this.turnChildUsage, cumulativeChildTokenUsage: this.cumulativeChildUsage() } : {}),
     });
     this.setState("idle");
@@ -805,6 +1027,7 @@ export class Session {
     this.setState("thinking");
     let partial = new Map<number, { id: string; name: string; json: string }>();
     let textBlocks = new Set<number>();
+    let thinkingBlocks = new Set<number>();
     let streamText = "";
     let checked = 0;
     let done: any;
@@ -812,7 +1035,7 @@ export class Session {
       strategy: "non_interactive", baseDelayMs: this.deps.retryBaseDelayMs, passEmpty: true,
       onRetry: (attempt: number, why: string) => {
         // A retried stream starts over: what the failed attempt streamed is discarded (spec 4.2).
-        partial = new Map(); textBlocks = new Set(); streamText = ""; checked = 0;
+        partial = new Map(); textBlocks = new Set(); thinkingBlocks = new Set(); streamText = ""; checked = 0;
         this.notify({ type: "llm_retry", attempt, reason: why });
       },
     })) {
@@ -830,6 +1053,7 @@ export class Session {
           break;
         }
         case "thinking_delta":
+          thinkingBlocks.add(ev.index);
           this.notify({ type: "thinking_text_delta", messageId, blockIndex: ev.index, textDelta: ev.text });
           break;
         case "tool_use_start":
@@ -849,6 +1073,7 @@ export class Session {
         }
         case "block_stop":
           if (textBlocks.has(ev.index)) this.notify({ type: "assistant_text_complete", messageId, blockIndex: ev.index });
+          if (thinkingBlocks.has(ev.index)) this.notify({ type: "thinking_text_complete", messageId, blockIndex: ev.index });
           break;
         case "message_done":
           done = ev;
@@ -865,9 +1090,26 @@ export class Session {
 
   /** Tokens at which automatic compaction starts: compactionTokenLimit, else the model's window minus the summary reserve. */
   compactionThreshold(): number {
+    const m = this.currentModel();
+    const per = this.deps.compactionTokenLimitPerModel;
+    const own = m && per ? (per[m.id] ?? per[m.model]) : undefined;
+    if (typeof own === "number" && own > 0) return own;
+    if (this.compactionLimit) return this.compactionLimit;
     if (this.deps.compactionTokenLimit) return this.deps.compactionTokenLimit;
-    return (this.currentModel()?.maxContextLimit ?? 200_000) - this.compactionCfg().reserveTokens;
+    // The summary reserve grows by the size of what compaction carries over: the todo list (spec 4.4).
+    return (m?.maxContextLimit ?? 200_000) - this.compactionCfg().reserveTokens - this.carriedTokens();
   }
+
+  /** Estimated tokens of the session state that compaction carries into the next context (the todo list). */
+  carriedTokens(): number { return this.todos.length ? estimateTokens(renderTodoList(this.todos).length) : 0; }
+
+  /** update_session_settings compactionTokenLimit / compactionThresholdCheckEnabled. */
+  setCompaction(p: { limit?: number | null; checkEnabled?: boolean }) {
+    if (p.limit !== undefined) this.compactionLimit = p.limit && p.limit > 0 ? p.limit : undefined;
+    if (p.checkEnabled !== undefined) this.checkEnabled = p.checkEnabled;
+  }
+  private compactionLimit?: number;
+  private checkEnabled?: boolean;
 
   /** Size of the next request: the last reported call plus what was added since; else an estimate of the whole prefix. */
   estimateContextTokens(): number {
@@ -880,7 +1122,7 @@ export class Session {
   }
 
   private async maybeAutoCompact(signal: AbortSignal): Promise<void> {
-    if (this.deps.compactionThresholdCheckEnabled === false) return;
+    if ((this.checkEnabled ?? this.deps.compactionThresholdCheckEnabled) === false) return;
     if (this.compactedOnce && this.callsSinceCompaction < this.guards().minCallsBetweenCompactions) return;
     if (this.estimateContextTokens() < this.compactionThreshold()) return;
     await this.compact({ reason: "automatic", signal });
@@ -984,7 +1226,10 @@ export class Session {
   }
 
   /** The context blocks to re-inject after a compaction: the skills block is rebuilt so skills found during the session are in it. */
-  private refreshedContext(blocks: string[]): string[] {
+  private refreshedContext(inBlocks: string[]): string[] {
+    // The todo list is carried: the todos block is rebuilt from the current list.
+    const todoAt = inBlocks.findIndex((b) => b.startsWith("<todos>"));
+    const blocks = todoAt >= 0 ? inBlocks.map((b, i) => (i === todoAt ? todosBlock(this.todos) : b)) : inBlocks;
     const fresh = this.skills.contextBlock(this.currentModel()?.maxContextLimit);
     const at = blocks.findIndex((b) => b.startsWith("<skills>"));
     if (at >= 0) return fresh ? blocks.map((b, i) => (i === at ? fresh : b)) : blocks.filter((_, i) => i !== at);
@@ -994,9 +1239,12 @@ export class Session {
   }
 
   private buildInput(model: ModelConfig, signal?: AbortSignal) {
+    const prof = resolveProfile(model, this.deps.profileSettings);
     return {
       model, sessionId: this.id, mode: this.effectiveMode(), tools: this.tools(), messages: this.messages,
-      reasoningEffort: this.activeEffort(), signal, extraSystem: this.deps.extraSystem,
+      reasoningEffort: this.activeEffort(), signal,
+      extraSystem: [...(prof.promptVariant ? [prof.promptVariant] : []), ...(this.deps.extraSystem ?? [])],
+      systemPrompt: this.deps.systemPrompt, toolDescriptions: prof.toolDescriptionOverrides, cacheStrategy: prof.cache.strategy,
     };
   }
 
@@ -1041,16 +1289,22 @@ export class Session {
   private async runTools(calls: ToolUseBlock[], signal: AbortSignal): Promise<{ results: ToolResultBlock[]; stop?: TurnReason; extras: string[] }> {
     const results: ToolResultBlock[] = [];
     const extras: string[] = [];
-    let stop: TurnReason | undefined;
     const tools = new Map(this.tools().map((t) => [t.name, t]));
+    // Several calls that need approval get one prompt for the whole batch (spec 5.5.5).
+    const batch = await this.askBatch(calls, tools);
+    let stop: TurnReason | undefined = batch?.cancelled ? "permission_rejected" : undefined;
     for (const call of calls) {
       const phase = (p: string) => this.notify({ type: "tool_execution_phase_changed", toolUseId: call.id, toolName: call.name, phase: p });
-      const finish = (content: string, isError: boolean, executed: boolean) => {
-        results.push({ type: "tool_result", tool_use_id: call.id, content, ...(isError ? { is_error: true } : {}) });
-        this.notify({ type: "tool_result", toolUseId: call.id, messageId: `tool-result-${call.id}`, content, isError });
+      const finish = (content: string, isError: boolean, executed: boolean, images?: ImageBlock[]) => {
+        results.push({ type: "tool_result", tool_use_id: call.id, content, ...(isError ? { is_error: true } : {}), ...(images?.length ? { images } : {}) });
+        this.notify({ type: "tool_result", toolUseId: call.id, messageId: `tool-result-${call.id}`, content, isError, ...(images?.length ? { images } : {}) });
         phase(executed ? "settled_after_execution" : "settled_without_execution");
       };
       phase("queued");
+      if (batch?.cancelled && batch.ids.has(call.id)) {
+        finish(`The user rejected this tool call and stopped the turn.${batch.comment ? ` The user said: ${batch.comment}` : ""}`, true, false);
+        continue;
+      }
       if (stop || signal.aborted) { finish("Not run: the turn was stopped before this call.", true, false); continue; }
       const tool = tools.get(call.name);
       if (!tool) { finish(`Unknown tool: ${call.name}. Use one of: ${[...tools.keys()].join(", ")}.`, true, false); continue; }
@@ -1098,10 +1352,12 @@ export class Session {
       let d = this.gate(call.name, input, unrated);
       if (skipAsk && (d.decision === "ask" || d.decision === "missing_risk")) d = { decision: "allow", reason: "allowed by a hook" };
       if (d.decision === "block" || d.decision === "missing_risk") { finish(d.message, true, false); continue; }
-      if (d.decision === "ask") {
-        const verdict = await this.askPermission(call, d);
-        if (verdict === "rejected") { finish("The user rejected this tool call. Do not retry it; change your approach or ask the user.", true, false); continue; }
-        if (verdict === "cancel") { finish("The user rejected this tool call and stopped the turn.", true, false); stop = "permission_rejected"; continue; }
+      if (d.decision === "ask" && !batch?.approved.has(call.id)) {
+        const asked = await this.askPermission(call, d);
+        const verdict = asked.verdict;
+        const said = asked.comment ? ` The user said: ${asked.comment}` : "";
+        if (verdict === "rejected") { finish(`The user rejected this tool call. Do not retry it; change your approach or ask the user.${said}`, true, false); continue; }
+        if (verdict === "cancel") { finish(`The user rejected this tool call and stopped the turn.${said}`, true, false); stop = "permission_rejected"; continue; }
         if (verdict === "no_approver") {
           finish("This call needs approval, and this run cannot ask for it.", true, false);
           stop = "no_approver_available";
@@ -1115,16 +1371,20 @@ export class Session {
       phase("executing");
       this.setState("executing_tool");
       let out: ToolOutput | undefined;
+      // Long tools tell the client they are alive (tool_execution_heartbeat, spec 3.1.7).
+      const beat = setInterval(() => this.notify({ type: "tool_execution_heartbeat", toolUseId: call.id, toolName: call.name }), this.deps.heartbeatMs ?? 10_000);
       try {
         this.toolCalls++;
         out = await tool.run(input, {
-          cwd: this.cwd, sessionId: this.id, readFiles: this.readFiles, signal, toolUseId: call.id, jobs: this.jobs, env: this.hookEnv,
+          ...this.toolContext(signal), toolUseId: call.id, jobs: this.jobs,
           onProgress: (p) => this.notify({ type: "tool_progress_update", toolUseId: call.id, toolName: call.name, update: { ...p, timestamp: new Date().toISOString() } }),
         });
-        finish(out.content, !!out.isError, true);
+        finish(out.content, !!out.isError, true, out.images);
         if (!out.isError) this.noteTouched(call.name, input);
       } catch (e) {
         finish(`Tool failed: ${(e as Error)?.message ?? e}`, true, true);
+      } finally {
+        clearInterval(beat);
       }
       // PostToolUse runs once per call, so once for an outer Script (decision 3); skipped when the user cancelled.
       if (out && this.hooks?.hasHooks() && !signal.aborted) {
@@ -1272,8 +1532,10 @@ export class Session {
     if (d.decision === "block") return refuse(d.message, "PermissionDenied");
     if (d.decision === "missing_risk") return refuse(d.message);
     if (d.decision === "ask") {
-      const verdict = await this.askPermission(use, d);
-      if (verdict === "rejected") return refuse("PermissionDenied: the user rejected this tool call. Do not retry it; change your approach or ask the user.", "PermissionDenied");
+      const asked = await this.askPermission(use, d);
+      const verdict = asked.verdict;
+      const said = asked.comment ? ` The user said: ${asked.comment}` : "";
+      if (verdict === "rejected") return refuse(`PermissionDenied: the user rejected this tool call. Do not retry it; change your approach or ask the user.${said}`, "PermissionDenied");
       if (verdict === "cancel" || verdict === "no_approver") {
         if (meta.foreground && this.abort && !this.abort.signal.aborted) {
           this.pendingStop = verdict === "cancel" ? "permission_rejected" : "no_approver_available";
@@ -1286,13 +1548,13 @@ export class Session {
           this.abort.abort();
         }
         return refuse(verdict === "cancel"
-          ? "PermissionDenied: the user rejected this tool call and stopped the turn."
+          ? `PermissionDenied: the user rejected this tool call and stopped the turn.${said}`
           : "PermissionDenied: this call needs approval, and this run cannot ask for it.", "PermissionDenied");
       }
     }
     try {
       this.toolCalls++;
-      const out = await tool.run(input, { cwd: this.cwd, sessionId: this.id, readFiles: this.readFiles, signal: meta.signal, toolUseId: id, env: this.hookEnv });
+      const out = await tool.run(input, { ...this.toolContext(meta.signal), toolUseId: id });
       await finish(out.content, !!out.isError);
       if (!out.isError) this.noteTouched(name, input);
       return out;
@@ -1323,7 +1585,7 @@ export class Session {
   }
 
   /** Returns "approved", "rejected" (model continues), "cancel" (turn stops) or "no_approver". */
-  private async askPermission(call: ToolUseBlock, d: Extract<PermissionDecision, { decision: "ask" }>) {
+  private async askPermission(call: ToolUseBlock, d: Extract<PermissionDecision, { decision: "ask" }>): Promise<{ verdict: "approved" | "rejected" | "cancel" | "no_approver"; comment?: string }> {
     const r = await this.askRaw(call, d);
     if (r.verdict === "approved") {
       // "Always allow" for an MCP tool or a whole MCP server is saved in the user settings (spec 5.5.5).
@@ -1331,7 +1593,49 @@ export class Session {
       if (info && r.option === "proceed_always_tools") rememberMcp("tool", info, String(d.details.impactLevel ?? "high"));
       if (info && r.option === "proceed_always_server") rememberMcp("server", info);
     }
-    return r.verdict;
+    const comment = r.answer?.comment?.trim();
+    return { verdict: r.verdict, ...(comment ? { comment } : {}) };
+  }
+
+  /** What a tool run sees. */
+  private toolContext(signal: AbortSignal) {
+    return {
+      cwd: this.cwd, sessionId: this.id, readFiles: this.readFiles, signal, env: this.hookEnv,
+      readLineNumbers: this.profile().readLineNumbers, imagesSupported: this.currentModel()?.noImageSupport !== true, session: this.svc,
+    };
+  }
+
+  /**
+   * One prompt for a batch of calls that each need approval: "Yes, allow all" / "No, cancel all" (spec 5.5.5).
+   * Only when no hooks can rewrite the calls and at least two calls ask; MCP and spec-mode prompts keep their own options.
+   */
+  private async askBatch(calls: ToolUseBlock[], tools: Map<string, Tool>): Promise<{ ids: Set<string>; approved: Set<string>; cancelled: boolean; comment?: string } | undefined> {
+    if (calls.length < 2 || !this.host.requestPermission || this.deps.autoRejectPermissionRequests || this.hooks?.hasHooks()) return undefined;
+    const asks: { call: ToolUseBlock; d: Extract<PermissionDecision, { decision: "ask" }> }[] = [];
+    for (const call of calls) {
+      if (!tools.has(call.name) || call.name === "ExitSpecMode") continue;
+      const d = this.gate(call.name, call.input);
+      if (d.decision === "ask" && !d.options) asks.push({ call, d });
+    }
+    if (asks.length < 2) return undefined;
+    const ids = new Set(asks.map((a) => a.call.id));
+    const requestId = crypto.randomUUID();
+    const options = [{ label: "Yes, allow all", value: "proceed_once" }, { label: "No, cancel all", value: "cancel" }];
+    this.setState("waiting_for_tool_confirmation");
+    void this.hooks?.notification("permission_prompt", `${asks.length} tool calls need your approval`);
+    const params = {
+      requestId,
+      toolUses: asks.map(({ call, d }) => ({
+        toolUse: { type: "tool_use", id: call.id, name: call.name, input: call.input }, confirmationType: d.confirmationType,
+        details: { ...d.details, ...(d.reason ? { riskLevelReason: d.details.riskLevelReason ?? d.reason } : {}) },
+      })),
+      options,
+    };
+    const ans = await this.prompt<PermissionAnswer>("permission", requestId, params, () => this.host.requestPermission!(params), { selectedOption: "cancel" });
+    const ok = ans?.selectedOption === "proceed_once";
+    this.notify({ type: "permission_resolved", requestId, toolUseIds: [...ids], selectedOption: ok ? "proceed_once" : "cancel" });
+    const comment = ans?.comment?.trim();
+    return { ids, approved: ok ? ids : new Set(), cancelled: !ok, ...(comment ? { comment } : {}) };
   }
 
   /** Asks the client. `option` is the chosen value, `answer` the client's whole answer (comment, edited spec). */
@@ -1339,7 +1643,8 @@ export class Session {
     verdict: "approved" | "rejected" | "cancel" | "no_approver"; option?: string; answer?: PermissionAnswer;
   }> {
     if (this.deps.autoRejectPermissionRequests) return { verdict: "rejected" };
-    if (!this.host.requestPermission) return { verdict: "no_approver" };
+    const send = this.host.requestPermission;
+    if (!send) return { verdict: "no_approver" };
     let options = d.options;
     if (!options) {
       options = [{ label: "Yes, allow once", value: "proceed_once" }];
@@ -1349,22 +1654,102 @@ export class Session {
     this.setState("waiting_for_tool_confirmation");
     const requestId = crypto.randomUUID();
     void this.hooks?.notification("permission_prompt", `${call.name} needs your approval`);
-    let ans: PermissionAnswer;
-    try {
-      ans = await this.host.requestPermission({
-        requestId,
-        toolUses: [{ toolUse: { type: "tool_use", id: call.id, name: call.name, input: call.input }, confirmationType: d.confirmationType, details: { ...d.details, ...(d.reason && d.confirmationType !== "exit_spec_mode" ? { riskLevelReason: d.details.riskLevelReason ?? d.reason } : {}) } }],
-        options,
-      });
-    } catch {
-      ans = { selectedOption: "cancel" };
-    }
+    const params = {
+      requestId,
+      toolUses: [{ toolUse: { type: "tool_use", id: call.id, name: call.name, input: call.input }, confirmationType: d.confirmationType, details: { ...d.details, ...(d.reason && d.confirmationType !== "exit_spec_mode" ? { riskLevelReason: d.details.riskLevelReason ?? d.reason } : {}) } }],
+      options,
+    };
+    const ans = await this.prompt<PermissionAnswer>("permission", requestId, params, () => send(params), { selectedOption: "cancel" });
     const valid = options.some((o) => o.value === ans?.selectedOption) ? ans.selectedOption : "cancel";
     this.notify({ type: "permission_resolved", requestId, toolUseIds: [call.id], selectedOption: valid });
     if (valid === "proceed_always" && d.alwaysLevel && AUTONOMY_RANK[d.alwaysLevel] > AUTONOMY_RANK[this.settings.autonomyLevel]) {
       this.updateSettings({ autonomyLevel: d.alwaysLevel });
     }
     return { verdict: valid === "cancel" ? "cancel" : "approved", option: valid, answer: ans };
+  }
+
+  // ---------- todos, questions, structured output, titles ----------
+
+  getTodos(): TodoItem[] { return [...this.todos]; }
+
+  private async setTodos(todos: TodoItem[]) {
+    this.todos = todos;
+    await this.deps.persistence.appendTodoState?.(todos, this.messages.length);
+    this.notify({ type: "todo_state_changed", todos });
+  }
+
+  /** The todo list has open items and the model can still update it. */
+  private todoNudgeWanted(): boolean {
+    return this.interactive && !this.deps.isChild && this.todos.some((t) => t.status !== "completed");
+  }
+
+  /** AskUser: sends rigwell.ask_user to the client and waits; with no client the answer is "cancelled". */
+  private async askUser(p: { questions: AskQuestion[] }, toolCallId: string): Promise<AskUserAnswer> {
+    const send = this.host.requestAskUser;
+    if (!send || this.deps.autoRejectPermissionRequests) return { cancelled: true, answers: [] };
+    const requestId = crypto.randomUUID();
+    const params = { requestId, toolCallId, questions: p.questions };
+    this.setState("waiting_for_tool_confirmation");
+    void this.hooks?.notification("elicitation_dialog", p.questions[0]?.question ?? "The agent has a question for you");
+    const raw = await this.prompt<AskUserAnswer>("ask_user", requestId, params, () => send(params), { cancelled: true, answers: [] });
+    this.setState("executing_tool");
+    const answers = Array.isArray(raw?.answers)
+      ? raw.answers.filter((a) => a && typeof a.answer === "string").map((a) => ({
+          index: Number(a.index), question: typeof a.question === "string" ? a.question : p.questions.find((q) => q.index === a.index)?.question ?? "", answer: a.answer,
+        }))
+      : [];
+    return { ...(raw?.cancelled ? { cancelled: true } : {}), answers };
+  }
+
+  private setStructured(value: unknown): { ok: true } | { ok: false; error: string } {
+    const format = this.format;
+    if (!format) return { ok: false, error: "No structured answer is wanted right now." };
+    const errs = validate(value, format.schema);
+    if (errs.length) {
+      this.invalidStructured++;
+      return { ok: false, error: `The answer does not fit the required schema:\n${errs.slice(0, 10).map((e) => `- ${e}`).join("\n")}\nFix these and call StructuredOutput again.` };
+    }
+    this.structured = { value };
+    return { ok: true };
+  }
+
+  get sessionTitle() { return this.title.value; }
+  get titleManuallySet() { return this.title.manual; }
+
+  /** rename_session (manual) or the generated title (auto). */
+  async setTitle(title: string, manual: boolean) {
+    this.title = { value: title, manual, asked: true };
+    await this.deps.persistence.setTitle?.(title, manual);
+    this.notify({ type: "session_title_updated", title, updateType: manual ? "manual" : "auto" });
+  }
+
+  private titleWanted(): boolean {
+    return this.deps.autoTitle !== false && !process.env.RIGWELL_NO_AUTO_TITLE && !this.title.manual && !this.title.asked && this.interactive && !this.deps.isChild;
+  }
+
+  /**
+   * A small side request after the first user message: no tools, a one-line title (spec 6.4 idea). max_tokens is
+   * 32 plus the text headroom. Skipped when the title was set by hand; failures are ignored.
+   */
+  private async generateTitle(firstMessage: string) {
+    this.title.asked = true;
+    const model = this.compactionModel();
+    try {
+      const cfg = this.compactionCfg();
+      const max = Math.min(32 + cfg.textHeadroom, model.maxOutputTokens ?? Infinity);
+      const req = {
+        model, sessionId: this.id, tools: [], reasoningEffort: "off" as const, maxOutputTokens: max,
+        system: ["Write a title for a coding session from the user's first message. Answer with the title only: at most six words, no quotes, no trailing period."],
+        messages: [{ id: "title-request", role: "user" as const, content: [{ type: "text" as const, text: firstMessage.slice(0, 2000) }] }],
+      };
+      const { text, usage } = await collectSummary(this.deps.streamWithRetry(this.deps.createAdapter(model), req, { strategy: "no_retry" }));
+      if (usage) { this.tokenUsage = addUsage(this.tokenUsage, usage); this.notifyUsage(); }
+      const clean = text.split("\n")[0]!.replace(/^["'`#*\s]+|["'`.*\s]+$/g, "").slice(0, 80);
+      if (!clean || this.title.manual) return;
+      await this.setTitle(clean, false);
+    } catch (e) {
+      this.deps.log?.(`[title] skipped: ${(e as Error)?.message ?? e}`);
+    }
   }
 
   // ---------- usage, MCP ----------
@@ -1453,7 +1838,8 @@ export class Session {
     if (!sub) return { content: "Task is not available in this session.", isError: true };
     const parent: ParentContext = {
       sessionId: this.id, rootSessionId: sub.rootSessionId, depth: sub.depth, cwd: this.cwd,
-      modelId: this.currentModel()?.id ?? this.activeModelId(), reasoningEffort: this.activeEffort(), autonomy: this.settings.autonomyLevel,
+      modelId: this.subagentModel() ?? this.currentModel()?.id ?? this.activeModelId(),
+      reasoningEffort: this.deps.subagentModelSettings?.reasoningEffort ?? this.activeEffort(), autonomy: this.settings.autonomyLevel,
     };
     const toolUseId = ctx.toolUseId ?? crypto.randomUUID();
     const ac = new AbortController();
@@ -1481,6 +1867,12 @@ export class Session {
       if (e instanceof TaskError) return { content: e.message, isError: true };
       throw e;
     }
+  }
+
+  /** Settings `subagentModelSettings.model`: the model subagents without a model of their own use, when it exists. */
+  private subagentModel(): string | undefined {
+    const m = this.deps.subagentModelSettings?.model;
+    return m && this.deps.resolveModel(m) ? m : undefined;
   }
 
   /** A subagent ended: SubagentStop hooks fire (results ignored); the report is what the parent gets. */
@@ -1563,3 +1955,10 @@ function hookContext(event: string, tool: string, text: string): string {
 }
 
 export const fileName = (p: string) => basename(p);
+
+/** The nudge when a turn ends with open todos (spec 4.2). */
+export function todoNudgeText(todos: TodoItem[]): string {
+  const open = todos.filter((t) => t.status !== "completed");
+  return `<system-reminder>\nYour todo list still has ${open.length} open item${open.length === 1 ? "" : "s"}:\n${renderTodoList(open)}\n` +
+    "Finish them now, or update the list with TodoWrite (mark done items completed, drop what no longer applies). If you are stopping on purpose, say why in your answer.\n</system-reminder>";
+}

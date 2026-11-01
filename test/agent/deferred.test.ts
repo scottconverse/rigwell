@@ -100,13 +100,13 @@ describe("deferred tools in a session", () => {
     expect(JSON.stringify(s.requests[2]!.messages.at(-1))).toContain("rejected this tool call");
   });
 
-  test("script_only: tools.ToolSearch and the loaded tool in the same Script; the tools array is just Script and script_job", async () => {
+  test("script_only: tools.ToolSearch and the loaded tool in the same Script; the tools array is Script, script_job and the job tools", async () => {
     const code = "const r = await tools.ToolSearch({ query: 'weather' });\nprint(r.loaded.map(x => x.name).join());\nprint(JSON.stringify(await tools.weather_lookup({ city: 'Rome' })));";
     const s = makeStubSession((req, n) => (n === 0 ? call("Script", { script: code }, "t1") : text("done")), { toolExecutionModeOverride: "script_only" });
     s.session.registerDeferredTool(weather);
     s.session.addUserMessage("weather in Rome");
     await s.session.settled();
-    expect(s.requests[0]!.tools.map((t) => t.name).sort()).toEqual(["Script", "script_job"]);
+    expect(s.requests[0]!.tools.map((t) => t.name).sort()).toEqual(["Script", "TaskOutput", "TaskStop", "script_job"]);
     const result = JSON.stringify(s.requests[1]!.messages.at(-1));
     expect(result).toContain("weather_lookup");
     expect(result).toContain("sunny in Rome");

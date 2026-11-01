@@ -5,7 +5,7 @@ import type {
   ContentBlock, Message, ModelConfig, ModelRequest, ReasoningEffort, Tool, ToolExecutionMode,
 } from "../core/types.ts";
 import { CacheMonitor } from "./cache-monitor.ts";
-import { systemBlocks } from "./prompts.ts";
+import { systemBlocks, systemChoice } from "./prompts.ts";
 
 export const DEFAULT_MAX_OUTPUT_TOKENS = 32_000;
 
@@ -22,13 +22,20 @@ export interface BuildInput {
   signal?: AbortSignal;
   /** Extra system blocks after the base ones (a custom subagent's own prompt). */
   extraSystem?: string[];
+  /** initialize_session systemPrompt: a string replaces the base prompt; a preset keeps it and appends text. */
+  systemPrompt?: string | { type: "preset"; preset?: string; append?: string };
+  /** Model profile: replacement tool descriptions by tool name (spec 4.1). */
+  toolDescriptions?: Record<string, string>;
+  /** Model profile: "none" sends no cache markers. */
+  cacheStrategy?: ModelRequest["cacheStrategy"];
 }
 
 /** Messages the model sees, in order. Encrypted reasoning is dropped when the provider changed. */
-export function modelMessages(messages: Message[], provider: string): Message[] {
+export function modelMessages(messages: Message[], provider: string, noImages = false): Message[] {
   return messages
     .filter((m) => m.visibility !== "user_only")
     .map((m) => {
+      if (noImages) m = withoutImages(m);
       let out = m.openaiReasoning && m.apiProvider !== provider ? { ...m, openaiReasoning: undefined } : m;
       // A stored `is_error: false` (the transcript writes it) must serialize like the in-memory form that has no field,
       // or a resumed session would not extend the request it sent before it was saved.
@@ -37,6 +44,25 @@ export function modelMessages(messages: Message[], provider: string): Message[] 
       }
       return out;
     });
+}
+
+const NO_IMAGE_NOTE = "[An image was attached here, but the current model cannot look at images.]";
+
+/** Replaces image blocks (user attachments and tool result images) with a short text note. */
+function withoutImages(m: Message): Message {
+  const has = m.content.some((b) => b.type === "image" || (b.type === "tool_result" && b.images?.length));
+  if (!has) return m;
+  return {
+    ...m,
+    content: m.content.map((b): ContentBlock => {
+      if (b.type === "image") return { type: "text", text: NO_IMAGE_NOTE };
+      if (b.type === "tool_result" && b.images?.length) {
+        const { images: _i, ...rest } = b;
+        return { ...rest, content: `${b.content}\n${NO_IMAGE_NOTE}` };
+      }
+      return b;
+    }),
+  };
 }
 
 const isText = (b: ContentBlock): b is Extract<ContentBlock, { type: "text" }> => b.type === "text";
@@ -73,14 +99,19 @@ export class RequestBuilder {
 
   /** The next main-chain request. Registers it with the cache monitor. */
   build(i: BuildInput): ModelRequest {
-    const req = this.assemble(i, markContextBreakpoints(modelMessages(i.messages, i.model.provider)));
+    const req = this.assemble(i, this.history(i));
     this.monitor.observe(req);
     return req;
   }
 
   /** The request as it would be built now, without registering it with the monitor (context stats). */
   preview(i: BuildInput): ModelRequest {
-    return this.assemble(i, markContextBreakpoints(modelMessages(i.messages, i.model.provider)));
+    return this.assemble(i, this.history(i));
+  }
+
+  private history(i: BuildInput): Message[] {
+    const msgs = modelMessages(i.messages, i.model.provider, i.model.noImageSupport === true);
+    return i.cacheStrategy === "none" ? msgs : markContextBreakpoints(msgs);
   }
 
   /**
@@ -89,7 +120,7 @@ export class RequestBuilder {
    * history block gets the breakpoint so the real next request finds the prefix. Not part of the monitored chain.
    */
   buildWarmup(i: BuildInput): ModelRequest {
-    let msgs = markContextBreakpoints(modelMessages(i.messages, i.model.provider));
+    let msgs = this.history(i);
     if (msgs.at(-1)?.role === "assistant") {
       const last = msgs.at(-1)!;
       const k = last.content.map((b) => b.type).lastIndexOf("text");
@@ -103,9 +134,9 @@ export class RequestBuilder {
 
   private assemble(i: BuildInput, messages: Message[]): ModelRequest {
     return {
-      model: i.model, sessionId: i.sessionId, system: [...systemBlocks(i.mode), ...(i.extraSystem ?? [])],
-      tools: i.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
-      messages,
+      model: i.model, sessionId: i.sessionId, system: [...systemBlocks(i.mode, systemChoice(i.systemPrompt)), ...(i.extraSystem ?? [])],
+      tools: i.tools.map((t) => ({ name: t.name, description: i.toolDescriptions?.[t.name] ?? t.description, inputSchema: t.inputSchema })),
+      messages, ...(i.cacheStrategy ? { cacheStrategy: i.cacheStrategy } : {}),
       maxOutputTokens: i.maxOutputTokens ?? i.model.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
       reasoningEffort: i.reasoningEffort, signal: i.signal,
     };

@@ -24,9 +24,26 @@ export function decide(tool: string, input: Record<string, unknown>, ctx: Permis
   if (ctx.skipPermissions) return { decision: "allow", reason: "permissions skipped" };
   switch (tool) {
     case "Read":
+    case "LS":
     case "Grep":
     case "Glob":
       return { decision: "allow" };
+    // Session tools: they only read or change the session's own state (jobs, todos, questions, the answer).
+    case "TaskOutput":
+    case "TaskStop":
+    case "TodoWrite":
+    case "AskUser":
+    case "StructuredOutput":
+      return { decision: "allow" };
+    // Network: ask at Off, auto at Low and above (spec 5.5.4).
+    case "FetchUrl":
+      if (ctx.autonomy !== "off") return { decision: "allow" };
+      return {
+        decision: "ask", confirmationType: "fetch_url", details: { toolName: tool, url: str(input.url) ?? "", input },
+        impactLevel: "medium", alwaysLevel: "low", reason: "Fetches a web page",
+      };
+    case "ApplyPatch":
+      return decideApplyPatch(input, ctx);
     // Script and script_job themselves need no approval: each inner call is gated on its own (spec S8).
     case "Script":
     case "script_job":
@@ -55,6 +72,25 @@ export function decide(tool: string, input: Record<string, unknown>, ctx: Permis
     default:
       return { decision: "ask", confirmationType: "exec", details: { toolName: tool, input }, impactLevel: "high", alwaysLevel: null, reason: `Unknown tool: ${tool}` };
   }
+}
+
+function patchTargets(text: string): string[] {
+  return [...text.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)].map((m) => m[1]!.trim());
+}
+
+function decideApplyPatch(input: Record<string, unknown>, ctx: PermissionContext): PermissionDecision {
+  const patch = str(input.input) ?? "";
+  const targets = patchTargets(patch);
+  if (ctx.interactionMode === "spec" && !(targets.length && targets.every((t) => insideSpecs(t, ctx.cwd)))) {
+    return { decision: "block", message: SPEC_BLOCK };
+  }
+  if (ctx.autonomy !== "off") return { decision: "allow" };
+  const filePath = targets[0] ? path.resolve(ctx.cwd, targets[0]) : "";
+  return {
+    decision: "ask", confirmationType: "apply_patch",
+    details: { filePath, fileName: path.basename(filePath), filePaths: targets.map((t) => path.resolve(ctx.cwd, t)), patch },
+    impactLevel: "medium", alwaysLevel: "low",
+  };
 }
 
 function decideFileWrite(tool: "Edit" | "Create" | string, input: Record<string, unknown>, ctx: PermissionContext): PermissionDecision {

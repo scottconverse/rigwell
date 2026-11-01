@@ -11,16 +11,21 @@ export function mapInput(messages: Message[]): Record<string, unknown>[] {
   const items: Record<string, unknown>[] = [];
   for (const m of messages) {
     if (m.role === "user") {
-      let text: string[] = [];
+      let parts: Record<string, unknown>[] = [];
       const flush = () => {
-        if (text.length) items.push({ role: "user", content: text.map((t) => ({ type: "input_text", text: t })) });
-        text = [];
+        if (parts.length) items.push({ role: "user", content: parts });
+        parts = [];
       };
       for (const b of m.content) {
-        if (b.type === "text") text.push(b.text);
+        if (b.type === "text") parts.push({ type: "input_text", text: b.text });
+        else if (b.type === "image") parts.push({ type: "input_image", image_url: `data:${b.mediaType};base64,${b.data}` });
+        else if (b.type === "document") parts.push({ type: "input_file", filename: b.name ?? "document.pdf", file_data: `data:${b.mediaType};base64,${b.data}` });
         else if (b.type === "tool_result") {
           flush();
-          items.push({ type: "function_call_output", call_id: b.tool_use_id, output: b.content });
+          const output = b.images?.length
+            ? [...(b.content ? [{ type: "input_text", text: b.content }] : []), ...b.images.map((i) => ({ type: "input_image", image_url: `data:${i.mediaType};base64,${i.data}` }))]
+            : b.content;
+          items.push({ type: "function_call_output", call_id: b.tool_use_id, output });
         }
       }
       flush();

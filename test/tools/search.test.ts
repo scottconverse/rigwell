@@ -61,11 +61,12 @@ describe("Glob", () => {
 
 describe("registry", () => {
   test("order, gating, skipPermissions schema", () => {
-    expect(createCoreTools().map((t) => t.name)).toEqual(["Read", "Execute", "Grep", "Glob", "Edit", "Create"]);
-    expect(toolsForSession({ autonomy: "off", skipPermissions: false }).map((t) => t.name)).toEqual(["Read", "Execute", "Grep", "Glob"]);
-    expect(toolsForSession({ autonomy: "low", skipPermissions: false }).length).toBe(6);
+    expect(createCoreTools().map((t) => t.name)).toEqual(["Read", "LS", "Execute", "Grep", "Glob", "FetchUrl", "Edit", "Create"]);
+    expect(toolsForSession({ autonomy: "off", skipPermissions: false }).map((t) => t.name)).toEqual(["Read", "LS", "Execute", "Grep", "Glob", "FetchUrl"]);
+    expect(toolsForSession({ autonomy: "low", skipPermissions: false }).length).toBe(8);
+    expect(toolsForSession({ autonomy: "low", skipPermissions: false, fileEditProfile: "apply-patch" }).map((t) => t.name)).toEqual(["Read", "LS", "Execute", "Grep", "Glob", "FetchUrl", "ApplyPatch"]);
     const tools = toolsForSession({ autonomy: "off", skipPermissions: true });
-    expect(tools.length).toBe(6);
+    expect(tools.length).toBe(8);
     const ex = tools.find((t) => t.name === "Execute")!;
     expect(Object.keys((ex.inputSchema as any).properties)).not.toContain("riskLevel");
     expect((ex.inputSchema as any).required).toEqual(["command"]);

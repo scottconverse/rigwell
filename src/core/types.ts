@@ -22,9 +22,15 @@ export type ToolResultBlock = {
   tool_use_id: string;
   content: string;
   is_error?: boolean;
+  /** Images returned by the tool (Read of a PNG): sent to the model next to the text. */
+  images?: ImageBlock[];
   cache?: boolean;
 };
-export type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock;
+/** An image the model sees (user attachment or a Read result). `data` is base64. */
+export type ImageBlock = { type: "image"; mediaType: string; data: string; cache?: boolean };
+/** A file attachment: a base64 PDF the provider reads natively. */
+export type DocumentBlock = { type: "document"; mediaType: string; data: string; name?: string; cache?: boolean };
+export type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock | ImageBlock | DocumentBlock;
 
 /** OpenAI Responses reasoning item kept for replay (spec §4.6.2). */
 export interface OpenAIReasoning {
@@ -76,6 +82,12 @@ export interface ModelConfig {
   maxContextLimit?: number;
   reasoningEffort?: ReasoningEffort;
   noImageSupport?: boolean;
+  /** Per-model profile overrides (spec 4.1); see src/agent/profiles.ts. */
+  profile?: Record<string, unknown>;
+  /** OpenAI-compatible wire quirk: which field carries reasoning text (spec 4.1). */
+  reasoningField?: "reasoning" | "reasoning_content";
+  /** Which file-edit tools the model gets (spec 4.6.4). */
+  fileEditToolProfile?: "apply-patch" | "create-edit";
 }
 
 /** A tool as sent to the model. */
@@ -96,6 +108,8 @@ export interface ModelRequest {
   maxOutputTokens: number;
   reasoningEffort?: ReasoningEffort;
   signal?: AbortSignal;
+  /** Cache strategy from the model profile; "none" sends no cache markers. Absent: the provider's own. */
+  cacheStrategy?: "anthropic-breakpoints" | "openai-auto" | "none";
   /** Stream guards (spec §4.2). Absent: the adapter defaults (no idle limit, 10 minute hard limit). */
   limits?: { idleTimeoutMs?: number; hardLimitMs?: number };
 }
@@ -176,7 +190,26 @@ export interface ToolContext {
   jobs?: import("../jobs/manager.ts").JobsApi;
   /** Extra environment for spawned commands (SessionStart hook exports). */
   env?: Record<string, string>;
+  /** Model profile: Read numbers lines by default when "always" (spec 4.1, 5.4). */
+  readLineNumbers?: "always" | "on_request";
+  /** The model can see images (false: Read refuses an image). Default true. */
+  imagesSupported?: boolean;
+  /** Session services for the tools that need them (TaskOutput, TaskStop, TodoWrite, AskUser, StructuredOutput). */
+  session?: SessionServices;
 }
+
+/** What the session offers its own tools. */
+export interface SessionServices {
+  /** Background jobs of the session (Task, Execute, Script). */
+  jobs: import("../jobs/manager.ts").JobManager;
+  todos: { get(): TodoItem[]; set(todos: TodoItem[]): Promise<void> };
+  askUser(params: { questions: AskQuestion[] }, toolCallId: string): Promise<{ cancelled?: boolean; answers: { index: number; question: string; answer: string }[] }>;
+  /** Records the model's structured answer (StructuredOutput tool). */
+  setStructured(value: unknown): { ok: true } | { ok: false; error: string };
+}
+
+export interface TodoItem { id: string; content: string; status: "pending" | "in_progress" | "completed"; priority?: "low" | "medium" | "high" }
+export interface AskQuestion { index: number; topic: string; question: string; options: string[]; multiSelect?: boolean }
 
 export interface ToolOutput {
   /** Text returned to the model. */
@@ -184,6 +217,8 @@ export interface ToolOutput {
   isError?: boolean;
   /** Structured form of the result, for Script (spec S1). Absent: Script derives it from `content`. */
   data?: unknown;
+  /** Images to show the model with the text (Read of an image). */
+  images?: ImageBlock[];
 }
 
 export interface Tool {
@@ -210,7 +245,7 @@ export interface PermissionContext {
   cwd: string;
 }
 
-export type ConfirmationType = "edit" | "create" | "exec" | "mcp_tool" | "exit_spec_mode";
+export type ConfirmationType = "edit" | "create" | "exec" | "mcp_tool" | "exit_spec_mode" | "apply_patch" | "fetch_url";
 
 export type ToolExecutionMode = "direct_only" | "script_only";
 
