@@ -4,7 +4,7 @@ import type { DesktopSettings } from "../../main/settings.ts";
 import { DaemonConn, RpcFailure, bridge } from "./rpc.ts";
 import { Store } from "./session.ts";
 import { normalizeModel, type ModelRow } from "./models.ts";
-import { actionCall, normalizeSession, type SessionAction, type SessionRow } from "./sessions.ts";
+import { actionCall, normalizeSession, projectArchiveTargets, type SessionAction, type SessionRow } from "./sessions.ts";
 
 export type { ModelRow, SessionRow };
 
@@ -84,6 +84,15 @@ class AppModel extends Store<AppState> {
     const call = actionCall(action, row, value);
     await this.withSession(row.id, row.cwd, (c) => c.request(call.method, call.params));
     await this.refresh();
+  }
+
+  /** Sidebar row menu "Archive Project" (spec 14.3): archives every session of the project; returns how many. */
+  async archiveProject(cwd: string): Promise<number> {
+    const rows = projectArchiveTargets(this.state.sessions, cwd);
+    const call = actionCall("archive", { archivedAt: null });
+    for (const row of rows) await this.withSession(row.id, row.cwd, (c) => c.request(call.method, call.params));
+    await this.refresh();
+    return rows.length;
   }
 
   /** The folder trust prompt (spec §5.6) was accepted. */

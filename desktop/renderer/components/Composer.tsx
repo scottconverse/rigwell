@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { SessionController } from "../lib/session.ts";
 import { ConnectorsDialog, SkillsDialog } from "./Dialogs.tsx";
 import { ModelPicker } from "./ModelPicker.tsx";
+import { MAX_ATTACHMENTS, defaultText, readAttachment, sizeLabel, type Attachment } from "../lib/attachments.ts";
 
 const MODES = [
   { id: "auto", label: "Normal", hint: "do the work directly" },
@@ -30,7 +31,7 @@ export function Composer(props: {
   autoFocus?: boolean;
   disabledShortcuts?: string[];
   onChange(patch: ComposerSettings): void;
-  onSend(text: string): void;
+  onSend(text: string, attachments?: Attachment[]): void;
   onStop(): void;
   extra?: React.ReactNode;
   /** The live session, when there is one: enables the Connectors dialog. */
@@ -46,6 +47,10 @@ export function Composer(props: {
   const [help, setHelp] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
   const [dialog, setDialog] = useState<"connectors" | "skills" | null>(null);
+  const [atts, setAtts] = useState<Attachment[]>([]);
+  const [attachError, setAttachError] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
   const lastEsc = useRef(0);
   const ta = useRef<HTMLTextAreaElement>(null);
   const off = (id: string) => props.disabledShortcuts?.includes(id);
@@ -55,7 +60,34 @@ export function Composer(props: {
   useEffect(() => { const el = ta.current; if (el) { el.style.height = "auto"; el.style.height = Math.min(220, el.scrollHeight) + "px"; } }, [text]);
 
   const cycle = (list: string[], cur: string | undefined) => list[(Math.max(0, list.indexOf(cur ?? "")) + 1) % list.length];
-  const send = () => { const t = text.trim(); if (!t || props.disabled) return; props.onSend(t); setText(""); };
+  const send = () => {
+    const t = text.trim();
+    if ((!t && !atts.length) || props.disabled) return;
+    props.onSend(t || defaultText(atts), atts.length ? atts : undefined);
+    setText(""); setAtts([]); setAttachError("");
+  };
+
+  /** Picked, pasted or dropped files (spec 14.3). Unsupported or oversized ones are reported, the rest are kept. */
+  const attach = async (files: ArrayLike<File>) => {
+    const errors: string[] = [];
+    const added: Attachment[] = [];
+    for (const f of Array.from(files)) {
+      if (atts.length + added.length >= MAX_ATTACHMENTS) { errors.push(`At most ${MAX_ATTACHMENTS} attachments`); break; }
+      const r = await readAttachment(f);
+      if (r.ok) added.push(r.attachment); else errors.push(`${r.name} ${r.error}`);
+    }
+    if (added.length) setAtts((cur) => [...cur, ...added]);
+    setAttachError(errors.join(". "));
+  };
+
+  const onPaste = (e: React.ClipboardEvent) => {
+    const files = e.clipboardData?.files;
+    if (files && files.length) { e.preventDefault(); void attach(files); }
+  };
+  const onDrop = (e: React.DragEvent) => {
+    setDragging(false);
+    if (e.dataTransfer?.files?.length) { e.preventDefault(); void attach(e.dataTransfer.files); }
+  };
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); return; }
@@ -75,8 +107,23 @@ export function Composer(props: {
 
 
   return (
-    <div className="composer" data-ready={!props.disabled}>
-      <textarea ref={ta} value={text} rows={2} placeholder={props.placeholder ?? "What would you like to work on?"} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} aria-label="Message" />
+    <div className={dragging ? "composer dragging" : "composer"} data-ready={!props.disabled}
+      onDragOver={(e) => { if (e.dataTransfer?.types?.includes("Files")) { e.preventDefault(); setDragging(true); } }} onDragLeave={() => setDragging(false)} onDrop={onDrop}>
+      {(atts.length > 0 || attachError) && (
+        <div className="attachments" aria-label="Attachments">
+          {atts.map((a) => (
+            <span key={a.id} className="attachment">
+              {a.kind === "image" && <img alt="" src={`data:${a.mediaType};base64,${a.data}`} />}
+              <span className="attachment-name" title={a.name}>{a.name}</span><span className="muted small"> {sizeLabel(a.size)}</span>
+              <button aria-label={`Remove ${a.name}`} onClick={() => setAtts(atts.filter((x) => x.id !== a.id))}>x</button>
+            </span>
+          ))}
+          {attachError && <span className="attach-error" role="alert">{attachError}</span>}
+        </div>
+      )}
+      <textarea ref={ta} value={text} rows={2} placeholder={props.placeholder ?? "What would you like to work on?"} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} onPaste={onPaste} aria-label="Message" />
+      <input ref={picker} type="file" multiple hidden data-testid="attach-input" aria-label="Choose files to attach" accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/*,.md,.ts,.tsx,.js,.json,.py,.go,.rs,.txt,.csv,.yml,.yaml,.toml"
+        onChange={(e) => { if (e.target.files?.length) void attach(e.target.files); e.target.value = ""; }} />
       <div className="chips">
         <ModelPicker models={props.models} value={s.modelId} autoAvailable={props.autoAvailable} pinned={props.pinnedModels} onPick={(id) => props.onChange({ modelId: id })} />
         <button className="chip" title={AUTONOMY_TIPS[s.autonomyLevel ?? "off"]} onClick={() => props.onChange({ autonomyLevel: cycle(AUTONOMY, s.autonomyLevel === "off" ? "high" : s.autonomyLevel) })}>
@@ -97,11 +144,12 @@ export function Composer(props: {
         <button className="chip" title="Reasoning (Tab)" onClick={() => props.onChange({ reasoningEffort: cycle(REASONING, s.reasoningEffort) })}>Reasoning: {s.reasoningEffort ?? "high"}</button>
         {props.session && <button className="chip" onClick={() => setDialog("connectors")} title="MCP servers">Connectors</button>}
         <button className="chip" onClick={() => setDialog("skills")} title="Skills">Skills</button>
+        <button className="chip" aria-label="Attach files" title="Attach images, PDFs or text files (you can also paste or drop them)" onClick={() => picker.current?.click()}>Attach</button>
         {props.extra}
         <span className="spacer" />
         {props.busy
           ? <button className="send stop" onClick={props.onStop} aria-label="Stop">Stop</button>
-          : <button className="send" disabled={!text.trim() || props.disabled} onClick={send} aria-label="Send">Send</button>}
+          : <button className="send" disabled={(!text.trim() && !atts.length) || props.disabled} onClick={send} aria-label="Send">Send</button>}
       </div>
       {dialog === "connectors" && props.session && <ConnectorsDialog ctl={props.session} onClose={() => setDialog(null)} />}
       {dialog === "skills" && <SkillsDialog ctl={props.session} cwd={props.cwd ?? ""} onClose={() => setDialog(null)} />}

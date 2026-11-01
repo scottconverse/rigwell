@@ -32,7 +32,7 @@ class TrustAsks extends Store<{ asks: TrustAsk[] }> {
   }
 }
 export const trustAsks = new TrustAsks();
-export interface SideEntry { id: string; question: string; answer: string; status: "pending" | "streaming" | "complete" | "error"; createdAt: number }
+export interface SideEntry { id: string; question: string; answer: string; status: "pending" | "streaming" | "complete" | "error"; createdAt: number; forkId?: string; promotedTo?: string }
 
 export interface SessionState {
   phase: "connecting" | "ready" | "disconnected" | "error";
@@ -47,12 +47,14 @@ export interface SessionState {
   tokens: { input: number; output: number };
   prompts: Prompt[];
   sideChat: SideEntry[];
+  /** Side chat may edit files ("unless the user turns writes on", spec 17.4). */
+  sideWrites: boolean;
   pinned: boolean;
   archived: boolean;
 }
 
 const empty = (cwd: string): SessionState => ({
-  phase: "connecting", cwd, title: "New Session", items: [], working: "idle", settings: {}, models: [], tokens: { input: 0, output: 0 }, prompts: [], sideChat: [], pinned: false, archived: false,
+  phase: "connecting", cwd, title: "New Session", items: [], working: "idle", settings: {}, models: [], tokens: { input: 0, output: 0 }, prompts: [], sideChat: [], sideWrites: false, pinned: false, archived: false,
 });
 
 export type CreateOptions = {
@@ -165,12 +167,14 @@ export class SessionController extends Store<SessionState> {
 
   // ---- actions
 
-  async send(text: string) {
+  async send(text: string, attach: { images?: { mediaType: string; data: string }[]; files?: { name: string; mediaType: string; data: string }[] } = {}) {
     if (!this.conn || !text.trim()) return;
+    const names = [...(attach.images ?? []).map((_, i) => `image ${i + 1}`), ...(attach.files ?? []).map((f) => f.name)];
+    const shown = names.length ? `${text}\n[Attached: ${names.join(", ")}]` : text;
     if (this.attaching) await Promise.race([this.attaching, new Promise((r) => setTimeout(r, 3000))]);
-    this.set({ items: [...this.state.items, { kind: "user", id: `u-${Date.now()}`, text }], working: "thinking" });
+    this.set({ items: [...this.state.items, { kind: "user", id: `u-${Date.now()}`, text: shown }], working: "thinking" });
     if (this.state.title === "New Session") this.set({ title: text.split("\n")[0].slice(0, 60) });
-    try { await this.conn.request("add_user_message", { text }); } catch (e) { this.set({ items: [...this.state.items, { kind: "info", id: `e-${Date.now()}`, text: (e as Error).message, level: "error" }], working: "idle" }); }
+    try { await this.conn.request("add_user_message", { text, ...(attach.images?.length ? { images: attach.images } : {}), ...(attach.files?.length ? { files: attach.files } : {}) }); } catch (e) { this.set({ items: [...this.state.items, { kind: "info", id: `e-${Date.now()}`, text: (e as Error).message, level: "error" }], working: "idle" }); }
   }
   interrupt() { void this.conn?.request("interrupt_session").catch(() => {}); }
   async updateSettings(patch: Record<string, unknown>) { await this.conn?.request("update_session_settings", patch); }
@@ -205,7 +209,10 @@ export class SessionController extends Store<SessionState> {
     if (i >= 0) list[i] = e; else list.push(e);
     this.set({ sideChat: list });
   }
-  async refreshSideChat() { try { this.set({ sideChat: (await this.request("daemon.side_chat_list")).entries }); } catch {} }
+  async refreshSideChat() { try { const r = await this.request("daemon.side_chat_list"); this.set({ sideChat: r.entries, sideWrites: r.writes === true }); } catch {} }
+  async setSideWrites(enabled: boolean) { const r = await this.request("daemon.side_chat_set_writes", { enabled }); this.set({ sideWrites: r.writes === true }); }
+  /** Promote: the side chat becomes a normal session in this project (spec 17.4). Returns the new session id. */
+  async promoteSide(entryId: string): Promise<string> { const r = await this.request("daemon.side_chat_promote", { entryId }); void this.refreshSideChat(); return String(r.sessionId); }
   async askSide(question: string) { const r = await this.request("daemon.side_chat_ask", { question }); this.upsertSide(r.entry); }
 
   private attaching?: Promise<void>;

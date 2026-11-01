@@ -3,6 +3,7 @@ import { app, useApp } from "../lib/app-model.ts";
 import { bridge } from "../lib/rpc.ts";
 import { SessionController } from "../lib/session.ts";
 import { Composer, type ComposerSettings } from "./Composer.tsx";
+import { toParams } from "../lib/attachments.ts";
 import { TrustDialog } from "./Dialogs.tsx";
 import { live, pendingMission } from "./SessionScreen.tsx";
 
@@ -43,7 +44,7 @@ export function Home({ go, initialFolder, initialMission }: { go(route: string):
   // spec §18.1: runInWorktree is the default for this toggle; the choice is per session.
   const useWorktree = worktree ?? a.userSettings.runInWorktree === true;
 
-  const start = async (text: string) => {
+  const start = async (text: string, attach: ReturnType<typeof toParams> = {}) => {
     if (!folder) { setError("Choose a folder first."); return; }
     setBusy(true); setError("");
     const mission = settings.interactionMode === "mission";
@@ -58,7 +59,7 @@ export function Home({ go, initialFolder, initialMission }: { go(route: string):
       app.rememberFolder(folder);
       void app.refresh();
       go(`/sessions/${id}`);
-      void ctl.send(text);
+      void ctl.send(text, attach);
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
 
@@ -84,7 +85,7 @@ export function Home({ go, initialFolder, initialMission }: { go(route: string):
         </div>
         <Composer settings={settings} models={a.models} busy={false} disabled={busy || !running} autoFocus disabledShortcuts={a.settings?.disabledShortcuts} cwd={folder}
           autoAvailable={!!a.userSettings.autoRouter} onMission={() => setSettings((s) => ({ ...s, interactionMode: "mission" }))}
-          onChange={(p) => setSettings((s) => ({ ...s, ...p }))} onSend={(t) => void start(t)} onStop={() => {}} />
+          onChange={(p) => setSettings((s) => ({ ...s, ...p }))} onSend={(t, atts) => void start(t, atts ? toParams(atts) : {})} onStop={() => {}} />
         {error && <div className="banner error" role="alert">{error}</div>}
       </div>
       {adder.dialog}

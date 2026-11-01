@@ -14,6 +14,7 @@ import { DaemonSupervisor, START_FAILURE_HINT } from "./supervisor.ts";
 import { deleteLocalProfile, gitRoot, listProfileViews, readUserSettings, saveLocalProfile, trustFolder, updateUserSettings } from "./user-settings.ts";
 import { listSkillViews } from "./skills.ts";
 import { synthWav } from "./sounds.ts";
+import { freeSlot, saveZoom, stepZoom, zoomFor } from "./window-zoom.ts";
 
 // The bundle lives in <app>/dist next to preload.cjs and renderer/. app.getAppPath() is the folder with package.json
 // (also correct inside an asar), which is more reliable than __dirname because bundlers may inline that.
@@ -27,6 +28,8 @@ const BROWSER_PARTITION = "persist:browserpanel";
 
 let settings: DesktopSettings = loadDesktopSettings(HOME);
 const windows = new Set<BrowserWindow>();
+const slots = new Map<BrowserWindow, number>(); // window -> zoom slot (window-zoom.json, spec 14.4)
+const zooms = new Map<BrowserWindow, number>(); // window -> its current zoom level
 let supervisor: DaemonSupervisor;
 let broker: DaemonBroker;
 let proxy: CdpProxy | undefined;
@@ -110,6 +113,7 @@ function createWindow(route = "/"): BrowserWindow {
     },
   });
   windows.add(win);
+  slots.set(win, freeSlot(slots.values()));
   const id = win.webContents.id;
   win.once("ready-to-show", () => { if (b?.maximized) win.maximize(); win.show(); });
   win.webContents.setWindowOpenHandler(({ url }) => { if (isAllowedExternal(url)) void shell.openExternal(url); return { action: "deny" }; });
@@ -118,14 +122,28 @@ function createWindow(route = "/"): BrowserWindow {
   win.webContents.on("did-start-navigation", (_e, _url, inPlace, isMainFrame) => { if (isMainFrame && !inPlace) { broker.closeWindow(id); viewing.delete(id); } });
   win.webContents.on("render-process-gone", (_e, d) => log(`[window] renderer gone: ${d.reason}`));
   win.on("unresponsive", () => log("[window] unresponsive"));
-  win.webContents.on("did-finish-load", () => { win.webContents.setZoomLevel(settings.windowZoomLevel); });
+  win.webContents.on("did-finish-load", () => { const l = zoomFor(HOME, slots.get(win) ?? 0, settings.windowZoomLevel); zooms.set(win, l); win.webContents.setZoomLevel(l); });
+  // Chromium remembers zoom per URL, and a file: page's route is part of its URL. Moving between routes would pick up
+  // another route's level, so this window's own level is put back after every in-page navigation.
+  win.webContents.on("did-navigate-in-page", () => { if (zooms.has(win) && !win.isDestroyed()) win.webContents.setZoomLevel(zooms.get(win)!); });
+  // Ctrl+wheel zooms this window only; the level is saved for this window's slot.
+  win.webContents.on("zoom-changed", (_e, dir) => setWindowZoom(win, stepZoom(win.webContents.getZoomLevel(), dir === "in" ? 1 : -1)));
   win.on("close", () => {
     if (windows.size === 1) { const bb = win.getNormalBounds(); settings = updateDesktopSettings(HOME, { windowBounds: { ...bb, maximized: win.isMaximized() } }); }
   });
-  win.on("closed", () => { windows.delete(win); broker.closeWindow(id); viewing.delete(id); browserTabs.forEach((t, k) => { if (t.host === id) browserTabs.delete(k); }); });
+  win.on("closed", () => { windows.delete(win); slots.delete(win); zooms.delete(win); broker.closeWindow(id); viewing.delete(id); browserTabs.forEach((t, k) => { if (t.host === id) browserTabs.delete(k); }); });
   void win.loadURL(`${APP_PAGE}#${route}`);
   return win;
 }
+
+/** Sets and saves one window's zoom (window-zoom.json, keyed by the window's slot). */
+function setWindowZoom(win: BrowserWindow | null | undefined, level: number) {
+  if (!win || win.isDestroyed()) return;
+  zooms.set(win, level);
+  win.webContents.setZoomLevel(level);
+  saveZoom(HOME, slots.get(win) ?? 0, level);
+}
+const zoomStep = (dir: 1 | -1 | 0) => (_item: unknown, from?: BrowserWindow) => { const w = from ?? BrowserWindow.getFocusedWindow() ?? [...windows][0]; if (w) setWindowZoom(w, stepZoom(w.webContents.getZoomLevel(), dir)); };
 
 function openRoute(route: string) {
   const w = BrowserWindow.getFocusedWindow() ?? [...windows][0];
@@ -296,7 +314,10 @@ function buildMenu() {
     { role: "editMenu" as const },
     { label: "View", submenu: [
       { role: "reload" as const }, { role: "forceReload" as const }, { type: "separator" as const },
-      { role: "zoomIn" as const }, { role: "zoomOut" as const }, { role: "resetZoom" as const }, { type: "separator" as const },
+      { id: "zoom-in", label: "Zoom In", accelerator: "CmdOrCtrl+Plus", click: zoomStep(1) },
+      { id: "zoom-out", label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: zoomStep(-1) },
+      { id: "zoom-reset", label: "Actual Size", accelerator: "CmdOrCtrl+0", click: zoomStep(0) },
+      { type: "separator" as const },
       { role: "togglefullscreen" as const, accelerator: "F11" },
     ] },
     { label: "Window", submenu: [{ role: "minimize" as const, accelerator: "CmdOrCtrl+M" }, { role: "close" as const, accelerator: "CmdOrCtrl+W" }] },
