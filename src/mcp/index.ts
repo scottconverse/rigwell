@@ -24,3 +24,5 @@ export { McpClient, contentToText, MCP_PROTOCOL_VERSION } from "./client.ts";
 export { McpManager, mcpLlmName, mcpBindingName, MAX_DROPS } from "./manager.ts";
 export type { McpManagerOptions } from "./manager.ts";
 export { createConnection, McpRpcError } from "./transport.ts";
+export { isMcpAllowed, rememberMcp } from "./allow.ts";
+export { mcpTool } from "./tool.ts";
