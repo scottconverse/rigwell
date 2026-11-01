@@ -494,7 +494,12 @@ export class Session {
     if (this.currentRun) return;
     const p = this.drain();
     this.currentRun = p;
-    void p.then(() => { if (this.currentRun === p) this.currentRun = undefined; });
+    // A message queued after drain() made its last queue check but before currentRun was cleared would be stranded
+    // (kick() saw a run in progress): start another run for it.
+    void p.then(() => {
+      if (this.currentRun === p) this.currentRun = undefined;
+      if (!this.currentRun && this.queue.length) this.kick();
+    });
   }
 
   /** Resolves when no turn is running. */

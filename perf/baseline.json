@@ -1,0 +1,33 @@
+{
+  "firstKeystrokeP95Ms": 0.36,
+  "tolerance": {
+    "factor": 3,
+    "slackMs": 10
+  },
+  "firstKeystrokeCapMs": 250,
+  "recorded": {
+    "firstKeystrokeP95Ms": 0.36,
+    "firstKeystrokeP50Ms": 0.16,
+    "preflightToolLookupMs": 0.0106,
+    "turnPrepColdMs": 16.5,
+    "turnPrepWarmP95Ms": 1.59,
+    "execFirstRequestMs": 83.38,
+    "daemonReadyMs": 47.26,
+    "perSessionMemoryMb": 0.36,
+    "firstPaintMs": 65.15,
+    "firstPromptAcceptedMs": 67.93,
+    "firstKeystrokePtyP95Ms": 1.27,
+    "quitMs": 7.39
+  },
+  "basePrompt": {
+    "direct_only": {
+      "systemChars": 5102,
+      "toolsChars": 18077
+    },
+    "contextChars": 533,
+    "script_only": {
+      "systemChars": 5360,
+      "toolsChars": 7863
+    }
+  }
+}
