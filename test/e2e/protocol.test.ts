@@ -143,14 +143,14 @@ describe("exec modes", () => {
     expect(existsSync(join(ctx.repo, "out.txt"))).toBe(false);
   }, 30000);
 
-  test("read-only exec offers only Read, Execute, Grep, Glob", async () => {
+  test("read-only exec offers Read, Execute, Grep, Glob plus Script and script_job", async () => {
     const ctx = await setup([{ text: "hello" }]);
     const { c } = await start([], ctx);
     await c.call("add_user_message", { text: "hi", messageId: "t1" });
     await c.turnCompleted();
     await c.close();
     const names = ctx.server.requests[0].tools.map((t: any) => t.name).sort();
-    expect(names).toEqual(["Execute", "Glob", "Grep", "Read"]);
+    expect(names).toEqual(["Execute", "Glob", "Grep", "Read", "Script", "script_job"]);
   }, 30000);
 
   test("resume: load_session restores messages and the model sees turn 1 in turn 2", async () => {

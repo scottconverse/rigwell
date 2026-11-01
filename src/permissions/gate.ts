@@ -25,6 +25,10 @@ export function decide(tool: string, input: Record<string, unknown>, ctx: Permis
     case "Grep":
     case "Glob":
       return { decision: "allow" };
+    // Script and script_job themselves need no approval: each inner call is gated on its own (spec S8).
+    case "Script":
+    case "script_job":
+      return { decision: "allow" };
     case "Edit":
     case "Create":
       return decideFileWrite(tool, input, ctx);

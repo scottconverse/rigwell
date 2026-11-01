@@ -10,7 +10,11 @@ export type ReasoningEffort =
 
 export type TextBlock = { type: "text"; text: string };
 export type ThinkingBlock = { type: "thinking"; thinking: string; signature?: string; signatureProvider?: string };
-export type ToolUseBlock = { type: "tool_use"; id: string; name: string; input: Record<string, unknown> };
+export type ToolUseBlock = {
+  type: "tool_use"; id: string; name: string; input: Record<string, unknown>;
+  /** Set on calls made from inside a Script (spec §3.1.7). */
+  scriptExecution?: { runId: string; outerToolUseId: string };
+};
 export type ToolResultBlock = {
   type: "tool_result";
   tool_use_id: string;
@@ -157,12 +161,18 @@ export interface ToolContext {
   readFiles: Map<string, FileReadRecord>;
   signal: AbortSignal;
   onProgress?: (p: ToolProgress) => void;
+  /** Id of the tool call being run (Script names its log after it). */
+  toolUseId?: string;
+  /** Background jobs (Execute with background: true). */
+  jobs?: import("../jobs/manager.ts").JobsApi;
 }
 
 export interface ToolOutput {
   /** Text returned to the model. */
   content: string;
   isError?: boolean;
+  /** Structured form of the result, for Script (spec S1). Absent: Script derives it from `content`. */
+  data?: unknown;
 }
 
 export interface Tool {
@@ -190,6 +200,8 @@ export interface PermissionContext {
 }
 
 export type ConfirmationType = "edit" | "create" | "exec";
+
+export type ToolExecutionMode = "direct_only" | "script_only";
 
 export type PermissionDecision =
   | { decision: "allow"; reason?: string }

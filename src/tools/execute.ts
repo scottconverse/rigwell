@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import type { Tool, ToolContext, ToolOutput } from "../core/types.ts";
-import { fail, intArg, promptDesc, promptSchema, resolvePath, strArg } from "./util.ts";
+import { fail, intArg, ok, promptDesc, promptSchema, resolvePath, strArg } from "./util.ts";
 
 export const EXECUTE_OUTPUT_CAP = 30_000;
 export const EXECUTE_DEFAULT_TIMEOUT_MS = 120_000;
@@ -88,12 +88,9 @@ function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
   }
 }
 
-async function runExecute(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutput> {
+async function runExecute(input: Record<string, unknown>, ctx: ToolContext, background = false): Promise<ToolOutput> {
   const command = strArg(input, "command");
   if (!command || !command.trim()) return fail("command is required.");
-  if (input.background === true) {
-    return fail("Background execution is not available in this build; run it in the foreground.");
-  }
   const cwdIn = strArg(input, "cwd");
   const cwd = cwdIn ? resolvePath(cwdIn, ctx.cwd) : ctx.cwd;
   try {
@@ -101,10 +98,22 @@ async function runExecute(input: Record<string, unknown>, ctx: ToolContext): Pro
   } catch {
     return fail(`cwd ${cwd} does not exist.`);
   }
-  const timeoutMs = Math.min(
-    EXECUTE_MAX_TIMEOUT_MS,
-    Math.max(1, intArg(input, "timeoutMs") ?? EXECUTE_DEFAULT_TIMEOUT_MS),
-  );
+  if (input.background === true && !background) {
+    if (!ctx.jobs) return fail("Background execution is not available here; run the command in the foreground.");
+    const jobs = ctx.jobs;
+    const foreground = { ...input, background: false };
+    const jobId = jobs.startBackground({
+      kind: "execute",
+      title: command.length > 80 ? `${command.slice(0, 80)}...` : command,
+      run: (signal) => runExecute(foreground, { ...ctx, signal, jobs: undefined, onProgress: undefined }, true),
+    });
+    return ok(JSON.stringify({ status: "running", job_id: jobId, note: "You will be woken with the result when it exits. Check or stop it with script_job." }));
+  }
+  // A background command has no default time limit; it runs until it exits or is stopped.
+  const requested = intArg(input, "timeoutMs");
+  const timeoutMs = background && requested === undefined
+    ? 0
+    : Math.min(EXECUTE_MAX_TIMEOUT_MS, Math.max(1, requested ?? EXECUTE_DEFAULT_TIMEOUT_MS));
   if (ctx.signal.aborted) return fail("Command was cancelled before it started.");
 
   const shell = resolveShell();
@@ -128,7 +137,7 @@ async function runExecute(input: Record<string, unknown>, ctx: ToolContext): Pro
     const finish = (exitCode: number | null, signal: string | null, spawnError?: string) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       ctx.signal.removeEventListener("abort", onAbort);
       out.push(dec.o.end());
       err.push(dec.e.end());
@@ -143,9 +152,11 @@ async function runExecute(input: Record<string, unknown>, ctx: ToolContext): Pro
       const se = err.toString();
       parts.push(`--- stdout ---\n${so === "" ? "(empty)" : so}`);
       parts.push(`--- stderr ---\n${se === "" ? "(empty)" : se}`);
+      const ran = !timedOut && !aborted && !spawnError;
       resolve({
         content: parts.join("\n"),
         isError: exitCode !== 0 || timedOut || aborted || !!spawnError,
+        ...(ran ? { data: { exitCode, stdout: so, stderr: se, durationMs, truncated: out.total > EXECUTE_OUTPUT_CAP || err.total > EXECUTE_OUTPUT_CAP } } : {}),
       });
     };
 
@@ -154,10 +165,12 @@ async function runExecute(input: Record<string, unknown>, ctx: ToolContext): Pro
       killGroup(child.pid, "SIGKILL");
     };
     ctx.signal.addEventListener("abort", onAbort, { once: true });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      killGroup(child.pid, "SIGKILL");
-    }, timeoutMs);
+    const timer = timeoutMs > 0
+      ? setTimeout(() => {
+        timedOut = true;
+        killGroup(child.pid, "SIGKILL");
+      }, timeoutMs)
+      : undefined;
 
     child.stdout!.on("data", (b: Buffer) => {
       const t = dec.o.write(b);
