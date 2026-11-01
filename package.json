@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "bin": { "rigwell": "src/cli/main.ts" },
+  "bin": {
+    "rigwell": "src/cli/main.ts"
+  },
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit"
@@ -11,5 +13,8 @@
   "devDependencies": {
     "@types/bun": "1.2.20",
     "typescript": "5.8.3"
+  },
+  "dependencies": {
+    "quickjs-emscripten": "0.31.0"
   }
 }

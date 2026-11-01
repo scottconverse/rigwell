@@ -9,7 +9,7 @@ export interface SessionSettings {
   interactionMode?: InteractionMode;
   autonomyLevel?: AutonomyLevel;
   compactionThresholdCheckEnabled?: boolean;
-  toolExecutionMode?: "direct_only";
+  toolExecutionMode?: "direct_only" | "script_only";
   assistantActiveTimeMs?: number;
   tokenUsage?: TokenUsage;
   inclusiveTokenUsage?: TokenUsage;

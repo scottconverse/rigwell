@@ -82,6 +82,7 @@ async function execPrompt(a: ExecArgs) {
   let turnDone: (reason: string) => void;
   const finished = new Promise<string>((r) => (turnDone = r));
   let lastMessageId = "";
+  let lastReason = "";
   const opts: ConnectionOptions = {
     canPrompt: false, runtimeSettingsPath: a.settings, log,
     forced: { autonomyLevel: a.auto ?? "off", skipPermissions: a.skip || undefined, modelId: a.model },
@@ -102,6 +103,7 @@ async function execPrompt(a: ExecArgs) {
     } else if (n.type === "error") {
       log(`rigwell: ${n.message}`);
     } else if (n.type === "agent_turn_completed") {
+      lastReason = n.reason;
       turnDone(n.reason);
     }
   }, opts);
@@ -118,7 +120,10 @@ async function execPrompt(a: ExecArgs) {
   log(`[session] ${init.result.sessionId} model=${init.result.settings.modelId} autonomy=${init.result.settings.autonomyLevel}`);
   const added = await call("add_user_message", { text: a.prompt });
   if (added.error) fail(added.error.message);
-  const reason = await finished;
+  let reason = await finished;
+  // Background jobs may still be running; wait for them and for the wake turns they cause.
+  await conn.session?.settled();
+  reason = lastReason || reason;
   process.stdout.write("\n");
   await call("close_session", { reason: "other" });
   log(`[turn] ${reason}`);
