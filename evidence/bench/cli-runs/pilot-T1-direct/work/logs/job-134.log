@@ -1,0 +1,24 @@
+job job-134 started on runner-9
+step 0: tests: 41 passed
+step 1: tests: 41 passed
+step 2: compile ok
+step 3: compile ok
+step 4: lint ok
+step 5: tests: 41 passed
+step 6: download 12MB
+step 7: compile ok
+step 8: tests: 41 passed
+step 9: lint ok
+step 10: compile ok
+step 11: lint ok
+step 12: warning: FAILED to fetch optional mirror, using default
+step 13: compile ok
+step 14: lint ok
+step 15: tests: 41 passed
+step 16: warning: FAILED to fetch optional mirror, using default
+STATUS: PASSED
+retrying (attempt 2)
+STATUS: PASSED
+retrying (attempt 3)
+STATUS: PASSED
+summary: see artifacts

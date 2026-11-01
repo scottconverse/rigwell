@@ -1,0 +1,28 @@
+{
+  "sessionId": "524813ae-73d5-4598-9e87-1ecfff0ad3b6",
+  "version": 1,
+  "createdAt": 1793383263063,
+  "lastAccessedAt": 1793383263078,
+  "boundaries": [
+    {
+      "messageId": "7df750d2-bad6-4b46-b691-fbbe0b3c4a6c",
+      "messageIndex": 1,
+      "timestamp": 1793383263047,
+      "files": [
+        {
+          "filePath": "C:\\Users\\scott\\AppData\\Local\\Temp\\claude\\C--Users-scott-Desktop-Code-rea-work\\4a497df5-a669-424d-9416-429e3129dec1\\scratchpad\\bench\\runs\\pilot-T3-direct\\work\\textutils\\wrap.py",
+          "contentHash": "78c344b5084953fdc399c196084dc09784fc38e2fd4f9e39f84a2cd5c5f98acc",
+          "size": 528,
+          "capturedAt": 1793383263047,
+          "toolCallId": "toolu_bdrk_01JJhFQ1o8vv8f97wUnMpWW8",
+          "mode": 33206
+        }
+      ],
+      "deletions": [],
+      "creations": [],
+      "totalSize": 528
+    }
+  ],
+  "oldestAvailableBoundaryIndex": 0,
+  "evictedBoundaryCount": 0
+}

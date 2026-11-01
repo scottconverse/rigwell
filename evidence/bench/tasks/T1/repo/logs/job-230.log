@@ -1,0 +1,8 @@
+job job-230 started on runner-7
+step 0: tests: 41 passed
+step 1: compile ok
+step 2: lint ok
+step 3: compile ok
+step 4: cache hit
+STATUS: PASSED
+summary: see artifacts

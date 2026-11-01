@@ -1,0 +1,21 @@
+job job-247 started on runner-6
+step 0: warning: FAILED to fetch optional mirror, using default
+step 1: tests: 41 passed
+step 2: compile ok
+step 3: cache hit
+step 4: download 12MB
+step 5: cache hit
+step 6: cache hit
+step 7: cache hit
+step 8: lint ok
+step 9: cache hit
+step 10: warning: FAILED to fetch optional mirror, using default
+step 11: compile ok
+step 12: tests: 41 passed
+step 13: compile ok
+step 14: lint ok
+step 15: lint ok
+step 16: download 12MB
+step 17: warning: FAILED to fetch optional mirror, using default
+STATUS: PASSED
+summary: see artifacts

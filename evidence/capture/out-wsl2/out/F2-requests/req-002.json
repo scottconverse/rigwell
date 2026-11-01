@@ -1,0 +1,49 @@
+{
+  "seq": 2,
+  "time": "2026-10-30T17:31:48.395954+00:00",
+  "method": "POST",
+  "url": "/v1/messages",
+  "headers": {
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+    "User-Agent": "factory-cli/1.0.0",
+    "X-Stainless-Arch": "x64",
+    "X-Stainless-Lang": "js",
+    "X-Stainless-OS": "Linux",
+    "X-Stainless-Package-Version": "0.128.0",
+    "X-Stainless-Retry-Count": "0",
+    "X-Stainless-Runtime": "node",
+    "X-Stainless-Runtime-Version": "v26.3.0",
+    "X-Stainless-Timeout": "600",
+    "anthropic-version": "2023-06-01",
+    "x-api-key": "<redacted>",
+    "Connection": "keep-alive",
+    "Host": "127.0.0.1:18080",
+    "Accept-Encoding": "gzip, deflate, br, zstd",
+    "Content-Length": "2894"
+  },
+  "body": {
+    "model": "fake-model",
+    "max_tokens": 16192,
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Please summarize the following conversation:\n```\nUSER: [System reminder omitted at compaction boundary.]\n[System reminder omitted at compaction boundary.]\n[System reminder omitted at compaction boundary.]\n[System reminder omitted at compaction boundary.]\n[System reminder omitted at compaction boundary.]\n```\n\nRemember to wrap your final summary in <summary> tags."
+          }
+        ]
+      }
+    ],
+    "tools": [],
+    "system": [
+      {
+        "type": "text",
+        "text": "You are Droid, an AI software engineering agent built by Factory. You excel at creating and maintaining summaries that capture the most salient details from technical conversations.\n\nYou are to read the full conversation and produce a summary based on guidelines provided below.\n\nReturn your final summary with the following wrapped in <summary> tags. Use bulleted lists where appropriate.\n\n<summary>\n1. Chronological Play-by-Play\n   \u2022 Capture **every** significant turn in order, including USER messages, ASSISTANT replies, and **actions/tool invocations** (e.g. \"Assistant executes XYZ process\", \"Assistant runs tests\", etc.).\n   \u2022 Use arrow notation to show flow, e.g.\n     \"User requests refactor \u2192 Assistant calls CLI \u2192 Refactors files A,B,C \u2192 User asks for clarification \u2026\".\n   \u2022 Paraphrase where needed for brevity but preserve intent, technical detail, and outcomes.\n\n2. Primary Request and Intent - what was this session created for?\n3. Approach - how did the assistant approach the problem?\n4. Key Technical Work - list all key technical work done thus far.\n5. Questions and Clarifications - list any questions the assistant has asked the user, and any clarifications the user has provided.\n6. Files and Code Sections - list important updated and created files, along with bullet descriptions of what has been implemented or changed in each. Each entry should include a full filepath as well as repoLocation (including type and repoUrl).\n7. Error Resolution - enumerate errors encountered, and how they were / are to be resolved.\n8. Pending Tasks - to-do list of outstanding tasks.\n9. Current Work - details about the assistant's current task. include the user's latest message, and any relevant context that is needed to continue the work.\n10. Next Steps - what should the assistant do next? Include any relevant context or information needed to continue the work.\n</summary>\n\nGuidelines for effective summarization:\n- Prioritize technical details over conversational elements\n- Maintain chronological order of events\n- Highlight unresolved issues and next steps clearly\n- Ensure the summary can stand alone as a reference document\n\nRemember that this summary will be used by both the user and the assistant to maintain context across long sessions, so clarity and accuracy are essential.\n"
+      }
+    ],
+    "stream": true
+  },
+  "raw_length": 2880
+}

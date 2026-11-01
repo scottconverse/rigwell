@@ -1,0 +1,4 @@
+configs/ holds 150 service config files. In each, the line `timeout_seconds = <value>` must be a whole
+number from 1 to 3600. Where the value breaks that rule (negative, zero, too large, or not a whole
+number), set it to 30. Change nothing else in any file. Then write fixed.txt in the repository root
+listing the names of the files you changed, one per line, sorted.

@@ -1,0 +1,28 @@
+{
+  "sessionId": "f5d50d37-9699-4a9a-846c-442f405953b1",
+  "version": 1,
+  "createdAt": 1793384931191,
+  "lastAccessedAt": 1793384931191,
+  "boundaries": [
+    {
+      "messageId": "1f6f2b16-fdfa-429b-9f37-5c61be3731b6",
+      "messageIndex": 1,
+      "timestamp": 1793384931162,
+      "files": [
+        {
+          "filePath": "C:\\Users\\scott\\Desktop\\Code\\rea-work\\bench-app-tmp\\T3\\textutils\\wrap.py",
+          "contentHash": "78c344b5084953fdc399c196084dc09784fc38e2fd4f9e39f84a2cd5c5f98acc",
+          "size": 528,
+          "capturedAt": 1793384931162,
+          "toolCallId": "call_oudi7FMHJ14IqN6O3qRgwWSK",
+          "mode": 33206
+        }
+      ],
+      "deletions": [],
+      "creations": [],
+      "totalSize": 528
+    }
+  ],
+  "oldestAvailableBoundaryIndex": 0,
+  "evictedBoundaryCount": 0
+}

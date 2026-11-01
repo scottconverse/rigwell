@@ -1,0 +1,10 @@
+job job-290 started on runner-5
+step 0: lint ok
+step 1: tests: 41 passed
+step 2: download 12MB
+step 3: compile ok
+step 4: download 12MB
+step 5: cache hit
+step 6: download 12MB
+STATUS: PASSED
+summary: see artifacts

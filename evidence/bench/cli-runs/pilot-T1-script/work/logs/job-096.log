@@ -1,0 +1,17 @@
+job job-096 started on runner-5
+step 0: download 12MB
+step 1: lint ok
+step 2: download 12MB
+step 3: download 12MB
+step 4: cache hit
+step 5: compile ok
+step 6: compile ok
+step 7: lint ok
+step 8: warning: FAILED to fetch optional mirror, using default
+step 9: download 12MB
+STATUS: PASSED
+retrying (attempt 2)
+STATUS: PASSED
+retrying (attempt 3)
+STATUS: PASSED
+summary: see artifacts

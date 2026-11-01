@@ -1,0 +1,1 @@
+{"type":"result","subtype":"success","is_error":false,"duration_ms":135,"num_turns":1,"result":"hi","session_id":"267e213f-c3c9-4a7b-8928-d15dae4a7bfb","usage":{"input_tokens":9355,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"factory_credits":0,"thinking_tokens":0,"ttft_ms":8}}

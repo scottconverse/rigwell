@@ -1,0 +1,28 @@
+job job-232 started on runner-2
+step 0: compile ok
+step 1: download 12MB
+step 2: cache hit
+step 3: tests: 41 passed
+step 4: download 12MB
+step 5: tests: 41 passed
+step 6: download 12MB
+step 7: cache hit
+step 8: compile ok
+step 9: download 12MB
+step 10: cache hit
+step 11: cache hit
+step 12: tests: 41 passed
+step 13: download 12MB
+step 14: cache hit
+step 15: warning: FAILED to fetch optional mirror, using default
+step 16: cache hit
+step 17: cache hit
+step 18: warning: FAILED to fetch optional mirror, using default
+step 19: tests: 41 passed
+step 20: download 12MB
+STATUS: PASSED
+retrying (attempt 2)
+STATUS: FAILED
+retrying (attempt 3)
+STATUS: PASSED
+summary: see artifacts

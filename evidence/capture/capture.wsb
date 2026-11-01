@@ -1,0 +1,15 @@
+<Configuration>
+  <Networking>Disable</Networking>
+  <vGPU>Disable</vGPU>
+  <ClipboardRedirection>Disable</ClipboardRedirection>
+  <AudioInput>Disable</AudioInput>
+  <VideoInput>Disable</VideoInput>
+  <PrinterRedirection>Disable</PrinterRedirection>
+  <MappedFolders>
+    <MappedFolder><HostFolder>C:\Users\scott\AppData\Local\Temp\claude\C--Users-scott-Desktop-Code-rea-work\4a497df5-a669-424d-9416-429e3129dec1\scratchpad\droid-cli-pkg\x\package\bin</HostFolder><SandboxFolder>C:\cap\bin</SandboxFolder><ReadOnly>true</ReadOnly></MappedFolder>
+    <MappedFolder><HostFolder>C:\Users\scott\Desktop\Code\rea-work\.runtime\node</HostFolder><SandboxFolder>C:\cap\node</SandboxFolder><ReadOnly>true</ReadOnly></MappedFolder>
+    <MappedFolder><HostFolder>C:\Users\scott\AppData\Local\Temp\claude\C--Users-scott-Desktop-Code-rea-work\4a497df5-a669-424d-9416-429e3129dec1\scratchpad\capture\scripts</HostFolder><SandboxFolder>C:\cap\scripts</SandboxFolder><ReadOnly>true</ReadOnly></MappedFolder>
+    <MappedFolder><HostFolder>C:\Users\scott\AppData\Local\Temp\claude\C--Users-scott-Desktop-Code-rea-work\4a497df5-a669-424d-9416-429e3129dec1\scratchpad\capture\out</HostFolder><SandboxFolder>C:\cap\out</SandboxFolder><ReadOnly>false</ReadOnly></MappedFolder>
+  </MappedFolders>
+  <LogonCommand><Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\cap\scripts\run.ps1</Command></LogonCommand>
+</Configuration>

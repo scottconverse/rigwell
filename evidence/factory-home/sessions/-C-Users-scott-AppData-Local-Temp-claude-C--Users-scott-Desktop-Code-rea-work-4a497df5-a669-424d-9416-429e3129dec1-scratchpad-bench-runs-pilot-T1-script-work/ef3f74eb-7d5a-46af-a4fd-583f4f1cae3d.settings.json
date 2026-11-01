@@ -1,0 +1,48 @@
+{
+  "model": "claude-opus-5-5",
+  "reasoningEffort": "high",
+  "interactionMode": "auto",
+  "autonomyLevel": "medium",
+  "autonomyMode": "auto-medium",
+  "providerLock": "anthropic",
+  "providerLockTimestamp": "2026-10-30T18:01:18.630Z",
+  "apiProviderLock": "snowflake",
+  "assistantActiveTimeMs": 23369,
+  "tokenUsage": {
+    "inputTokens": 446,
+    "outputTokens": 1678,
+    "cacheCreationTokens": 6014,
+    "cacheReadTokens": 52408,
+    "thinkingTokens": 208,
+    "factoryCredits": 29771
+  },
+  "inclusiveTokenUsage": {
+    "inputTokens": 446,
+    "outputTokens": 1678,
+    "cacheCreationTokens": 6014,
+    "cacheReadTokens": 52408,
+    "thinkingTokens": 208,
+    "factoryCredits": 29771
+  },
+  "lastCallTokenUsage": {
+    "inputTokens": 1231,
+    "outputTokens": 252,
+    "cacheReadTokens": 19542
+  },
+  "childInclusiveTokenUsageBySessionId": {},
+  "tags": [
+    {
+      "name": "sdk",
+      "metadata": {
+        "language": "typescript",
+        "version": "0.10.0"
+      }
+    }
+  ],
+  "toolExecutionMode": "script_only",
+  "toolExecutionModeOverride": "script_only",
+  "toolExecutionModeModelId": "claude-opus-5-5",
+  "allowSubagentsInScripts": false,
+  "compactionThresholdCheckEnabled": true,
+  "archivedAt": "2026-10-30T18:57:39.992Z"
+}

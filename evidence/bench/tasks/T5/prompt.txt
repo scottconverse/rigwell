@@ -1,0 +1,4 @@
+Add a --json option to `python -m inventory.cli`. With --json it prints the items as a JSON list of
+objects with keys "sku", "name" and "qty" (qty as an integer), in the same order as the text output,
+and nothing else. Without --json, output must stay exactly as it is now. Add a test for --json under tests/.
+`python -m pytest -q` must pass.

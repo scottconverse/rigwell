@@ -1,0 +1,17 @@
+job job-220 started on runner-6
+step 0: compile ok
+step 1: warning: FAILED to fetch optional mirror, using default
+step 2: lint ok
+step 3: compile ok
+step 4: tests: 41 passed
+step 5: cache hit
+step 6: lint ok
+step 7: warning: FAILED to fetch optional mirror, using default
+step 8: cache hit
+step 9: cache hit
+step 10: warning: FAILED to fetch optional mirror, using default
+step 11: download 12MB
+step 12: tests: 41 passed
+step 13: lint ok
+STATUS: PASSED
+summary: see artifacts

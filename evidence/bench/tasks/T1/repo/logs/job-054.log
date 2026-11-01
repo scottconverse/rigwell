@@ -1,0 +1,17 @@
+job job-054 started on runner-6
+step 0: warning: FAILED to fetch optional mirror, using default
+step 1: warning: FAILED to fetch optional mirror, using default
+step 2: tests: 41 passed
+step 3: download 12MB
+step 4: download 12MB
+step 5: cache hit
+step 6: download 12MB
+step 7: warning: FAILED to fetch optional mirror, using default
+step 8: warning: FAILED to fetch optional mirror, using default
+step 9: tests: 41 passed
+STATUS: PASSED
+retrying (attempt 2)
+STATUS: PASSED
+retrying (attempt 3)
+STATUS: FAILED
+summary: see artifacts

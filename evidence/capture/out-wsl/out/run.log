@@ -1,0 +1,22 @@
+start 2026-10-30T11:09:25-06:00
+RTNETLINK answers: Operation not permitted
+2026-10-30T11:09:25-06:00 lo up failed
+2026-10-30T11:09:25-06:00 interfaces: lo 
+2026-10-30T11:09:25-06:00 network check: unreachable (good)
+2026-10-30T11:09:25-06:00 version args: --version
+2026-10-30T11:09:25-06:00 version exit=0 stdout=6 stderr=0
+2026-10-30T11:09:25-06:00 help-exec args: exec --help
+2026-10-30T11:09:26-06:00 help-exec exit=0 stdout=20990 stderr=0
+2026-10-30T11:09:26-06:00 === scenario A
+2026-10-30T11:09:27-06:00 A args: exec -m custom:mock-0 -o json say hi
+2026-10-30T11:09:27-06:00 A exit=0 stdout=314 stderr=0
+2026-10-30T11:09:27-06:00 === scenario B
+2026-10-30T11:09:28-06:00 B args: exec -m custom:mock-0 -o json say hi
+2026-10-30T11:09:29-06:00 B exit=0 stdout=314 stderr=0
+2026-10-30T11:09:29-06:00 === scenario C
+2026-10-30T11:09:30-06:00 C1 args: exec -m custom:mock-0 -o json say hi
+2026-10-30T11:09:30-06:00 C1 exit=0 stdout=317 stderr=0
+2026-10-30T11:09:30-06:00 C session id: c0329b96-6279-4bbe-88ff-b6cb3f6c02de
+2026-10-30T11:09:30-06:00 C2 args: exec -m custom:mock-0 -o json -s c0329b96-6279-4bbe-88ff-b6cb3f6c02de say hi again
+2026-10-30T11:09:31-06:00 C2 exit=0 stdout=315 stderr=0
+2026-10-30T11:09:31-06:00 DONE

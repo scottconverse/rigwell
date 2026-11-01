@@ -1,0 +1,25 @@
+{
+  "sessionId": "ef3f74eb-7d5a-46af-a4fd-583f4f1cae3d",
+  "version": 1,
+  "createdAt": 1793383296908,
+  "lastAccessedAt": 1793383296925,
+  "boundaries": [
+    {
+      "messageId": "c3287649-1a12-4005-8eaf-02bd65021253",
+      "messageIndex": 1,
+      "timestamp": 1793383296908,
+      "files": [],
+      "deletions": [],
+      "creations": [
+        {
+          "filePath": "C:\\Users\\scott\\AppData\\Local\\Temp\\claude\\C--Users-scott-Desktop-Code-rea-work\\4a497df5-a669-424d-9416-429e3129dec1\\scratchpad\\bench\\runs\\pilot-T1-script\\work\\report.json",
+          "createdAt": 1793383296908,
+          "toolCallId": "22ff3a13-8254-48ed-8fac-fa3703285fc6-5"
+        }
+      ],
+      "totalSize": 0
+    }
+  ],
+  "oldestAvailableBoundaryIndex": 0,
+  "evictedBoundaryCount": 0
+}

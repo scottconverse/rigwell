@@ -1,0 +1,9 @@
+job job-144 started on runner-8
+step 0: compile ok
+step 1: lint ok
+step 2: cache hit
+step 3: cache hit
+step 4: warning: FAILED to fetch optional mirror, using default
+step 5: compile ok
+STATUS: PASSED
+summary: see artifacts

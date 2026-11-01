@@ -1,0 +1,5 @@
+10.1 started alive=True reqs=0
+12.0 after prompt got_request=True reqs=2
+22.5 sent confirm Enter
+23.2 after /compress got_request=True reqs=3
+29.2 done reqs=3

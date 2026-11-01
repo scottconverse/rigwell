@@ -1,0 +1,12 @@
+job job-227 started on runner-7
+step 0: compile ok
+step 1: lint ok
+step 2: warning: FAILED to fetch optional mirror, using default
+step 3: tests: 41 passed
+step 4: compile ok
+step 5: compile ok
+step 6: cache hit
+STATUS: FAILED
+retrying (attempt 2)
+STATUS: PASSED
+summary: see artifacts

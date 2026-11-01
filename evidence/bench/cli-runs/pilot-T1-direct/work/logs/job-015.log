@@ -1,0 +1,12 @@
+job job-015 started on runner-7
+step 0: tests: 41 passed
+step 1: compile ok
+step 2: compile ok
+step 3: cache hit
+step 4: tests: 41 passed
+step 5: warning: FAILED to fetch optional mirror, using default
+step 6: compile ok
+step 7: compile ok
+step 8: cache hit
+STATUS: PASSED
+summary: see artifacts

@@ -1,0 +1,68 @@
+{
+  "assistantActiveTimeMs": 0,
+  "model": "auto",
+  "reasoningEffort": "none",
+  "interactionMode": "auto",
+  "autonomyLevel": "medium",
+  "autonomyMode": "auto-medium",
+  "compactionThresholdCheckEnabled": true,
+  "allowSubagentsInScripts": false,
+  "toolExecutionMode": "direct_only",
+  "toolExecutionModeModelId": "gpt-6-luna",
+  "tokenUsage": {
+    "inputTokens": 1507,
+    "outputTokens": 2664,
+    "cacheCreationTokens": 13810,
+    "cacheReadTokens": 115889,
+    "thinkingTokens": 1040,
+    "factoryCredits": 3664
+  },
+  "childInclusiveTokenUsageBySessionId": {},
+  "inclusiveTokenUsage": {
+    "inputTokens": 1507,
+    "outputTokens": 2664,
+    "cacheCreationTokens": 13810,
+    "cacheReadTokens": 115889,
+    "thinkingTokens": 1040,
+    "factoryCredits": 3664
+  },
+  "lastCallTokenUsage": {
+    "inputTokens": 100,
+    "outputTokens": 41,
+    "cacheReadTokens": 13713
+  },
+  "effectiveFactoryRouterModel": {
+    "modelId": "gpt-6-luna",
+    "reasoningEffort": "xhigh",
+    "reason": "routine",
+    "fallbacks": [
+      {
+        "modelId": "gpt-6.1-sol",
+        "reasoningEffort": "medium"
+      },
+      {
+        "modelId": "minimax-m3.1-flash",
+        "reasoningEffort": "max"
+      },
+      {
+        "modelId": "deepseek-v4.1-flash-1017",
+        "reasoningEffort": "high"
+      },
+      {
+        "modelId": "claude-opus-5-5",
+        "reasoningEffort": "medium"
+      },
+      {
+        "modelId": "glm-5.3",
+        "reasoningEffort": "max"
+      },
+      {
+        "modelId": "kimi-k3",
+        "reasoningEffort": "high"
+      }
+    ]
+  },
+  "providerLock": "openai",
+  "providerLockTimestamp": "2026-10-30T18:30:36.765Z",
+  "apiProviderLock": "azure_openai"
+}

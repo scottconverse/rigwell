@@ -1,0 +1,19 @@
+job job-217 started on runner-5
+step 0: compile ok
+step 1: cache hit
+step 2: compile ok
+step 3: cache hit
+step 4: cache hit
+step 5: download 12MB
+step 6: warning: FAILED to fetch optional mirror, using default
+step 7: compile ok
+step 8: tests: 41 passed
+step 9: cache hit
+step 10: tests: 41 passed
+step 11: warning: FAILED to fetch optional mirror, using default
+step 12: download 12MB
+step 13: compile ok
+step 14: download 12MB
+step 15: cache hit
+STATUS: PASSED
+summary: see artifacts

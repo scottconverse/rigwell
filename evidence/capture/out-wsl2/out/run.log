@@ -1,0 +1,42 @@
+start 2026-10-30T11:31:32-06:00
+2026-10-30T11:31:32-06:00 interfaces: lo 
+2026-10-30T11:31:32-06:00 network check: unreachable (good)
+2026-10-30T11:31:32-06:00 L-default args: exec -m custom:mock-0 --list-tools -o json
+2026-10-30T11:31:33-06:00 L-default exit=0 stdout=23698 stderr=0
+2026-10-30T11:31:33-06:00 L-low args: exec -m custom:mock-0 --auto low --list-tools -o json
+2026-10-30T11:31:33-06:00 L-low exit=0 stdout=23689 stderr=0
+2026-10-30T11:31:33-06:00 L-medium args: exec -m custom:mock-0 --auto medium --list-tools -o json
+2026-10-30T11:31:33-06:00 L-medium exit=0 stdout=23689 stderr=0
+2026-10-30T11:31:33-06:00 L-high args: exec -m custom:mock-0 --auto high --list-tools -o json
+2026-10-30T11:31:34-06:00 L-high exit=0 stdout=23688 stderr=0
+2026-10-30T11:31:34-06:00 L-skip args: exec -m custom:mock-0 --skip-permissions-unsafe --list-tools -o json
+2026-10-30T11:31:34-06:00 L-skip exit=0 stdout=23688 stderr=0
+2026-10-30T11:31:34-06:00 === scenario Dlow
+2026-10-30T11:31:35-06:00 Dlow args: exec -m custom:mock-0 -o json --auto low say hi
+2026-10-30T11:31:40-06:00 Dlow exit=0 stdout=313 stderr=0
+2026-10-30T11:31:40-06:00 === scenario Dmedium
+2026-10-30T11:31:41-06:00 Dmedium args: exec -m custom:mock-0 -o json --auto medium say hi
+2026-10-30T11:31:42-06:00 Dmedium exit=0 stdout=314 stderr=0
+2026-10-30T11:31:42-06:00 === scenario Dhigh
+2026-10-30T11:31:43-06:00 Dhigh args: exec -m custom:mock-0 -o json --auto high say hi
+2026-10-30T11:31:43-06:00 Dhigh exit=0 stdout=314 stderr=0
+2026-10-30T11:31:43-06:00 === scenario Dskip
+2026-10-30T11:31:44-06:00 Dskip args: exec -m custom:mock-0 -o json --skip-permissions-unsafe say hi
+2026-10-30T11:31:45-06:00 Dskip exit=0 stdout=313 stderr=0
+2026-10-30T11:31:45-06:00 === scenario F1
+2026-10-30T11:31:46-06:00 F11 args: exec -m custom:mock-0 -o json say hi
+2026-10-30T11:31:46-06:00 F11 exit=0 stdout=315 stderr=0
+2026-10-30T11:31:46-06:00 F1 session id: e1c68765-bb31-4257-be69-3c694dc2d77d
+2026-10-30T11:31:46-06:00 F12 args: exec -m custom:mock-0 -o json -s e1c68765-bb31-4257-be69-3c694dc2d77d say hi again
+2026-10-30T11:31:47-06:00 F12 exit=0 stdout=315 stderr=0
+2026-10-30T11:31:47-06:00 === scenario F2
+2026-10-30T11:31:48-06:00 F21 args: exec -m custom:mock-0 -o json say hi
+2026-10-30T11:31:48-06:00 F21 exit=0 stdout=315 stderr=0
+2026-10-30T11:31:48-06:00 F2 session id: b5f6614d-a88a-4149-aab4-0fa486bba782
+2026-10-30T11:31:48-06:00 F22 args: exec -m custom:mock-0 -o json -s b5f6614d-a88a-4149-aab4-0fa486bba782 say hi again
+2026-10-30T11:31:48-06:00 F22 exit=0 stdout=316 stderr=0
+2026-10-30T11:31:48-06:00 === scenario E1
+2026-10-30T11:32:54-06:00 E1 exit=0
+2026-10-30T11:32:54-06:00 === scenario E2
+2026-10-30T11:34:00-06:00 E2 exit=0
+2026-10-30T11:34:00-06:00 DONE

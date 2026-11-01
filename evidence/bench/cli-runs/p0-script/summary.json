@@ -1,0 +1,123 @@
+{
+  "id": "p0-script",
+  "task": "T3",
+  "mode": "script_only",
+  "model": "custom:mock-0",
+  "effort": "high",
+  "started": "2026-10-30T17:59:17.209Z",
+  "settings": {
+    "modelId": "custom:mock-0",
+    "reasoningEffort": "high",
+    "interactionMode": "auto",
+    "autonomyLevel": "medium",
+    "availableAutonomyLevels": [
+      "off",
+      "low",
+      "medium",
+      "high"
+    ],
+    "tags": [
+      {
+        "name": "sdk",
+        "metadata": {
+          "language": "typescript",
+          "version": "0.10.0"
+        }
+      }
+    ],
+    "compactionThresholdCheckEnabled": true,
+    "toolExecutionMode": "direct_only",
+    "allowSubagentsInScripts": false,
+    "migrationActive": false,
+    "additionalToolIds": [],
+    "enabledToolIds": [],
+    "disabledToolIds": [],
+    "restrictToolIds": []
+  },
+  "wall_ms": 1191,
+  "timedOut": false,
+  "toolCalls": {},
+  "messageTypes": {
+    "user": 2,
+    "assistant": 1,
+    "result": 1
+  },
+  "usageUpdates": [],
+  "errors": [],
+  "result": {
+    "type": "result",
+    "sessionId": "a077afac-04c1-439e-bab5-c7158c641803",
+    "durationMs": 81,
+    "tokenUsage": {
+      "inputTokens": 12443,
+      "outputTokens": 10,
+      "cacheCreationTokens": 0,
+      "cacheReadTokens": 0,
+      "thinkingTokens": 0,
+      "factoryCredits": 19989
+    },
+    "messages": [
+      {
+        "type": "user",
+        "message": {
+          "id": "context-3f4c69b6-849e-4637-bd87-afe952f5c639",
+          "role": "user",
+          "content": [],
+          "createdAt": 1793383158053,
+          "updatedAt": 1793383158053,
+          "parentId": "root",
+          "seq": 0,
+          "visibility": "llm_only"
+        }
+      },
+      {
+        "type": "user",
+        "message": {
+          "id": "3f4c69b6-849e-4637-bd87-afe952f5c639",
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "say hi"
+            }
+          ],
+          "createdAt": 1793383158053,
+          "updatedAt": 1793383158053,
+          "parentId": "context-3f4c69b6-849e-4637-bd87-afe952f5c639",
+          "seq": 1,
+          "userMessageSource": "sdk",
+          "interactionMode": "auto"
+        }
+      },
+      {
+        "type": "assistant",
+        "message": {
+          "id": "3433dc99-111b-4d2c-b80f-a38efc914eb2",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "hi"
+            }
+          ],
+          "createdAt": 1793383158102,
+          "updatedAt": 1793383158102,
+          "parentId": "3f4c69b6-849e-4637-bd87-afe952f5c639",
+          "seq": 2,
+          "userMessageSource": "sdk",
+          "modelId": "custom:mock-0",
+          "reasoningEffort": "high"
+        },
+        "text": "hi"
+      }
+    ],
+    "text": "hi",
+    "turnCount": 1,
+    "subtype": "success",
+    "success": true,
+    "interrupted": false,
+    "structuredOutput": null,
+    "structuredOutputError": null,
+    "error": null
+  }
+}

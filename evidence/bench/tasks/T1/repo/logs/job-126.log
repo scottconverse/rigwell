@@ -1,0 +1,16 @@
+job job-126 started on runner-4
+step 0: compile ok
+step 1: lint ok
+step 2: cache hit
+step 3: download 12MB
+step 4: compile ok
+step 5: warning: FAILED to fetch optional mirror, using default
+step 6: lint ok
+step 7: compile ok
+step 8: cache hit
+step 9: lint ok
+step 10: tests: 41 passed
+step 11: compile ok
+step 12: lint ok
+STATUS: PASSED
+summary: see artifacts

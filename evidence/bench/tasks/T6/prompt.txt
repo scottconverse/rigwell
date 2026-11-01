@@ -1,0 +1,3 @@
+Move the slugify function out of blog/utils.py into a new module blog/text.py. Remove it from
+blog/utils.py (keep the other functions there) and update every import in the repository to use
+blog.text. `python -m pytest -q` must pass.

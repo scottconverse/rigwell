@@ -1,0 +1,10 @@
+job job-252 started on runner-9
+step 0: lint ok
+step 1: compile ok
+step 2: warning: FAILED to fetch optional mirror, using default
+step 3: tests: 41 passed
+step 4: compile ok
+step 5: tests: 41 passed
+step 6: download 12MB
+STATUS: PASSED
+summary: see artifacts

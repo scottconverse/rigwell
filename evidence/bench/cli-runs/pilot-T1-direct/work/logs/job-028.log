@@ -1,0 +1,12 @@
+job job-028 started on runner-7
+step 0: cache hit
+step 1: lint ok
+step 2: warning: FAILED to fetch optional mirror, using default
+step 3: lint ok
+step 4: warning: FAILED to fetch optional mirror, using default
+STATUS: PASSED
+retrying (attempt 2)
+STATUS: FAILED
+retrying (attempt 3)
+STATUS: PASSED
+summary: see artifacts

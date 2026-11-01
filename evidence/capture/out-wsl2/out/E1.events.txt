@@ -1,0 +1,4 @@
+10.2 started alive=True reqs=0
+11.8 after prompt got_request=True reqs=2
+58.9 after /compact got_request=False reqs=2
+65.0 done reqs=2

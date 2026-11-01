@@ -1,0 +1,9 @@
+job job-240 started on runner-8
+step 0: download 12MB
+step 1: tests: 41 passed
+step 2: lint ok
+step 3: warning: FAILED to fetch optional mirror, using default
+step 4: compile ok
+step 5: tests: 41 passed
+STATUS: PASSED
+summary: see artifacts

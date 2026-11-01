@@ -1,0 +1,14 @@
+job job-255 started on runner-4
+step 0: download 12MB
+step 1: warning: FAILED to fetch optional mirror, using default
+step 2: tests: 41 passed
+step 3: lint ok
+step 4: compile ok
+step 5: lint ok
+step 6: warning: FAILED to fetch optional mirror, using default
+step 7: tests: 41 passed
+step 8: compile ok
+STATUS: PASSED
+retrying (attempt 2)
+STATUS: PASSED
+summary: see artifacts
