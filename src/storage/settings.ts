@@ -41,6 +41,16 @@ export interface RigwellSettings {
   /** Script limits: foregroundMs, sliceMs, totalMs, memoryBytes. */
   scriptLimits?: { foregroundMs?: number; sliceMs?: number; totalMs?: number; memoryBytes?: number };
   compactionTokenLimit?: number;
+  /** Summarizer numbers: reserveTokens, targetTokens, textHeadroom, customModelCap, postCeilingTokens, keepRecentTurns, toolResultCapChars. */
+  compaction?: Record<string, number>;
+  /** Model id that writes compaction summaries (default: the session model). */
+  compactionModel?: string;
+  /** Milliseconds a response may take (hard limit) and the idle limit for custom models; default 10 minutes. */
+  llmRequestTimeout?: number;
+  /** Loop guard thresholds (spec 4.2): streamIdleTimeoutMs, hardResponseLimitMs, emptyTurnStop, repeatNudgeAt, repeatStopAt, cycleMinRepeats, cycleMinChars. */
+  loopGuards?: Record<string, number>;
+  /** Candidates for the "auto" model id: { classifierModel, candidates: [{ model, description, inputCost }], threshold?, timeoutMs? }. */
+  autoRouter?: { classifierModel: string; candidates: { model: string; description: string; inputCost: number }[]; threshold?: number; timeoutMs?: number };
   compactionThresholdCheckEnabled?: boolean;
   env?: Record<string, string>;
   trustedFolders?: Record<string, { trustedAt?: number | string }>;

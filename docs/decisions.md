@@ -363,3 +363,113 @@ them into the loop. Each index.ts starts with an "Integration" comment.
     `promptVariant` and `toolDescriptionOverrides` do not exist in the session yet; when a later phase reads them from settings,
     a variant can carry them with no change here. Ship rule: all families hold, else per-model option, else do not ship.
 107. **Failure clusters:** same failKind, turn reason and normalized grader line, on at least 2 tasks and 2 models.
+
+## Phase 3: Cache + budget
+
+108. **Request builder** (`src/agent/request.ts`) owns request assembly: `[system][tools][history]`, the `user_only` filter, the
+    provider-change reasoning strip, and the cache markers. The builder also registers each main-chain request with the cache monitor.
+    A stored `is_error: false` on a tool result is dropped when the request is built, because the in-memory form has no field and a
+    resumed session must send the same bytes as before it was saved (found by the persistence test).
+109. **Breakpoints** (prompts.md section 4): four 1-hour markers in all: last system block and newest user message (set in the Anthropic
+    adapter), plus the `<skills>` block and the `<todos>` block of the context message. Without a skills block the marker moves to the last
+    block before `<session>`. Markers are a request-time `cache: true` flag on copies of the blocks (`TextBlock.cache`, never stored).
+110. **Tools array**: it is computed from (mode, autonomy, skip-permissions) only. Deferred loads never touch it. In `direct_only` it holds
+    the core tools, `load_tools`, `call_tool`, `Script`, `script_job` (the two new tools are always present so a later MCP connect needs no
+    array change); in `script_only` it is `Script` and `script_job`. Changing autonomy across the read-only line (Edit and Create appear)
+    or the model/mode does change the array; the monitor logs that with a cause ("autonomy changed (tool list)", "model changed"). Sending
+    Edit and Create at every autonomy level would avoid that break but changes the Phase 1 tool list, so it is listed as a proposal.
+111. **Deferred tools** (`src/agent/deferred.ts`): `Session.registerDeferredTool(tool)` / `unregisterDeferredTool(name)` (MCP will use them).
+    Names are announced in an `llm_only` reminder (`deferred-<uuid>` message) before the next user message; changes later are delta
+    reminders ("now available" / "no longer available"). Reminders produced while tools run ride as text blocks in the same user message as
+    the tool results (no extra consecutive user message). `load_tools` text is PROMPT_TEXT; `call_tool` has no text in prompts.md, so a short
+    description was written in code. A loaded tool is announced once with its signature. `ToolSearch` (keyword match over name and
+    description, all words required, or `select:a,b`; loads up to `limit`, default 5, `more` counts the rest) exists only as a Script binding.
+112. **Script bindings for deferred tools**: the sandbox `tools` object is now a Proxy. Names in the static list work as before; any other
+    name is forwarded to the host, which accepts it only for a loaded deferred tool (`tools.server.tool` forwards `server__tool`).
+    This is what lets a tool loaded by `tools.ToolSearch` be called in the same Script.
+113. **Permissions for deferred tools**: `call_tool` and a Script call to a loaded tool are judged by the target tool: category `read`
+    is allowed, anything else asks (no "always" option; spec 5.5.4 says MCP tools ask). `load_tools` and `ToolSearch` are allowed.
+114. **Persistence**: `<id>.settings.json` gains `loadedDeferredToolNames` and `announcedDeferredToolNames`. `load_session` restores both,
+    so a loaded tool stays loaded and a tool that registers later is callable at once. Phase 4 copies the loaded names into
+    `compaction_state`.
+115. **Cache monitor** (`src/agent/cache-monitor.ts`): per session, compares each request with the previous one block by block (system,
+    each tool, each message block; cache markers ignored). A miss logs the first divergent block and a cause (known causes from the
+    session, else inferred). Numbers: strict-append share over comparable requests (the first request has no predecessor), cache-read
+    share token weighted and median, last 20 divergences. `get_context_stats` returns them under `cache`.
+116. **get_context_stats** adds `breakdown` (estimated tokens, chars/4, per category: systemPrompt, tools, mcpTools, userInfo, agentsMd,
+    customAgents, skills, messages) and `breakdownAccuracy`. `used` stays exact when a model call has happened. Deferred reminders count
+    as mcpTools; `<environment>`, `<session>`, `<todos>` as userInfo; `<project_instructions>` as agentsMd; `<skills>` as skills.
+117. **Budget** (`src/agent/budget.ts`, `test/agent/budget.test.ts`): measured at autonomy high, empty temp dir: direct system 5,102 chars,
+    tools 18,077; script system 5,360, tools 7,863; context blocks 533. Budgets are those plus about 10 percent (direct 5,620 / 19,900,
+    script 5,900 / 8,650, context 1,000). A second test fails if a budget is more than 15 percent above the measured size.
+118. **warmup_cache**: builds the current prefix request, `max_tokens` 16; when history ends with an assistant message it adds a throwaway
+    user message and puts a breakpoint on the last history block, so the next real request finds the prefix. Not part of the monitored
+    chain, not stored; its usage is added to the session totals. Failures are logged, the method still returns `{}`. A running turn
+    makes it a no-op.
+119. **Fake servers** can simulate prefix caching (`startFakeAnthropic(script, { simulateCache: true })`, same for OpenAI): Anthropic
+    reads the longest earlier breakpoint that is a prefix and within 20 blocks of one of its own breakpoints; OpenAI reads the common
+    prefix once it is 1,024 tokens or more. Tokens are chars/4. Off by default.
+
+## Phase 4: Guards + compaction
+
+120. **Guard config** (`src/agent/guards.ts`): settings keys `llmRequestTimeout` (ms, default 600,000) and `loopGuards`
+    {streamIdleTimeoutMs, hardResponseLimitMs, emptyTurnStop 3, repeatNudgeAt 3, repeatStopAt 6, cycleMinRepeats 8, cycleMinChars 1200,
+    minCallsBetweenCompactions 2}. Idle limit: `loopGuards.streamIdleTimeoutMs`, else 240,000 when the model's baseUrl host is
+    `api.anthropic.com` (vendor-hosted), else `llmRequestTimeout`. The hard response limit is `loopGuards.hardResponseLimitMs`, else
+    `llmRequestTimeout`. A response header `x-response-time-limit-ms` sets the limit for that one response (spec says "a header"; the name is
+    Rigwell's choice).
+121. **Silent stream and hard limit** (`src/adapters/sse.ts`, `retry.ts`): the idle timer starts with the request and restarts on every received
+    chunk (SSE comment pings count as bytes). Both cuts are retryable `timeout` errors tagged `cause: idle | hard_limit`, so `llm_retry`
+    carries reason `timeout`. Hard limit: a cut is retried once (2 attempts); the second cut is not; a first cut that came later than
+    limit + 60 s is not retried either.
+122. **Mid-stream break**: unchanged from Phase 1 (retryable network error); the session now clears its partial-stream state on retry, and only
+    `message_done` content is stored. Retries reuse the same model, provider, base URL and request, so they hit the cache holder. There is no
+    provider rotation in this build.
+123. **Empty turns**: an answer with no text and no tool call (empty or thinking only) is retried once by the retry layer (`passEmpty`, spec
+    4.6.9), then reaches the loop guard: a user message `continue` after the 1st and 2nd, stop at the 3rd (texts from prompts.md 7.1). Stop and
+    repeat-stop are "completed" turns with a `create_message` notice, like the Script-wait stop. The throwaway `{}` answer is still stored.
+124. **Repeated calls**: a batch is its list of (tool name, canonical arguments) plus the results, with job/Script ids, UUIDs and `durationMs`
+    normalized away. Consecutive equal batches count; new results reset the count (polling is allowed). Nudge text is appended to the tool
+    results message exactly when the count reaches 3; at 6 the turn stops (prompts.md 7.2). Batches containing `script_job wait` skip this guard
+    (they have the 24-wait guard).
+125. **Output cycles**: while streaming, every 400 new characters the tail is checked (KMP smallest period over the last 1,200, 2,400, 4,800
+    or 9,600 characters); a cycle is a period p with window / p at least 8. The stream is cut, nothing of it is stored, the turn ends with an
+    `error` notification "the same N-character block repeated M times in the model output" and an `llm_only` transcript note (text is Rigwell's).
+    Thresholds are not in the spec; these are mine and configurable.
+126. **Todo nudge**: not built; there is no todo tool in this build.
+127. **Compaction** (`src/agent/compaction.ts`): trigger before each model request when the estimated context (last reported call + chars/4 of
+    what was added since; chars/4 of the whole prefix when no call was reported) reaches `compactionTokenLimit`, else the model's
+    `maxContextLimit` (default 200,000) minus the 16,000 reserve. `compactionThresholdCheckEnabled: false` turns it off; after a compaction
+    another automatic one waits `minCallsBetweenCompactions` model calls. Numbers (settings `compaction`): reserve 16,000, target 4,000,
+    headroom 8,192, custom cap 8,000, post ceiling 40,000, keepRecentTurns 2, toolResultCapChars 4,000. Summarizer limit = min(reserve,
+    model maxOutputTokens or 8,000); `max_tokens` = limit + 8,192, clamped to maxOutputTokens when set; both logged. The reserve is not grown
+    for carried items (there are none: no todos). The summarizer runs with reasoning off, no tools, on `compactionModelId` (session setting,
+    default from settings `compactionModel`, else the session model; for "auto", the routed model).
+128. **What is kept**: the recent turns kept verbatim are the last `keepRecentTurns` (2) turns, fewer if they exceed 40,000 minus the target
+    summary minus the re-injected context, and never all turns (something must be summarized; one huge turn is folded entirely). A cut falls on
+    a turn start (a user message without tool results), so tool calls and results are never split. The transcript sent to the summarizer drops
+    `user_only` messages and thinking, caps each tool call and result at 4,000 characters (then 1,500, 400, 100 if the window is too small),
+    and replaces environment, session, todos, project instruction, skills and long `<system-reminder>` blocks by the omission marker.
+    `customInstructions` are appended to the user message as a short paragraph (Rigwell text).
+129. **After compaction**: the history is one `llm_only` message `context-compact-<uuid>` (summary preamble, then the old context blocks as
+    they were, then one reminder with the loaded deferred tools' signatures and the still-deferred names), then the kept turns. System
+    blocks and tools are untouched; the cache monitor names the cause "compaction". Messages replaced are kept in `session.archived` for the
+    UI (`uiMessages()`); `load_session` shows the full conversation.
+130. **compaction_state record** (spec 12.1) is appended to the transcript with the spec's fields plus `reason`, `preambleMessageId`,
+    `preambleBlocks` (the rebuilt first message). `anchorMessage` is the last message the summary covers; on load the latest record gives
+    the preamble, and only messages after the anchor follow. `summaryTokens` is chars/4 of the summary. `loadedDeferredToolNames` is merged
+    with the settings file's list on load. Hooks (PreCompact) belong to Phase 5.
+131. **compact_session** compacts in place: `newSessionId` is the same id (the spec's record lives in the same transcript), `removedCount` the
+    number of messages replaced. It fails with CONFLICT while a turn runs, and with an internal error (history untouched) if there is
+    nothing to compact or the summarizer fails. `mode: "handoff"` (meaning not in the spec) keeps no recent turns: everything goes into the
+    summary. `session_compacted` carries `summaryId` (record id), `removedCount`, and `visibleBoundaryMessageId` = the first message kept
+    verbatim (null when none). Working state `compacting_conversation` is emitted during the summary.
+132. **Routing** (`src/agent/router.ts`): model id `auto`, with settings `autoRouter` {classifierModel, candidates [{model, description,
+    inputCost}], threshold 0.7, timeoutMs 10,000}. Per model request: classifier input = current request, last 8 tool calls, last 6 messages,
+    in that priority within 16,000 tokens (chars/4), long text cut to 2,000 characters at each end; 8,192 max output, low reasoning, no
+    retries. Pick = cheapest candidate with score at least the bar (ties: higher score), else the best, else (all zero) the first;
+    fallbacks by score. Reasons: policy (one candidate), hard, routine (75 percent or more qualify), task_fit, fallback (classifier failed,
+    first candidate). Recorded as `effectiveRouterModel` in the session settings. When the picked model fails after its retries, the next
+    fallback is tried (the cache monitor logs "router fallback"). Cleared on compaction. Tool mode is decided for the session model
+    ("auto" is direct_only unless overridden), not per routed model, so the tool list does not flip. The classifier prompt is Rigwell's own.
+    No image handling (images are not supported in this build).
