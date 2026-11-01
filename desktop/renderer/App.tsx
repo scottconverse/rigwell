@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { Automations, AutomationDetail } from "./components/Automations.tsx";
+import { TrustAsks } from "./components/Dialogs.tsx";
 import { Home } from "./components/Home.tsx";
 import { Missions, MissionDetailPage } from "./components/Missions.tsx";
 import { SessionScreen } from "./components/SessionScreen.tsx";
@@ -82,6 +83,7 @@ function App() {
         { id: "restart", label: "Restart background service", run: () => void bridge().daemon.restart() },
       ]} />}
       <Audio />
+      <TrustAsks />
     </div>
   );
 }

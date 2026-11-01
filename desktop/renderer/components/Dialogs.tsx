@@ -1,7 +1,8 @@
 // Small dialogs shared by several screens: folder trust (spec §5.6), rename, confirm, Connectors (§5.7) and Skills (§5.8).
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { bridge } from "../lib/rpc.ts";
-import type { SessionController } from "../lib/session.ts";
+import { app, useStore } from "../lib/app-model.ts";
+import { trustAsks, type SessionController } from "../lib/session.ts";
 
 export function Dialog({ title, onClose, children, wide }: { title: string; onClose(): void; children: React.ReactNode; wide?: boolean }) {
   useEffect(() => {
@@ -20,13 +21,14 @@ export function Dialog({ title, onClose, children, wide }: { title: string; onCl
 }
 
 /** Asks whether the user trusts the files in a folder before it is added to the projects list (spec §5.6). */
-export function TrustDialog({ folder, onTrust, onCancel }: { folder: string; onTrust(): void; onCancel(): void }) {
+export function TrustDialog({ folder, unlocks, cancelLabel, onTrust, onCancel }: { folder: string; unlocks?: string[]; cancelLabel?: string; onTrust(): void; onCancel(): void }) {
   return (
     <Dialog title="Trust this folder?" onClose={onCancel}>
       <p className="mono-line">{folder}</p>
       <p className="muted">A trusted folder lets the agent use the project settings, hooks, skills and tools that live inside it. Only trust folders whose contents you control.</p>
+      {unlocks && unlocks.length > 0 && <ul className="muted" aria-label="Trust unlocks">{unlocks.map((u) => <li key={u}>{u}</li>)}</ul>}
       <div className="dialog-actions">
-        <button onClick={onCancel}>Cancel</button>
+        <button onClick={onCancel}>{cancelLabel ?? "Cancel"}</button>
         <button className="primary" onClick={onTrust}>Trust folder</button>
       </div>
     </Dialog>
@@ -185,4 +187,14 @@ export function SkillsDialog({ ctl, cwd, onClose }: { ctl?: SessionController; c
       <div className="dialog-actions"><button onClick={onClose}>Close</button></div>
     </Dialog>
   );
+}
+
+/** The harness asks (rigwell.request_trust) whether to trust the folder of a session being created or resumed. Escape and the backdrop mean no. */
+export function TrustAsks() {
+  const st = useStore(trustAsks);
+  const a = st.asks[0];
+  if (!a) return null;
+  return <TrustDialog key={a.id} folder={a.cwd} unlocks={a.unlocks} cancelLabel="Don't trust"
+    onCancel={() => trustAsks.answer(a.id, false)}
+    onTrust={() => { trustAsks.answer(a.id, true); setTimeout(() => void app.refreshUserSettings(), 500); }} />;
 }
