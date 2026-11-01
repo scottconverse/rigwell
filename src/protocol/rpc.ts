@@ -36,8 +36,11 @@ export interface Envelope {
 export type RequestHandler = (method: string, params: Record<string, unknown>) => Promise<unknown>;
 
 /** Writes one line per message; escapes U+2028/U+2029; a single queue keeps lines whole. */
+const LS_RE = new RegExp("\\u2028", "g");
+const PS_RE = new RegExp("\\u2029", "g");
+
 export function encodeLine(msg: unknown): string {
-  return JSON.stringify(msg).replace(/ /g, "\\u2028").replace(/ /g, "\\u2029") + "\n";
+  return JSON.stringify(msg).replace(LS_RE, "\\u2028").replace(PS_RE, "\\u2029") + "\n";
 }
 
 export class RpcPeer {
