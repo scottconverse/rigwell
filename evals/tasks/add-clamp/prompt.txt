@@ -1,0 +1,1 @@
+Add an exported function clamp(n, lo, hi) to util.js. It returns lo when n < lo, hi when n > hi, otherwise n. Keep the existing double function.
