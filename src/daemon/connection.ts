@@ -23,6 +23,8 @@ export interface ConnectionOptions {
   /** Values from exec flags; they override what initialize_session asks for. */
   forced?: { autonomyLevel?: AutonomyLevel; skipPermissions?: boolean; modelId?: string };
   retryBaseDelayMs?: number;
+  /** Extra protocol methods (name without the prefix), e.g. the daemon's automation methods. */
+  extraMethods?: Record<string, (p: Record<string, unknown>) => unknown>;
   log?: (m: string) => void;
 }
 
@@ -211,6 +213,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
         return { used, remaining: Math.max(0, limit - used), limit, accuracy: used ? "exact" : "estimated", updatedAt: new Date().toISOString() };
       }
       default:
+        if (opts.extraMethods?.[method]) return opts.extraMethods[method](p);
         throw new RpcError(ErrorCodes.METHOD_NOT_FOUND, `Method not found or not in this build: ${METHOD_PREFIX}${method}`);
     }
   }
