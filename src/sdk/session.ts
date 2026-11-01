@@ -14,9 +14,29 @@ export interface PermissionRequest {
   options: { label: string; value: string }[];
   [k: string]: unknown;
 }
-export interface PermissionAnswer { selectedOption: string; comment?: string }
+/** `comment` reaches the model as guidance (or as the reason for a denial); `editedSpecContent` goes with `proceed_edit` (spec 5.5.7). */
+export interface PermissionAnswer { selectedOption: string; comment?: string; editedSpecContent?: string }
 export interface AskUserRequest { requestId?: string; toolCallId: string; questions: { index: number; topic?: string; question: string; options: string[]; multiSelect?: boolean }[] }
+/** `answer` is normally one of the offered options (several joined by ", " for multi-select), or any text the user typed: an "Other..." answer. */
 export interface AskUserAnswer { cancelled?: boolean; answers: { index: number; question: string; answer: string }[] }
+
+/** The label a UI shows for the extra choice that lets the user type their own answer. */
+export const ASK_USER_OTHER_LABEL = "Other...";
+
+/**
+ * Builds an AskUserAnswer from one reply per question (in order): an option, a list of options for a multi-select
+ * question, or free text that is not an option (the "Other..." answer). `null` leaves a question unanswered.
+ */
+export function buildAskUserAnswer(req: AskUserRequest, replies: (string | string[] | null)[]): AskUserAnswer {
+  const answers: AskUserAnswer["answers"] = [];
+  req.questions.forEach((q, i) => {
+    const r = replies[i];
+    if (r === null || r === undefined) return;
+    const text = Array.isArray(r) ? r.join(", ") : r;
+    if (text.trim()) answers.push({ index: q.index, question: q.question, answer: text });
+  });
+  return { answers };
+}
 /** rigwell.request_trust: the harness asks whether a folder with project config (hooks, skills, MCP servers...) may be trusted. */
 export interface TrustRequest { cwd: string; unlocks: string[] }
 export interface TrustAnswer { trust: boolean; remember?: boolean }
@@ -206,12 +226,13 @@ export class RigwellSession {
    * Send a user message. The request goes out immediately; iterate the result for notifications up to and
    * including `agent_turn_completed`, or just await `.done`.
    */
-  send(text: string, extra: { messageId?: string; params?: Record<string, unknown> } = {}): Turn {
+  send(text: string, extra: { messageId?: string; params?: Record<string, unknown>; images?: { mediaType: string; data: string }[]; files?: { name?: string; mediaType: string; data: string }[] } = {}): Turn {
     const messageId = extra.messageId ?? crypto.randomUUID();
     const turn = new TurnImpl(messageId);
     this.turns.add(turn);
     this.client.request("add_user_message", {
-      text, messageId, userMessageSource: "sdk", queuePlacement: "end_of_turn", ...(extra.params ?? {}),
+      text, messageId, userMessageSource: "sdk", queuePlacement: "end_of_turn",
+      ...(extra.images?.length ? { images: extra.images } : {}), ...(extra.files?.length ? { files: extra.files } : {}), ...(extra.params ?? {}),
     }).catch((e: Error) => { this.turns.delete(turn); turn.fail(e); });
     return turn;
   }

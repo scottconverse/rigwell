@@ -1,5 +1,5 @@
 // Rigwell TypeScript SDK. In-process transport (used by the TUI) lives in ./in-process.ts.
-export { run, createSession, connectToDaemon, openSession, readDaemonInfo, RigwellSession } from "./session.ts";
+export { run, createSession, connectToDaemon, openSession, readDaemonInfo, RigwellSession, buildAskUserAnswer, ASK_USER_OTHER_LABEL } from "./session.ts";
 export type {
   Notification, PermissionRequest, PermissionAnswer, AskUserRequest, AskUserAnswer, TrustRequest, TrustAnswer, PickOptionsRequest, PickOptionsAnswer,
   SessionOptions, ExecSessionOptions, DaemonOptions, DaemonInfo, Turn, TurnResult, RunResult,

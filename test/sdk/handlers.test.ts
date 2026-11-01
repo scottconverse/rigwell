@@ -7,7 +7,7 @@ import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer, FakeTurn } from "../fakes/types.ts";
 import { makeHome, makeRepo } from "../e2e/helpers.ts";
 import { startDaemon } from "../../src/daemon/daemon.ts";
-import { connectToDaemon, createSession, type Notification } from "../../src/sdk/index.ts";
+import { buildAskUserAnswer, connectToDaemon, createSession, type Notification } from "../../src/sdk/index.ts";
 
 const MODEL = "custom:Fake-Anthropic-0";
 const servers: FakeServer[] = [];
@@ -76,6 +76,34 @@ test("onAskUser answers reach the model", async () => {
   expect(typeof seen[0].requestId).toBe("string");
   expect(seen[0].questions[0]).toMatchObject({ index: 1, topic: "Lang", options: ["ts", "py"] });
   expect(JSON.stringify(server.requests[1].messages.at(-1))).toContain("py");
+  await s.close();
+}, 30000);
+
+test("onAskUser free text (Other...) reaches the model; buildAskUserAnswer shapes the replies", async () => {
+  const { server, repo, home } = await setup(ask());
+  const s = await createSession({
+    cwd: repo, env: { RIGWELL_HOME: home }, modelId: MODEL,
+    onAskUser: (req) => buildAskUserAnswer(req, ["rust, with a twist"]),
+  });
+  expect((await s.send("pick one").done).reason).toBe("completed");
+  expect(JSON.stringify(server.requests[1].messages.at(-1))).toContain("rust, with a twist");
+  await s.close();
+  const req = { toolCallId: "t", questions: [{ index: 1, question: "A?", options: ["x"] }, { index: 2, question: "B?", options: ["p", "q"], multiSelect: true }, { index: 3, question: "C?", options: [] }] };
+  expect(buildAskUserAnswer(req, ["x", ["p", "q"], null])).toEqual({ answers: [{ index: 1, question: "A?", answer: "x" }, { index: 2, question: "B?", answer: "p, q" }] });
+  expect(buildAskUserAnswer(req, ["  ", "mine"])).toEqual({ answers: [{ index: 2, question: "B?", answer: "mine" }] });
+}, 30000);
+
+test("an onPermission denial comment reaches the model", async () => {
+  const { repo, home } = await setup(write());
+  const results: string[] = [];
+  const s = await createSession({
+    cwd: repo, env: { RIGWELL_HOME: home }, modelId: MODEL,
+    onPermission: () => ({ selectedOption: "cancel", comment: "use a dry run first" }),
+    onNotification: (n) => { if (n.type === "tool_result") results.push(String(n.content)); },
+  });
+  await s.send("write").done;
+  expect(results.join("\n")).toContain("use a dry run first");
+  expect(existsSync(join(repo, "late.txt"))).toBe(false);
   await s.close();
 }, 30000);
 

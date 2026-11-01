@@ -12,6 +12,8 @@ export { stripAnsi, wrapText };
 const loaded = (n: number) => (n > 0 ? `Loaded +${n}` : "Not found");
 const TIPS = ["Press ? for help.", "Shift+Tab switches to spec mode to plan before editing.", "Use @ to pick a file path and ! to run a shell command."];
 
+const commentKind = (p: Panel) => p.kind === "permission" || p.kind === "batch" || p.kind === "exit_spec";
+
 function panelLines(p: Panel, s: TuiState, w: number, maxBody: number, st: ReturnType<typeof styler>): string[] {
   const out: string[] = [];
   const reqs = s.panels.filter((x) => x.action.type === "request");
@@ -28,7 +30,20 @@ function panelLines(p: Panel, s: TuiState, w: number, maxBody: number, st: Retur
     const line = `${i === p.selected ? "›" : " "} ${i + 1}. ${mark}${o.label}`;
     out.push(i === p.selected ? st.cyan(line) : line);
   });
-  out.push(st.dim(p.multi ? "Up/Down move · Space toggles · Enter confirms · Esc cancels" : `Up/Down move · Enter selects · 1-${Math.min(9, p.options.length)} quick select · Esc cancels`));
+  if (p.other?.typing) {
+    out.push(`  Your answer: ${p.other.text}_`);
+    out.push(st.dim("Type your answer · Enter sends it · Esc goes back to the options"));
+    return out;
+  }
+  if (p.commentMode || p.comment) {
+    const label = p.kind === "exit_spec" ? "Add guidance for the implementation" : "Comment";
+    out.push(`  ${label}: ${p.comment ?? ""}${p.commentMode ? "_" : ""}`);
+  }
+  if (p.editedSpec !== undefined) out.push(st.dim("  (the spec above is your edited version)"));
+  const extra = p.kind === "exit_spec" ? " · Ctrl+G edit the plan" : "";
+  if (p.commentMode) out.push(st.dim("Type your comment · Up/Down pick the option · Enter sends · Tab or Esc back to the options"));
+  else if (commentKind(p)) out.push(st.dim(`Up/Down move · Enter selects · 1-${Math.min(9, p.options.length)} quick select · Tab add a comment${extra} · Esc cancels`));
+  else out.push(st.dim(p.multi ? "Up/Down move · Space toggles · Enter confirms · Esc cancels" : `Up/Down move · Enter selects · 1-${Math.min(9, p.options.length)} quick select · Esc cancels`));
   return out;
 }
 
@@ -73,6 +88,7 @@ export function render(s: TuiState, o: RenderOptions): Screen {
       });
       cursorInBottom = { row: curRow, col: curCol };
     }
+    if (s.images.length) bottom.push(st.dim(s.images.map((_, i) => `[Image #${i + 1}]`).join(" ") + "  (sent with your next message)"));
     if (s.vim) bottom.push(st.dim(s.vimMode === "normal" ? "-- NORMAL --" : "-- INSERT --"));
     const menu = slashMenu(s);
     if (menu.length) {
@@ -95,6 +111,7 @@ export function render(s: TuiState, o: RenderOptions): Screen {
   if (mname) left.push(mname);
   if (s.reasoning) left.push(s.reasoning);
   if (!s.autoCompress) left.push("auto-compress off");
+  if (s.sandbox) left.push("SANDBOX");
   if (s.shellMode) left.push("Bash mode active • Esc to exit");
   const right: string[] = [];
   if (s.running && s.runStartedAt !== undefined) right.push(`${Math.max(0, Math.floor((s.now - s.runStartedAt) / 1000))}s`);

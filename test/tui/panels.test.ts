@@ -141,7 +141,7 @@ describe("ask_user panel", () => {
 
   test("a question with no options defaults to Yes/No", () => {
     const d = ev(driver(), { ...ask, params: { toolCallId: "a2", questions: [{ index: 1, question: "Proceed?", options: [] }] } });
-    expect(d.s.panels[0].options.map((o) => o.label)).toEqual(["Yes", "No"]);
+    expect(d.s.panels[0].options.map((o) => o.label)).toEqual(["Yes", "No", "Other..."]);
   });
 });
 

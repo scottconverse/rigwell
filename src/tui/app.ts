@@ -12,6 +12,7 @@ import { focusAllows, playSound, progressSequence, runStatusLine, soundSettings,
 import { loadCustomEntries, parseLoop } from "./customcmd.ts";
 import { buildView, statusLineInput } from "./views.ts";
 import { parseKeys, PASTE_OFF, PASTE_ON } from "./keys.ts";
+import { readClipboardImage } from "./clipboard.ts";
 import { render, stripAnsi } from "./render.ts";
 import { initialState, reduce } from "./reducer.ts";
 import type { Effect, TuiEvent, TuiState } from "./types.ts";
@@ -126,7 +127,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     try {
       switch (eff.type) {
         case "send":
-          await client!.request("add_user_message", { text: eff.text, messageId: eff.messageId, userMessageSource: "tui", ...(eff.queuePlacement ? { queuePlacement: eff.queuePlacement } : {}) }).catch((e) => {
+          await client!.request("add_user_message", { text: eff.text, messageId: eff.messageId, userMessageSource: "tui", ...(eff.queuePlacement ? { queuePlacement: eff.queuePlacement } : {}), ...(eff.images?.length ? { images: eff.images } : {}) }).catch((e) => {
             info(`Could not send: ${errText(e)}`, "error");
             dispatch({ type: "notification", n: { type: "agent_turn_completed", reason: "error" }, now: Date.now() });
           });
@@ -199,6 +200,12 @@ export async function runTui(opts: TuiOptions): Promise<number> {
         case "copy":
           if (tty) stdout.write(`\x1b]52;c;${Buffer.from(eff.text).toString("base64")}\x07`);
           return;
+        case "paste_image": {
+          const img = await readClipboardImage();
+          if (img) dispatch({ type: "image_pasted", image: img });
+          else info("No image on the clipboard (Ctrl+V pastes an image; paste text with your terminal's paste).", "error");
+          return;
+        }
         case "editor": {
           if (!tty) return;
           const dir = mkdtempSync(join(tmpdir(), "rigwell-tui-"));
@@ -208,7 +215,8 @@ export async function runTui(opts: TuiOptions): Promise<number> {
           const ed = process.env.VISUAL || process.env.EDITOR || "vi";
           spawnSync(ed, [file], { stdio: "inherit", shell: true });
           enterTerminal();
-          dispatch({ type: "editor_result", text: readFileSync(file, "utf8").replace(/\n$/, "") });
+          const edited = readFileSync(file, "utf8").replace(/\n$/, "");
+          dispatch(eff.target === "spec" ? { type: "spec_edited", text: edited } : { type: "editor_result", text: edited });
           return;
         }
         case "view": {
