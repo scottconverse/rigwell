@@ -58,7 +58,13 @@ export interface ManagerOptions {
   cleanupTimeoutMs?: number;
   now?: () => number;
   log?: (m: string) => void;
+  /** Called after a worktree is removed, whoever asked (cleanup, auto-delete, archive, housekeeping, failed start). */
+  onRemoved?: (e: RemovedWorktree) => void;
+  /** Trust bookkeeping for worktree folders (spec 18.1: mark trusted on create; 18.5: forget on removal). */
+  trust?: { mark(p: string): void; forget(p: string): void };
 }
+
+export interface RemovedWorktree { path: string; sessionId: string; repoRoot: string; branch: string | null }
 
 /** Absolute `worktreeDirectory` setting, else `<rigwell home>/worktrees`. A relative value is ignored with a warning. */
 export function resolveRoot(setting: unknown, warn?: (m: string) => void): string {
@@ -109,11 +115,15 @@ export interface CreateOptions {
   baseRef?: string;
   lifecycle?: Lifecycle;
   setupProfileId?: string;
+  /** Fetch the base branch (copy mode) or the branch (existing mode) from origin first. A failed fetch is not fatal. */
+  pullFromOrigin?: boolean;
 }
 
 export interface CreatedWorktree extends ManagedWorktree {
   include: IncludeResult;
   autoDeleted: string[];
+  /** Present when pullFromOrigin was asked: whether the fetch worked. */
+  fetched?: boolean;
 }
 
 export interface WorktreeStatus {
@@ -178,11 +188,24 @@ export class WorktreeManager {
     mkdirSync(path.dirname(wtPath), { recursive: true });
 
     const lifecycle = c.lifecycle ?? "ephemeral";
+    let fetched: boolean | undefined;
+    let freshBase: string | undefined;
+    if (c.pullFromOrigin) {
+      const wanted = c.branchMode === "existing" ? c.branch : (c.baseRef ?? (await git(repoRoot, ["symbolic-ref", "--short", "-q", "HEAD"])).stdout.trim());
+      const name = wanted?.replace(/^origin\//, "");
+      if (name) {
+        const f = await git(repoRoot, ["fetch", "--quiet", "origin", `+refs/heads/${name}:refs/remotes/origin/${name}`], { timeoutMs: CHECKOUT_TIMEOUT_MS });
+        fetched = f.code === 0;
+        if (!fetched) this.o.log?.(`[worktree] fetch from origin failed, using the local base: ${f.stderr.trim()}`);
+        else freshBase = `origin/${name}`;
+      } else fetched = false;
+    }
     let branch: string;
     let generated = false;
     let args: string[];
     let baseRef = c.baseRef ?? "HEAD";
     let baseBranch = "HEAD";
+    if (freshBase && c.branchMode !== "existing") baseRef = freshBase; // a fetched base replaces the possibly stale local one
 
     if (c.branchMode === "existing") {
       if (!c.branch) throw new WorktreeError("branch_missing", "branch is required for existing mode");
@@ -236,7 +259,8 @@ export class WorktreeManager {
       createdAt: t, lastUsedAt: t, generatedBranch: generated,
     };
     this.writeMeta(await gitDirOf(wtPath), meta);
-    return { ...meta, path: wtPath, include, autoDeleted };
+    try { this.o.trust?.mark(wtPath); } catch (e) { this.o.log?.(`[worktree] could not mark ${wtPath} trusted: ${(e as Error).message}`); }
+    return { ...meta, path: wtPath, include, autoDeleted, ...(fetched !== undefined ? { fetched } : {}) };
   }
 
   private async rollback(repoRoot: string, wtPath: string, newBranch?: string) {
@@ -415,7 +439,7 @@ export class WorktreeManager {
   }
 
   /** Commits on the branch found on no other branch and no remote. */
-  private async localOnlyCommits(wtPath: string, branch: string | null): Promise<string[]> {
+  async localOnlyCommits(wtPath: string, branch: string | null): Promise<string[]> {
     if (!branch) return [];
     const r = await git(wtPath, ["rev-list", branch, `--not`, `--exclude=${branch}`, "--branches", "--remotes"]);
     return r.code === 0 ? r.stdout.split("\n").filter(Boolean) : [];
@@ -454,10 +478,12 @@ export class WorktreeManager {
     if (rm.code !== 0) throw new WorktreeError("git_failed", `git worktree remove failed: ${rm.stderr.trim()}`);
     await git(wt.repoRoot, ["worktree", "prune"]);
     this.removeEmptyGroup(wt.path);
+    try { this.o.trust?.forget(wt.path); } catch { /* best effort */ }
     let branchDeleted = false;
     if (opts.deleteLocalBranch && insp.branch) branchDeleted = (await git(wt.repoRoot, ["branch", "-D", insp.branch])).code === 0;
     let remoteDeleted = false;
     if (opts.deleteRemoteBranch && insp.branch) remoteDeleted = (await git(wt.repoRoot, ["push", "origin", "--delete", insp.branch])).code === 0;
+    try { this.o.onRemoved?.({ path: wt.path, sessionId: wt.sessionId, repoRoot: wt.repoRoot, branch: insp.branch }); } catch { /* listener errors never fail a removal */ }
     return { path: wt.path, branch: insp.branch, branchDeleted, remoteDeleted, cleanup };
   }
 
@@ -498,6 +524,56 @@ export class WorktreeManager {
     }
     return removed;
   }
+
+  // ---- rename after title, archive ---------------------------------------------------
+
+  /**
+   * Spec 18.2: once the session has a generated title, rename a generated branch to a slug of the title, unless the
+   * branch has commits found nowhere else, has an upstream, was picked by the user, or was already renamed.
+   * Returns the new branch name, or null when nothing changed.
+   */
+  async renameGeneratedBranch(wtPath: string, title: string): Promise<string | null> {
+    const wt = await this.get(wtPath);
+    if (!wt || !wt.generatedBranch || !title.trim()) return null;
+    const current = (await git(wt.path, ["symbolic-ref", "--short", "-q", "HEAD"])).stdout.trim();
+    if (!current || current !== wt.branch) return null; // the user switched branches
+    if ((await git(wt.path, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])).code === 0) return null;
+    if ((await this.localOnlyCommits(wt.path, current)).length > 0) return null;
+    const wanted = branchSlug(title);
+    if (wanted === current) { await this.updateMeta(wt.path, { generatedBranch: false }); return null; }
+    const next = await this.freeBranchName(wt.repoRoot, wanted);
+    const r = await git(wt.path, ["branch", "-m", current, next]);
+    if (r.code !== 0) { this.o.log?.(`[worktree] branch rename failed: ${r.stderr.trim()}`); return null; }
+    await this.updateMeta(wt.path, { branch: next, generatedBranch: false });
+    return next;
+  }
+
+  /** The managed worktree that belongs to a session, if any. */
+  async forSession(sessionId: string): Promise<ManagedWorktree | null> {
+    return (await this.list()).find((w) => w.sessionId === sessionId) ?? null;
+  }
+
+  /** True when removing the worktree would lose nothing and nothing else needs it. */
+  async isSafeToRemove(w: ManagedWorktree): Promise<boolean> {
+    if (w.pinned || w.reserved || this.o.inUse?.(w.path)) return false;
+    const insp = await this.inspectDeletion(w.path);
+    return insp.userChangedFiles.length === 0 && insp.localOnlyCommits.length === 0;
+  }
+
+  /**
+   * Spec 18.5: archiving a session that owns an ephemeral worktree removes it if safe.
+   * Returns the removed path, or null when the worktree was kept.
+   */
+  async removeForArchivedSession(sessionId: string): Promise<string | null> {
+    const w = await this.forSession(sessionId);
+    if (!w || w.lifecycle !== "ephemeral") return null;
+    if (!(await this.isSafeToRemove(w))) return null;
+    try { await this.remove(w.path); return w.path; }
+    catch (e) { this.o.log?.(`[worktree] archive removal skipped ${w.path}: ${(e as Error).message}`); return null; }
+  }
+
+  /** Time of the worktree's setup receipt (housekeeping orphan rule). */
+  async receiptTime(wtPath: string): Promise<number | null> { return (await this.readReceipt(wtPath))?.time ?? null; }
 
   /** Marks a session's worktree as just kept by the user, so auto-delete leaves it alone for the recent window. */
   async keep(wtPath: string) { await this.touch(wtPath); }

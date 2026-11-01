@@ -17,7 +17,7 @@ describe("render", () => {
   });
 
   test("layout top to bottom: header, transcript, input, status bar, footer (spec 13.1)", () => {
-    let d = driver({ header: { agentsMd: true }, autonomy: "medium", reasoning: "high" });
+    let d = driver({ header: { agentsMd: true, skills: 0, mcps: 0, issues: 0 }, autonomy: "medium", reasoning: "high" });
     d = key(type(d, "do the thing"), "enter");
     d = note(d, { type: "assistant_text_delta", messageId: "a", blockIndex: 0, textDelta: "Working on it" });
     const lines = plain(d).lines;

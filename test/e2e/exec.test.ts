@@ -5,6 +5,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
+import { startFakeChat } from "../fakes/fake-chat.ts";
 import { startFakeOpenAI } from "../fakes/fake-openai.ts";
 import type { FakeServer } from "../fakes/types.ts";
 import { CLI, RpcChild, fixBugScript, makeHome, makeRepo } from "./helpers.ts";
@@ -15,6 +16,7 @@ afterAll(() => servers.forEach((s) => s.stop()));
 const PROVIDERS = [
   { provider: "anthropic" as const, start: startFakeAnthropic, modelId: "custom:Fake-Anthropic-0" },
   { provider: "openai" as const, start: startFakeOpenAI, modelId: "custom:Fake-OpenAI-0" },
+  { provider: "generic-chat-completion-api" as const, start: startFakeChat, modelId: "custom:Fake-Chat-0" },
 ];
 
 describe.each(PROVIDERS)("exec end to end: $provider", ({ provider, start, modelId }) => {
@@ -22,7 +24,7 @@ describe.each(PROVIDERS)("exec end to end: $provider", ({ provider, start, model
     const server = await start(fixBugScript());
     servers.push(server);
     const repo = makeRepo();
-    const name = provider === "anthropic" ? "Fake Anthropic" : "Fake OpenAI";
+    const name = provider === "anthropic" ? "Fake Anthropic" : provider === "openai" ? "Fake OpenAI" : "Fake Chat";
     const home = makeHome([{ provider, url: server.url, displayName: name }]);
 
     const c = new RpcChild(["exec", "--input-format", "stream-jsonrpc", "--output-format", "stream-jsonrpc", "--auto", "low"], { cwd: repo, env: { RIGWELL_HOME: home } });
@@ -69,7 +71,7 @@ describe.each(PROVIDERS)("exec end to end: $provider", ({ provider, start, model
     const server = await start(fixBugScript());
     servers.push(server);
     const repo = makeRepo();
-    const home = makeHome([{ provider, url: server.url, displayName: provider === "anthropic" ? "Fake Anthropic" : "Fake OpenAI" }]);
+    const home = makeHome([{ provider, url: server.url, displayName: provider === "anthropic" ? "Fake Anthropic" : provider === "openai" ? "Fake OpenAI" : "Fake Chat" }]);
     const p = Bun.spawn(["bun", CLI, "exec", "--auto", "low", "check.js fails. Fix the bug."], { cwd: repo, env: { ...process.env, RIGWELL_HOME: home }, stdout: "pipe", stderr: "pipe" });
     const [out, code] = [await new Response(p.stdout).text(), await p.exited];
     expect(code).toBe(0);

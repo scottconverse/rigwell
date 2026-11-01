@@ -1,8 +1,9 @@
 // Automation manager: scheduler loop, dispatch, retry-once-then-degraded, webhook delivery rules (spec §16.3-16.5).
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createHash, createHmac, timingSafeEqual, randomUUID } from "node:crypto";
 import { rigwellHome } from "../storage/paths.ts";
+import { readProjectRegistry, writeProjectRegistry } from "./projects.ts";
 import type { AutonomyLevel } from "../core/types.ts";
 import type { HeadlessRunner } from "./runner.ts";
 import { machineTimeZone, nextRun, slotsBetween } from "./schedule.ts";
@@ -19,11 +20,16 @@ export interface Limits {
   tickMs: number; sleepGapMs: number; resumeHoldMs: number; retryDelayMs: number;
   maxPerTick: number; maxConcurrent: number; startTimeoutMs: number; maxRunMs: number;
   dedupeWindowMs: number; maxBodyBytes: number;
+  /** Auto-pause after this many failed runs in a row (each counted after its retry also failed). */
+  maxConsecutiveFailures: number;
+  /** Auto-pause when the first slot after the anchor is older than this (spec 16.3: 10 days). */
+  missedRunsPauseMs: number;
 }
 export const DEFAULT_LIMITS: Limits = {
   tickMs: 60_000, sleepGapMs: 150_000, resumeHoldMs: 150_000, retryDelayMs: 5 * 60_000,
   maxPerTick: 2, maxConcurrent: 3, startTimeoutMs: 3 * 60_000, maxRunMs: 6 * 3600_000,
   dedupeWindowMs: 60_000, maxBodyBytes: 256 * 1024,
+  maxConsecutiveFailures: 3, missedRunsPauseMs: 10 * 24 * 3600_000,
 };
 
 export interface ManagerOptions {
@@ -33,6 +39,8 @@ export interface ManagerOptions {
   /** Project folders whose `.rigwell/automations` are scanned too. */
   projectDirs?: string[];
   log?: (m: string) => void;
+  /** Called after an automation paused itself (missed_runs or consecutive_failures). */
+  onAutoPaused?: (a: Automation, reason: "missed_runs" | "consecutive_failures") => void;
 }
 
 interface Dispatch { trigger: TriggerKind; payload?: string; attempt: number; scheduledFor?: number; catchUp?: boolean; missedSlots?: number }
@@ -50,13 +58,25 @@ export class AutomationManager {
   private holdUntil = 0;
   private timer?: ReturnType<typeof setInterval>;
   private seen = new Map<string, Map<string, number>>();
+  /** Sleep spans seen by the tick loop: a run that overlaps one and fails is flagged host_slept. */
+  private sleeps: { from: number; to: number }[] = [];
   projectDirs: Set<string>;
   onChange?: () => void;
 
   constructor(private opts: ManagerOptions) {
     this.clock = opts.clock ?? systemClock;
     this.limits = { ...DEFAULT_LIMITS, ...opts.limits };
-    this.projectDirs = new Set(opts.projectDirs ?? []);
+    // Known project folders survive restarts: the registry file plus any folders given explicitly.
+    this.projectDirs = new Set([...readProjectRegistry(), ...(opts.projectDirs ?? [])].map((d) => resolve(d)));
+    if (opts.projectDirs?.length) writeProjectRegistry([...this.projectDirs]);
+  }
+
+  /** Remembers a project folder so its `.rigwell/automations` is scanned now and after restarts. */
+  addProject(dir: string) {
+    const d = resolve(dir);
+    if (this.projectDirs.has(d)) return;
+    this.projectDirs.add(d);
+    writeProjectRegistry([...this.projectDirs]);
   }
 
   private log(m: string) { this.opts.log?.(`[automations] ${m}`); }
@@ -86,7 +106,7 @@ export class AutomationManager {
 
   create(fm: Frontmatter, body: string, projectDir?: string): Automation {
     const full: Frontmatter = { ...fm, timezone: fm.timezone ?? machineTimeZone() };
-    if (projectDir) this.projectDirs.add(projectDir);
+    if (projectDir) this.addProject(projectDir);
     const a = createAutomationFolder(projectDir ? projectAutomationsRoot(projectDir) : automationsRoot(), full, body, projectDir ? "project" : "home");
     writeState(a, { createdAt: this.clock.now() }); // creating never starts a run
     this.onChange?.();
@@ -96,6 +116,8 @@ export class AutomationManager {
   update(id: string, patch: Partial<Frontmatter>, body?: string): Automation {
     const a = this.find(id);
     updateAutomationFolder(a, patch, body);
+    // A resume (by the user) clears an automatic pause and starts the missed-run clock again.
+    if (patch.paused === false && a.fm.paused) writeState(a, { pausedReason: undefined, pausedAt: undefined, consecutiveFailures: undefined, resumedAt: this.clock.now() });
     this.onChange?.();
     return this.find(id);
   }
@@ -113,6 +135,15 @@ export class AutomationManager {
 
   /** True when at least one valid automation uses the webhook trigger. */
   hasWebhooks() { return this.list().some((a) => a.isValid && a.fm.trigger === "webhook"); }
+
+  /** Pauses an automation by itself and records why. */
+  private autoPause(a: Automation, reason: "missed_runs" | "consecutive_failures") {
+    try { updateAutomationFolder(a, { paused: true }); } catch (e) { this.log(`auto-pause of "${a.fm.name}" failed: ${(e as Error).message}`); return; }
+    writeState(a, { pausedReason: reason, pausedAt: this.clock.now(), retry: undefined });
+    this.log(`"${a.fm.name}" paused automatically (${reason})`);
+    this.opts.onAutoPaused?.(a, reason);
+    this.onChange?.();
+  }
 
   nextRunAt(a: Automation): number | undefined {
     if (!a.isValid || a.fm.paused || !a.schedule || a.fm.trigger === "webhook") return undefined;
@@ -132,6 +163,8 @@ export class AutomationManager {
     const now = this.clock.now();
     if (this.lastTickAt !== undefined && now - this.lastTickAt > this.limits.sleepGapMs) {
       this.holdUntil = now + this.limits.resumeHoldMs; // the machine slept: wait before dispatching
+      this.sleeps.push({ from: this.lastTickAt, to: now });
+      this.sleeps = this.sleeps.slice(-20);
       this.log("sleep detected; holding dispatch");
     }
     this.lastTickAt = now;
@@ -149,9 +182,10 @@ export class AutomationManager {
     for (const a of all) {
       if (!room()) break;
       if (!a.isValid || a.fm.paused || !a.schedule || a.fm.trigger === "webhook" || this.running.has(a.id) || a.state.retry) continue;
-      const anchor = a.state.lastRunAt ?? a.state.createdAt;
+      const anchor = Math.max(a.state.lastRunAt ?? a.state.createdAt, a.state.resumedAt ?? 0);
       const first = nextRun(a.schedule, anchor, a.timezone, a.state.createdAt);
       if (first === undefined || first > now) continue;
+      if (now - first > this.limits.missedRunsPauseMs) { this.autoPause(a, "missed_runs"); continue; }
       const missed = Math.max(0, slotsBetween(a.schedule, anchor, now, a.timezone, a.state.createdAt).length - 1);
       dispatched++;
       this.begin(a, { trigger: "schedule", attempt: 1, scheduledFor: first, catchUp: now - first >= 60_000, missedSlots: missed });
@@ -197,12 +231,18 @@ export class AutomationManager {
       result = { ok: false, failureReason: "dispatch_exception" as const, errorMessage: (e as Error).message, text: "", sessionId: undefined, modelFallback: undefined };
     }
     const finishedAt = this.clock.now();
+    // A failure while the machine slept is the host's doing, not the automation's.
+    const slept = !result.ok && (this.sleeps.some((x) => x.to >= rec.startedAt && x.from <= finishedAt) ||
+      (this.lastTickAt !== undefined && finishedAt - this.lastTickAt > this.limits.sleepGapMs && this.timer !== undefined));
+    if (!result.ok && slept) result = { ...result, failureReason: "host_slept" as const };
+    else if (!result.ok && result.mcpUnavailable && result.failureReason === "agent_error") result = { ...result, failureReason: "mcp_unavailable" as const };
     const runNo = a.state.runCount + 1;
     const out: RunRecord = {
       ...rec, sessionId: result.sessionId, status: result.ok ? "success" : "failure", finishedAt,
       hadAssistantResponse: result.text.length > 0,
       ...(result.ok ? {} : { failureReason: result.failureReason, errorMessage: result.errorMessage }),
       ...(result.modelFallback ? { modelFallback: result.modelFallback } : {}),
+      ...(result.mcpUnavailable ? { mcpUnavailable: true } : {}),
     };
     try {
       mkdirSync(join(a.dir, "reports"), { recursive: true });
@@ -212,10 +252,18 @@ export class AutomationManager {
     } catch { /* reports are best effort */ }
     saveRun(a, out);
     const patch: Parameters<typeof writeState>[1] = { lastRunStatus: out.status, lastRunSessionId: out.sessionId, runCount: runNo };
-    if (out.status === "success") { patch.health = undefined; patch.retry = undefined; }
+    let pauseFor: "consecutive_failures" | undefined;
+    if (out.status === "success") { patch.health = undefined; patch.retry = undefined; patch.consecutiveFailures = undefined; }
     else if (d.attempt < 2) patch.retry = { at: finishedAt + this.limits.retryDelayMs, trigger: d.trigger, payload: d.payload, scheduledFor: d.scheduledFor };
-    else { patch.health = "degraded"; patch.retry = undefined; }
+    else {
+      patch.health = "degraded"; patch.retry = undefined;
+      if (out.failureReason !== "host_slept") {
+        patch.consecutiveFailures = (a.state.consecutiveFailures ?? 0) + 1;
+        if (patch.consecutiveFailures >= this.limits.maxConsecutiveFailures) pauseFor = "consecutive_failures";
+      }
+    }
     writeState(a, patch);
+    if (pauseFor) this.autoPause(a, pauseFor);
     rmSync(join(this.runStateDir(), `${a.id}.json`), { force: true });
     this.log(`run ${rec.runId} of "${a.fm.name}" ${out.status}${out.failureReason ? ` (${out.failureReason})` : ""}`);
     this.onChange?.();

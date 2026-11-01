@@ -16,13 +16,14 @@ import { streamWithRetry } from "../adapters/retry.ts";
 import { toolsForSession } from "../tools/registry.ts";
 import { decide } from "../permissions/gate.ts";
 import { DEFAULT_COMMAND_LISTS } from "../permissions/lists.ts";
-import { discardSessionWorktree, handleWorktreeMethod, releaseWorktree, runSessionSetup, startSessionWorktree, worktreeSettings, type SessionWorktree } from "../worktree/connect.ts";
+import { discardSessionWorktree, handleWorktreeMethod, onSessionTitleUpdated, releaseWorktree, runSessionSetup, startSessionWorktree, worktreeSettings, type SessionWorktree } from "../worktree/connect.ts";
 import type { ToolExecutionMode } from "../core/types.ts";
 import { HookRunner, loadHooksConfig } from "../hooks/index.ts";
 import { fromInitConfigs, type McpServerInitConfig } from "../mcp/index.ts";
 import { loadAgents } from "../subagents/agents.ts";
 import { TaskLimits } from "../subagents/task.ts";
 import { forkSession } from "../storage/fork.ts";
+import { RewindError, rewindSession } from "../snapshots/index.ts";
 
 export interface ConnectionOptions {
   /** The client can answer rigwell.request_permission (stream-jsonrpc). False for plain `exec "prompt"`. */
@@ -65,8 +66,13 @@ export function createConnection(write: (line: string) => void, opts: Connection
 
   const peer: RpcPeer = new RpcPeer(write, (m, p) => handle(m, p), opts.log);
 
-  const notify = (n: Record<string, unknown>) =>
+  const notify = (n: Record<string, unknown>) => {
     peer.notify(METHOD_PREFIX + "session_notification", { ...(session ? { sessionId: session.id } : {}), notification: n });
+    // A generated title renames a generated worktree branch (spec 18.2).
+    if (n.type === "session_title_updated" && n.updateType !== "manual" && worktree && session && typeof n.title === "string") {
+      void onSessionTitleUpdated(session.id, n.title, undefined, opts.log).catch(() => {});
+    }
+  };
 
   function need(): Session {
     if (!session) throw new RpcError(ErrorCodes.SESSION_DISCONNECTED, "No session: call initialize_session or load_session first");
@@ -253,7 +259,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
       case "add_user_message": {
         const s = need();
         if (typeof p.text !== "string" || !p.text.trim()) throw new RpcError(ErrorCodes.INVALID_PARAMS, "text is required");
-        s.addUserMessage(p.text, typeof p.messageId === "string" ? p.messageId : undefined);
+        s.addUserMessage(p.text, typeof p.messageId === "string" ? p.messageId : undefined, typeof p.userMessageSource === "string" ? p.userMessageSource : undefined);
         return {};
       }
       case "interrupt_session": need().interrupt(); return {};
@@ -328,6 +334,18 @@ export function createConnection(write: (line: string) => void, opts: Connection
         const tags = Array.isArray(p.tags) ? (p.tags as any[]).filter((t) => t && typeof t.name === "string") : undefined;
         const dest = forkSession(files!, { title: p.title as string | undefined, tags });
         return { newSessionId: dest.id };
+      }
+      case "rewind_session": {
+        const s = need();
+        if (typeof p.messageId !== "string" || !p.messageId) throw new RpcError(ErrorCodes.INVALID_PARAMS, "messageId is required");
+        try {
+          return await rewindSession({ session: s, messageId: p.messageId, restoreFiles: p.restoreFiles === true, force: p.force === true });
+        } catch (e) {
+          if (!(e instanceof RewindError)) throw e;
+          const code = e.code === "not_found" ? ErrorCodes.ENTITY_NOT_FOUND
+            : e.code === "busy" || e.code === "stale" ? ErrorCodes.CONFLICT : ErrorCodes.INVALID_PARAMS;
+          throw new RpcError(code, e.message, { reason: e.code, ...(e.files ? { files: e.files } : {}) });
+        }
       }
       case "list_tools": {
         const s = need();

@@ -1,5 +1,7 @@
 // Pure TUI reducer: (state, event) -> {state, effects}. No I/O, no clock, no randomness (spec §13).
 import { AUTONOMY_HELP, COMMANDS, KEY_HELP, findCommand, matchCommands } from "./commands.ts";
+import { expandEntry, parseLoop } from "./customcmd.ts";
+import { plainStyler, transcriptLines } from "./transcript.ts";
 import { formatContext, type ContextStats } from "./context.ts";
 import type { Effect, Item, Key, Panel, Step, TuiEvent, TuiState } from "./types.ts";
 
@@ -15,7 +17,7 @@ const zeroUsage = () => ({ inputTokens: 0, outputTokens: 0, cacheCreationTokens:
 export function initialState(o: InitOptions): TuiState {
   return {
     version: o.version ?? "0.1.0", cwd: o.cwd, homeDir: o.homeDir ?? "~/.rigwell", idPrefix: o.idPrefix ?? "tui", counter: 0,
-    header: { agentsMd: o.agentsMd ?? false },
+    header: { agentsMd: o.agentsMd ?? false, skills: 0, mcps: 0, issues: 0 }, rows: 24, cols: 80, scroll: 0, custom: [],
     modelId: o.modelId ?? "", reasoning: o.reasoning ?? "high", autonomy: o.autonomy ?? "off", mode: o.mode ?? "auto", models: [],
     working: "idle", running: false, now: 0, contextUsed: 0, contextLimit: 0, tokenUsage: zeroUsage(), turns: 0,
     items: [], detailed: false, showThinking: false, input: { text: "", cursor: 0 }, history: [], historyIndex: null, draft: "",
@@ -34,7 +36,7 @@ export const contextPercent = (s: TuiState): string | null => {
 export function slashMenu(s: TuiState) {
   const t = s.input.text;
   if (!t.startsWith("/") || /[\s]/.test(t) || s.menuDismissed || s.panels.length || s.overlay) return [];
-  return matchCommands(t.slice(1));
+  return matchCommands(t.slice(1), s.custom);
 }
 
 const info = (text: string, level: "info" | "error" = "info"): Item => ({ kind: "info", text, level });
@@ -202,6 +204,22 @@ function finishPanel(s: TuiState, panel: Panel, picked: number[]): Step {
   if (a.type === "confirm") return { state, effects: picked.length && panel.options[picked[0]].value === "yes" ? a.effects : [] };
   if (a.type === "model") return { state: { ...state, hint: `Model: ${panel.options[picked[0]]?.label}` }, effects: [{ type: "settings", patch: { modelId: panel.options[picked[0]].value } }] };
   if (a.type === "resume") return { state, effects: [{ type: "resume", sessionId: panel.options[picked[0]].value }] };
+  if (a.type === "rewind_pick") {
+    const id = panel.options[picked[0]].value;
+    const text = panel.rows?.find((r) => r.id === id)?.detail ?? "";
+    const mode: Panel = {
+      id: "rewind-mode", kind: "select", action: { type: "rewind_mode", messageId: id, text }, title: "Rewind to this message",
+      body: [text.split("\n")[0].slice(0, 100), "Later messages are removed from the session. The message text goes back to the input box."],
+      options: [{ label: "Rewind conversation and restore files", value: "files" }, { label: "Rewind conversation only", value: "conv" }, { label: "Cancel", value: "cancel" }],
+      selected: 0, checked: [],
+    };
+    return { state: { ...state, panels: [...state.panels, mode] }, effects: [] };
+  }
+  if (a.type === "rewind_mode") {
+    const v = panel.options[picked[0]].value;
+    if (v === "cancel") return { state, effects: [] };
+    return { state, effects: [{ type: "rewind", messageId: a.messageId, restoreFiles: v === "files" }] };
+  }
   const value = picked.map((i) => panel.options[i].value);
   if (a.method === "request_permission") return { state, effects: [{ type: "answer", requestId: a.requestId, method: a.method, result: { selectedOption: value[0] } }] };
   if (a.method === "pick_options") return { state, effects: [{ type: "answer", requestId: a.requestId, method: a.method, result: { selectedIds: value } }] };
@@ -254,7 +272,7 @@ function messagesToItems(messages: any[]): Item[] {
   for (const m of messages) {
     if (m.visibility === "llm_only") continue;
     for (const b of m.content ?? []) {
-      if (m.role === "user" && b.type === "text") items.push({ kind: "user", text: b.text });
+      if (m.role === "user" && b.type === "text") items.push({ kind: "user", text: b.text, id: m.id });
       else if (m.role === "assistant" && b.type === "text") items.push({ kind: "assistant", id: `${m.id}:${items.length}`, text: b.text });
       else if (b.type === "tool_use") { const t = { kind: "tool" as const, id: b.id, name: b.name, input: b.input ?? {}, status: "ok" as const }; tools.set(b.id, t); items.push(t); }
       else if (b.type === "tool_result") {
@@ -306,8 +324,12 @@ function notification(s: TuiState, n: { type: string; [k: string]: any }): Step 
       const live = typeof u.fullOutput === "string" ? u.fullOutput : typeof u.text === "string" ? u.text : undefined;
       return { state: live === undefined ? s : { ...s, items: upsertTool(s.items, n.toolUseId, { name: n.toolName, live }) }, effects: [] };
     }
-    case "tool_result":
-      return { state: { ...s, items: upsertTool(s.items, n.toolUseId, { status: n.isError ? "error" : "ok", output: resultText(n.content) }) }, effects: [] };
+    case "tool_result": {
+      // Steering messages are delivered by the harness after the next tool call (queuePlacement end_of_loop): show them now.
+      const items = upsertTool(s.items, n.toolUseId, { status: n.isError ? "error" : "ok", output: resultText(n.content) });
+      const steer = s.pending.steer;
+      return { state: { ...s, items: steer.length ? [...items, ...steer.map((text): Item => ({ kind: "user", text }))] : items, pending: steer.length ? { ...s.pending, steer: [] } : s.pending }, effects: [] };
+    }
     case "session_token_usage_changed": {
       const l = n.lastCallTokenUsage;
       return { state: { ...s, tokenUsage: { ...s.tokenUsage, ...(n.tokenUsage ?? {}) }, contextUsed: l ? (l.inputTokens ?? 0) + (l.cacheReadTokens ?? 0) : s.contextUsed }, effects: [] };
@@ -324,17 +346,21 @@ function notification(s: TuiState, n: { type: string; [k: string]: any }): Step 
       // Requests still on screen belong to the finished turn: the harness settled them as cancelled.
       const dead = s.panels.filter((p) => p.action.type === "request");
       const effects: Effect[] = dead.map((p) => ({ type: "answer", requestId: (p.action as any).requestId, method: (p.action as any).method, result: cancelResult(p)!.result }));
+      // Steering messages the harness did not deliver mid-turn run as the next turn on its side: show them in the transcript.
+      const flushed: Item[] = n.reason === "cancelled" ? [] : s.pending.steer.map((text): Item => ({ kind: "user", text }));
       let state: TuiState = {
         ...s, running: false, working: "idle", runStartedAt: undefined, turns: s.turns + 1, panels: s.panels.filter((p) => p.action.type !== "request"),
-        items: n.reason === "completed" ? s.items : [...s.items, info(`Turn ended: ${n.reason}`, n.reason === "cancelled" ? "info" : "error")],
+        items: [...s.items, ...flushed, ...(n.reason === "completed" ? [] : [info(`Turn ended: ${n.reason}`, n.reason === "cancelled" ? "info" : "error")])],
+        pending: n.reason === "cancelled" ? s.pending : { ...s.pending, steer: [] },
       };
-      effects.push({ type: "fetch_context", show: false });
-      // Pending messages go out now: steering first, then queued (the harness has no mid-turn steer).
-      if (n.reason !== "cancelled") {
-        const next = state.pending.steer[0] ?? state.pending.queue[0];
+      if (flushed.length) state = { ...state, running: true, working: "thinking", runStartedAt: s.now };
+      effects.push({ type: "fetch_context", show: false }, { type: "status_line" });
+      if (n.reason === "completed") effects.push({ type: "attention", kind: "completion" });
+      // Queued messages (Ctrl+Enter) go out when the agent has finished.
+      if (n.reason !== "cancelled" && !flushed.length) {
+        const next = state.pending.queue[0];
         if (next !== undefined) {
-          const pending = state.pending.steer.length ? { ...state.pending, steer: state.pending.steer.slice(1) } : { ...state.pending, queue: state.pending.queue.slice(1) };
-          const sent = startTurn({ ...state, pending }, next);
+          const sent = startTurn({ ...state, pending: { ...state.pending, queue: state.pending.queue.slice(1) } }, next);
           state = sent.state;
           effects.push(...sent.effects);
         }
@@ -347,10 +373,11 @@ function notification(s: TuiState, n: { type: string; [k: string]: any }): Step 
   }
 }
 
-function startTurn(s: TuiState, text: string): Step {
+/** Starts a turn. `display` is what the transcript shows when it differs from the text sent (custom commands, skills). */
+function startTurn(s: TuiState, text: string, display?: string): Step {
   const id = `${s.idPrefix}-${s.counter + 1}`;
   return {
-    state: { ...s, counter: s.counter + 1, running: true, runStartedAt: s.now, working: "thinking", items: [...s.items, { kind: "user", text }] },
+    state: { ...s, counter: s.counter + 1, running: true, runStartedAt: s.now, working: "thinking", scroll: 0, items: [...s.items, { kind: "user", text: display ?? text, id }] },
     effects: [{ type: "send", text, messageId: id }],
   };
 }
@@ -358,6 +385,18 @@ function startTurn(s: TuiState, text: string): Step {
 // ---------------------------------------------------------------- slash commands
 
 const later = (what: string, phase: string) => [`${what} is not available in this build yet.`, `It comes with ${phase}.`];
+
+/** Picker over the user messages of this session (spec §13.2 /rewind-conversation, double Esc on empty input). */
+export function rewindMenu(s: TuiState): Step {
+  const users = s.items.filter((i): i is Extract<Item, { kind: "user" }> => i.kind === "user" && !!i.id && !i.text.startsWith("! "));
+  if (!users.length) return { state: { ...s, items: [...s.items, info("No earlier messages to go back to.", "error")] }, effects: [] };
+  const rows = users.map((u) => ({ id: u.id!, label: u.text.split("\n")[0].slice(0, 80), detail: u.text }));
+  const panel: Panel = {
+    id: "rewind", kind: "select", action: { type: "rewind_pick" }, title: "Rewind to an earlier message", body: ["Pick the message to go back to (newest last)."],
+    options: rows.map((r) => ({ label: r.label || "(empty)", value: r.id })), rows, selected: rows.length - 1, checked: [],
+  };
+  return { state: { ...s, panels: [...s.panels, panel] }, effects: [] };
+}
 
 function overlay(s: TuiState, title: string, lines: string[]): Step {
   return { state: { ...s, overlay: { title, lines }, input: { text: "", cursor: 0 } }, effects: [] };
@@ -370,7 +409,12 @@ function runCommand(s0: TuiState, line: string): Step {
   const args = restWords.join(" ");
   const cmd = findCommand(head);
   const s: TuiState = { ...s0, input: { text: "", cursor: 0 }, historyIndex: null, menuDismissed: false };
-  if (!cmd) return { state: { ...s, items: [...s.items, info(`Unknown command: /${head}. Type /help.`, "error")] }, effects: [] };
+  if (!cmd) {
+    const entry = s.custom.find((e) => e.name === head.toLowerCase());
+    if (entry) return sendText({ ...s, items: s.items }, expandEntry(entry, args), `/${entry.name}${args ? " " + args : ""}`, false);
+    return { state: { ...s, items: [...s.items, info(`Unknown command: /${head}. Type /help.`, "error")] }, effects: [] };
+  }
+  const view = (name: Extract<Effect, { type: "view" }>["name"]): Step => ({ state: s, effects: [{ type: "view", name, args }] });
   const guard = (effects: Effect[], what: string): Step => {
     if (!s.running) return { state: s, effects };
     const panel: Panel = {
@@ -417,7 +461,7 @@ function runCommand(s0: TuiState, line: string): Step {
       `Model:       ${modelName(s)}`, "Auth:        local (no account)", `Data folder: ${s.homeDir}`,
     ]);
     case "compress": return guard([{ type: "rpc", method: "compact_session", params: args ? { customInstructions: args } : {}, label: "compress", after: "resume_new" }], "summarises into a new session");
-    case "rewind-conversation": return { state: { ...s, items: [...s.items, info("Rewind is not available in this build: the harness cannot truncate a session yet.", "error")] }, effects: [] };
+    case "rewind-conversation": return s.running ? guard([{ type: "open_rewind" }], "goes back to an earlier message") : rewindMenu(s);
     case "fork": return { state: s, effects: [{ type: "rpc", method: "fork_session", params: {}, label: "fork", after: "resume_new" }] };
     case "rename":
       if (!args) return { state: { ...s, items: [...s.items, info("Usage: /rename <title>", "error")] }, effects: [] };
@@ -430,21 +474,35 @@ function runCommand(s0: TuiState, line: string): Step {
     case "cwd":
       if (!args) return { state: { ...s, items: [...s.items, info(`Folder: ${s.cwd}. Usage: /cwd <dir>`)] }, effects: [] };
       return guard([{ type: "new_session", cwd: args }], `moves to ${args} in a new session`);
-    case "mcp": return overlay(s, "MCP servers", later("MCP", "the MCP phase"));
-    case "hooks": return overlay(s, "Hooks", later("Hooks", "the hooks phase"));
-    case "skills": return overlay(s, "Skills", later("Skills", "the skills phase"));
-    case "commands": return overlay(s, "Custom commands", later("Custom slash commands", "the skills phase"));
-    case "agents": return overlay(s, "Custom subagents", later("Custom subagents", "the subagents phase"));
-    case "statusline": return overlay(s, "Status line", ["Set statusLine in settings.json: {\"type\":\"command\",\"command\":\"...\"}.", "Running it from the TUI is not available in this build yet."]);
+    case "mcp": case "hooks": case "skills": case "commands": case "agents": case "diagnostics": case "statusline": case "automations": case "loop":
+      return view(cmd.name as any);
     case "vim": return { state: { ...s, vim: !s.vim, vimMode: "insert", hint: `Vim keys ${s.vim ? "off" : "on"}` }, effects: [] };
     case "themes": {
       const t = args === "light" || args === "dark" ? args : s.theme === "dark" ? "light" : "dark";
       return { state: { ...s, theme: t, hint: `Theme: ${t}` }, effects: [] };
     }
-    case "diagnostics": return overlay(s, "Diagnostics", ["No config problems are reported to the client by this build.", "Settings warnings are written to the process log (stderr)."]);
     case "quit": return { state: { ...s, quit: true }, effects: [{ type: "quit" }] };
   }
   return { state: s, effects: [] };
+}
+
+// ---------------------------------------------------------------- transcript scrolling (spec §13.3)
+
+const viewHeight = (s: TuiState) => Math.max(3, s.rows - 9);
+const pageSize = (s: TuiState) => Math.max(1, viewHeight(s) - 1);
+function scrollBy(s: TuiState, delta: number): Step {
+  return { state: { ...s, scroll: Math.max(0, s.scroll + delta) }, effects: [] };
+}
+/** Scroll so that the previous (dir -1) or next (dir 1) user message is at the top of the viewport. */
+function scrollTurn(s: TuiState, dir: -1 | 1): Step {
+  const header = 7;
+  const { lines, userStarts } = transcriptLines(s.items, { width: s.cols, detailed: s.detailed, showThinking: s.showThinking }, plainStyler());
+  const total = header + lines.length, vh = viewHeight(s);
+  const top = Math.max(0, total - s.scroll - vh);
+  const starts = userStarts.map((u) => u + header);
+  const target = dir < 0 ? [...starts].reverse().find((u) => u < top) : starts.find((u) => u > top);
+  if (target === undefined) return { state: { ...s, scroll: dir < 0 ? Math.max(0, total - vh) : 0 }, effects: [] };
+  return { state: { ...s, scroll: Math.max(0, total - (target + vh)) }, effects: [] };
 }
 
 // ---------------------------------------------------------------- submit and keys
@@ -460,11 +518,22 @@ function submit(s0: TuiState, queueOnly: boolean): Step {
   const cleared: TuiState = { ...remember(s0, raw), input: { text: "", cursor: 0 }, menuDismissed: false, atMenu: null, hint: undefined };
   if (s0.shellMode) return { state: { ...cleared, shellMode: false, items: [...cleared.items, { kind: "user", text: "! " + text }] }, effects: [{ type: "shell", command: text }] };
   if (text.startsWith("/")) return runCommand(cleared, text);
-  if (s0.running) {
-    const pending = queueOnly ? { ...s0.pending, queue: [...s0.pending.queue, text] } : { ...s0.pending, steer: [...s0.pending.steer, text] };
-    return { state: { ...cleared, pending }, effects: [] };
-  }
-  return startTurn(cleared, text);
+  return sendText(cleared, text, undefined, queueOnly);
+}
+
+/**
+ * Sends a user message. While a turn runs, Enter steers: the message goes to the harness at once with
+ * queuePlacement end_of_loop (delivered after the next tool call) and is listed under "Steering messages" until then.
+ * Ctrl+Enter queues on the client and sends when the agent has finished.
+ */
+function sendText(s: TuiState, text: string, display: string | undefined, queueOnly: boolean): Step {
+  if (!s.running) return startTurn(s, text, display);
+  if (queueOnly) return { state: { ...s, pending: { ...s.pending, queue: [...s.pending.queue, text] } }, effects: [] };
+  const id = `${s.idPrefix}-${s.counter + 1}`;
+  return {
+    state: { ...s, counter: s.counter + 1, pending: { ...s.pending, steer: [...s.pending.steer, display ?? text] } },
+    effects: [{ type: "send", text, messageId: id, queuePlacement: "end_of_loop" }],
+  };
 }
 
 function cycle<T>(list: T[], cur: T): T { return list[(Math.max(0, list.indexOf(cur)) + 1) % list.length]; }
@@ -583,7 +652,7 @@ function escape(s: TuiState, now: number): Step {
   if (s.running) return { state: { ...s, hint: "Interrupting...", lastEscAt: now }, effects: [{ type: "interrupt" }] };
   if (now - s.lastEscAt < 600) {
     if (s.input.text) return { state: { ...s, input: { text: "", cursor: 0 }, lastEscAt: -1e9, historyIndex: null }, effects: [] };
-    return { state: { ...s, lastEscAt: -1e9, items: [...s.items, info("Rewind is not available in this build: the harness cannot truncate a session yet.", "error")] }, effects: [] };
+    return rewindMenu({ ...s, lastEscAt: -1e9 });
   }
   return { state: { ...s, lastEscAt: now }, effects: [] };
 }
@@ -603,6 +672,9 @@ function key(s: TuiState, k: Key, now: number): Step {
   if (k.name === "ctrl+d" && !s.input.text) return { state: { ...s, quit: true }, effects: [{ type: "quit" }] };
   if (s.panels.length) return panelKey(s, k);
   switch (k.name) {
+    case "pageup": case "alt+pageup": return scrollBy(s, pageSize(s));
+    case "pagedown": case "alt+pagedown": return scrollBy(s, -pageSize(s));
+    case "alt+up": case "alt+down": return scrollTurn(s, k.name === "alt+up" ? -1 : 1);
     case "esc": return escape(s, now);
     case "shift+tab": {
       const mode = s.mode === "auto" ? "spec" : "auto";
@@ -620,16 +692,16 @@ function key(s: TuiState, k: Key, now: number): Step {
     case "alt+x": return { state: { ...s, autoCompress: !s.autoCompress }, effects: [{ type: "settings", patch: { compactionThresholdCheckEnabled: !s.autoCompress } }] };
     case "ctrl+p": return { state: s, effects: [{ type: "editor", text: s.input.text }] };
     case "ctrl+r": {
-      const all = [...s.pending.steer.map((t) => `steer:  ${t}`), ...s.pending.queue.map((t) => `queued: ${t}`)];
+      const all = [...s.pending.steer.map((t) => `steer (sent, delivered after the next tool call):  ${t}`), ...s.pending.queue.map((t) => `queued (sent when the agent finishes):  ${t}`)];
       return overlay(s, "Pending messages", all.length ? all : ["Nothing is pending."]);
     }
     case "ctrl+g": {
-      const text = s.pending.steer[0] ?? s.pending.queue[0];
+      // Steering messages are already with the harness; only queued ones can be pulled back.
+      const text = s.pending.queue[0];
       if (text === undefined) return { state: s, effects: [] };
-      const pending = s.pending.steer.length ? { ...s.pending, steer: s.pending.steer.slice(1) } : { ...s.pending, queue: s.pending.queue.slice(1) };
-      return { state: { ...s, pending, input: { text, cursor: text.length } }, effects: [] };
+      return { state: { ...s, pending: { ...s.pending, queue: s.pending.queue.slice(1) }, input: { text, cursor: text.length } }, effects: [] };
     }
-    case "ctrl+x": return { state: { ...s, pending: { steer: [], queue: [] } }, effects: [] };
+    case "ctrl+x": return { state: { ...s, pending: { ...s.pending, queue: [] } }, effects: [] };
   }
   return inputKey(s, k, now);
 }
@@ -643,7 +715,7 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
     case "notification": return notification({ ...s, now: e.now }, e.n);
     case "request": {
       const panel = e.method === "request_permission" ? permissionPanel(e.id, e.params) : e.method === "ask_user" ? askPanel(e.id, e.params) : pickPanel(e.id, e.params);
-      return { state: { ...s, panels: [...s.panels, panel], working: "waiting_for_tool_confirmation" }, effects: [] };
+      return { state: { ...s, panels: [...s.panels, panel], working: "waiting_for_tool_confirmation" }, effects: [{ type: "attention", kind: "awaiting" }] };
     }
     case "session_ready": {
       const r = e.result ?? {};
@@ -657,9 +729,9 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
       return {
         state: {
           ...base, items: messagesToItems(r.session?.messages ?? []), tokenUsage: r.tokenUsage ?? zeroUsage(), contextUsed: 0, running: false, working: "idle",
-          pending: { steer: [], queue: [] }, panels: [], overlay: null, turns: 0, input: { text: "", cursor: 0 }, atMenu: null,
+          pending: { steer: [], queue: [] }, panels: [], overlay: null, turns: 0, input: { text: "", cursor: 0 }, atMenu: null, scroll: 0,
         },
-        effects: [{ type: "fetch_context", show: false }],
+        effects: [{ type: "fetch_context", show: false }, { type: "status_line" }],
       };
     }
     case "context_stats": {
@@ -668,12 +740,26 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
       if (!e.show) return { state, effects: [] };
       return { state: { ...state, overlay: { title: "Context", lines: formatContext(st as ContextStats, modelName(s)) } }, effects: [] };
     }
+    case "overlay": return { state: { ...s, overlay: { title: e.title, lines: e.lines } }, effects: [] };
+    case "extras": return { state: { ...s, custom: e.custom, header: { ...s.header, skills: e.skills, mcps: e.mcps ?? s.header.mcps, issues: e.issues ?? s.header.issues } }, effects: [] };
+    case "status_line": return { state: { ...s, statusLine: e.text || undefined, statusLineHint: e.hint, statusLinePadding: e.padding }, effects: [] };
+    case "resize": return { state: { ...s, rows: e.rows, cols: e.cols }, effects: [] };
+    case "open_rewind": return rewindMenu(s);
+    case "rewound": {
+      const i = s.items.findIndex((x) => x.kind === "user" && x.id === e.messageId);
+      const items = i < 0 ? s.items : s.items.slice(0, i);
+      const files = e.restoredFiles.length ? `, ${e.restoredFiles.length} file${e.restoredFiles.length === 1 ? "" : "s"} restored` : "";
+      return {
+        state: { ...s, items: [...items, info(`Rewound: ${e.removedCount} message${e.removedCount === 1 ? "" : "s"} removed${files}.`)], input: { text: e.text, cursor: e.text.length }, scroll: 0, pending: { steer: [], queue: [] } },
+        effects: [{ type: "fetch_context", show: false }],
+      };
+    }
     case "info": return { state: { ...s, items: [...s.items, info(e.text, e.level ?? "info")] }, effects: [] };
     case "sessions": {
       if (!e.sessions.length) return { state: { ...s, items: [...s.items, info("No saved sessions in this folder.")] }, effects: [] };
       const panel: Panel = {
         id: "resume", kind: "select", action: { type: "resume" }, title: "Resume a session", body: [], selected: 0, checked: [],
-        options: e.sessions.slice(0, 20).map((x) => ({ label: `${x.id.slice(0, 8)}  ${x.title ?? "(untitled)"}${x.updatedAt ? "  " + x.updatedAt.slice(0, 16).replace("T", " ") : ""}`, value: x.id })),
+        options: e.sessions.slice(0, 20).map((x) => ({ label: `${x.id.slice(0, 8)}  ${x.pinned ? "* " : ""}${x.title ?? "(untitled)"}${x.updatedAt ? "  " + x.updatedAt.slice(0, 16).replace("T", " ") : ""}`, value: x.id })),
       };
       return { state: { ...s, panels: [...s.panels, panel] }, effects: [] };
     }
