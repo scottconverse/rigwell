@@ -15,8 +15,11 @@ export interface PermissionRequest {
   [k: string]: unknown;
 }
 export interface PermissionAnswer { selectedOption: string; comment?: string }
-export interface AskUserRequest { toolCallId: string; questions: { index: number; topic?: string; question: string; options: string[]; multiSelect?: boolean }[] }
+export interface AskUserRequest { requestId?: string; toolCallId: string; questions: { index: number; topic?: string; question: string; options: string[]; multiSelect?: boolean }[] }
 export interface AskUserAnswer { cancelled?: boolean; answers: { index: number; question: string; answer: string }[] }
+/** rigwell.request_trust: the harness asks whether a folder with project config (hooks, skills, MCP servers...) may be trusted. */
+export interface TrustRequest { cwd: string; unlocks: string[] }
+export interface TrustAnswer { trust: boolean; remember?: boolean }
 export interface PickOptionsRequest { toolCallId: string; title: string; hint?: string; rows: { id: string; label: string; detail?: string }[]; multi: boolean; preselectedIds: string[] }
 export interface PickOptionsAnswer { cancelled?: boolean; selectedIds: string[]; refresh?: boolean }
 
@@ -41,6 +44,8 @@ export interface SessionOptions {
   onPermission?: (req: PermissionRequest) => PermissionAnswer | Promise<PermissionAnswer>;
   /** Answers rigwell.ask_user. Default: `{cancelled: true, answers: []}`. */
   onAskUser?: (req: AskUserRequest) => AskUserAnswer | Promise<AskUserAnswer>;
+  /** Answers rigwell.request_trust (a folder with project config). Return true/false or {trust, remember}. Default (or on a throw): untrusted. */
+  onTrust?: (req: TrustRequest) => boolean | TrustAnswer | Promise<boolean | TrustAnswer>;
   /** Answers rigwell.pick_options. Default: `{cancelled: true, selectedIds: []}`. */
   onPickOptions?: (req: PickOptionsRequest) => PickOptionsAnswer | Promise<PickOptionsAnswer>;
   /** Called for every session notification. */
@@ -111,6 +116,30 @@ class TurnImpl implements Turn {
   }
 }
 
+/** Answers a harness -> client request with the option callbacks; every default is the safe one (cancel, untrusted). */
+async function answerHarnessRequest(opts: SessionOptions, method: string, params: any): Promise<unknown> {
+  try {
+    switch (method) {
+      case "request_permission":
+        return opts.onPermission ? await opts.onPermission(params) : { selectedOption: "cancel" };
+      case "ask_user":
+        return opts.onAskUser ? await opts.onAskUser(params) : { cancelled: true, answers: [] };
+      case "request_trust": {
+        const a = opts.onTrust ? await opts.onTrust(params) : false;
+        return typeof a === "boolean" ? { trust: a } : { trust: a?.trust === true, ...(a?.remember === undefined ? {} : { remember: a.remember }) };
+      }
+      case "pick_options":
+        return opts.onPickOptions ? await opts.onPickOptions(params) : { cancelled: true, selectedIds: [] };
+    }
+  } catch {
+    if (method === "request_permission") return { selectedOption: "cancel" };
+    if (method === "ask_user") return { cancelled: true, answers: [] };
+    if (method === "request_trust") return { trust: false };
+    return { cancelled: true, selectedIds: [] };
+  }
+  throw Object.assign(new Error(`Method not found: ${method}`), { code: -32601 });
+}
+
 export class RigwellSession {
   readonly sessionId: string;
   settings: Record<string, any>;
@@ -157,22 +186,20 @@ export class RigwellSession {
     return () => this.listeners.delete(listener);
   }
 
-  private async handleRequest(method: string, params: any): Promise<unknown> {
-    try {
-      switch (method) {
-        case "request_permission":
-          return this.opts.onPermission ? await this.opts.onPermission(params) : { selectedOption: "cancel" };
-        case "ask_user":
-          return this.opts.onAskUser ? await this.opts.onAskUser(params) : { cancelled: true, answers: [] };
-        case "pick_options":
-          return this.opts.onPickOptions ? await this.opts.onPickOptions(params) : { cancelled: true, selectedIds: [] };
-      }
-    } catch {
-      if (method === "request_permission") return { selectedOption: "cancel" };
-      if (method === "ask_user") return { cancelled: true, answers: [] };
-      return { cancelled: true, selectedIds: [] };
-    }
-    throw Object.assign(new Error(`Method not found: ${method}`), { code: -32601 });
+  private handleRequest(method: string, params: any): Promise<unknown> { return answerHarnessRequest(this.opts, method, params); }
+
+  /** Prompts a resumed session still has open (load_session): shown to the callbacks again, answered with answer_request. */
+  reshowPending(init: any): Promise<void> {
+    const jobs: Promise<unknown>[] = [];
+    const answer = (method: string, req: any) => {
+      if (!req || typeof req.requestId !== "string") return;
+      jobs.push(answerHarnessRequest(this.opts, method, req)
+        .then((a) => this.client.request("answer_request", { requestId: req.requestId, answer: a }))
+        .catch(() => {})); // already answered elsewhere, or the connection is gone
+    };
+    for (const r of init?.pendingPermissions ?? []) answer("request_permission", r);
+    for (const r of init?.pendingAskUserRequests ?? []) answer("ask_user", r);
+    return Promise.all(jobs).then(() => {});
   }
 
   /**
@@ -222,11 +249,15 @@ function initParams(o: SessionOptions): Record<string, unknown> {
 export async function openSession(transport: Transport, opts: SessionOptions): Promise<RigwellSession> {
   const client = new RpcClient(transport);
   // Notifications can arrive before the init response (settings_updated), so install a no-op handler first.
+  // request_trust can arrive while initialize_session / load_session is still running.
+  client.onRequest = (method, params) => answerHarnessRequest(opts, method, params);
   try {
     const init = opts.resumeSessionId
       ? await client.request("load_session", { sessionId: opts.resumeSessionId, cwd: opts.cwd ?? process.cwd(), ...(opts.autoRejectPermissionRequests ? { autoRejectPermissionRequests: true } : {}) })
       : await client.request("initialize_session", initParams(opts));
-    return new RigwellSession(client, init, opts);
+    const session = new RigwellSession(client, init, opts);
+    if (opts.resumeSessionId) void session.reshowPending(init);
+    return session;
   } catch (e) {
     await client.close().catch(() => {});
     throw e;
