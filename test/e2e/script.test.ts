@@ -98,7 +98,7 @@ describe.each(PROVIDERS)("Script mode: $provider", (p) => {
     await s.c.turnCompleted();
     await s.c.close();
     const body = s.server.requests[0];
-    expect(toolNames(body)).toEqual(["Script", "script_job"]);
+    expect(toolNames(body)).toEqual(["Script", "TaskOutput", "TaskStop", "script_job"]);
     if (p.provider === "anthropic") {
       expect(body.system.length).toBe(3);
       expect(body.system[2].text).toContain("you reach tools only through Script");
@@ -113,7 +113,7 @@ describe.each(PROVIDERS)("Script mode: $provider", (p) => {
     await s.c.call("add_user_message", { text: "hello", messageId: "t1" });
     await s.c.turnCompleted();
     await s.c.close();
-    expect(toolNames(s.server.requests[0])).toEqual(["Create", "Edit", "Execute", "Glob", "Grep", "Read", "Script", "call_tool", "load_tools", "script_job"]);
+    expect(toolNames(s.server.requests[0])).toEqual(["Create", "Edit", "Execute", "FetchUrl", "Glob", "Grep", "LS", "Read", "Script", "TaskOutput", "TaskStop", "TodoWrite", "call_tool", "load_tools", "script_job"]);
 
     const o = await session(p, [{ text: "hi" }], { init: { toolExecutionMode: "script_only" } });
     expect(o.init.settings.toolExecutionMode).toBe("script_only");
@@ -216,7 +216,7 @@ describe.each(PROVIDERS)("Script mode: $provider", (p) => {
     await c.call("add_user_message", { text: "second", messageId: "t2" });
     await c.waitFor((m) => m.params?.notification?.type === "agent_turn_completed" && m.params.notification.turnId === "t2");
     await c.close();
-    expect(toolNames(a.requests[1])).toEqual(["Script", "script_job"]);
+    expect(toolNames(a.requests[1])).toEqual(["Script", "TaskOutput", "TaskStop", "script_job"]);
     expect(JSON.stringify(a.requests[1])).toContain("The model changed");
     expect(JSON.stringify(a.requests[0])).not.toContain("The model changed");
   }, 30000);
