@@ -16,7 +16,7 @@ Do not reuse "Droid" or Factory branding (§11).
 | **[SDK]** | Seen in Factory's shipped `@factory/droid-sdk@0.10.0` (Apache-2.0) via REA static analysis and its type definitions. Shows the wire protocol and settings, not the internals. |
 | **[CLI]** | Seen by static analysis of Factory's closed CLI binary (`droid.exe` 1.0.0, win32-x64). Observed in code, never executed; a value can still be overridden at runtime by server config. |
 | **[CLI-INF]** | Inferred from that code, not directly stated by it. |
-| **[RUN]** | Seen in real traffic or files from running the CLI: the offline capture runs (Linux build 1.0.0, no network, fake local model server; see below), the JSON-RPC captures in `bench-data/cli-runs/*/jsonrpc.jsonl`, and real session files under `~/.factory` and `bench-data/app-sessions`. |
+| **[RUN]** | Seen in real traffic or files from running the CLI: the offline capture runs (Linux build 1.0.0, no network, fake local model server; see below), the JSON-RPC captures in `bench-data/cli-runs/*/jsonrpc.jsonl`, and real session files under `~/.factory` and `bench-data/app-sessions`. Copies of all of these are in this repo under `evidence/` (see `evidence/README.md`). |
 | **[DESIGN]** | My choice for your build. Change freely. |
 | **[LIVE]** | Server config the logged-in desktop app cached on disk (one paid account, Oct 30 2026). Values can differ per account and change at any time. |
 | **[APP]** | Seen by static reading of Factory's desktop app code (`app.asar`, app 1.0.0, Electron 42.3.3). Never executed. |
@@ -201,7 +201,7 @@ This section gives the message shapes for the §3 method and notification names.
 
 **Sources:**
 - **[SDK]** is `@factory/droid-sdk` 0.10.0 (Apache-2.0). The schemas are in `dist/chunk-TWAVPIPS.mjs` and the client is in `dist/node.mjs`.
-- **[RUN]** is the five captures in `bench-data/cli-runs/*/jsonrpc.jsonl`. They are CLI protocol 1.286.0 against a local mock model, 602 lines in total. Autonomy was `medium` with `autoRejectPermissionRequests: true`, so no permission or ask_user traffic appears in them.
+- **[RUN]** is the five captures in `bench-data/cli-runs/*/jsonrpc.jsonl` (in this repo: `evidence/bench/cli-runs/`). They are CLI protocol 1.286.0 against a local mock model, 602 lines in total. Autonomy was `medium` with `autoRejectPermissionRequests: true`, so no permission or ask_user traffic appears in them.
 - **[CLI-INF]** means inferred from the code, not observed.
 - **[DESIGN]** means a recommendation for Scott's build.
 
@@ -1793,7 +1793,7 @@ Permissions, adapters and TUI:
 **Cannot be settled by examining the app:**
 
 - Whether the benchmark claims hold (vendor-reported; run your own head-to-heads). **Partly tested
-  Oct 30** (the benchmark notes stay in the research folder; they are not in this repo):
+  Oct 30** (notes: `evidence/bench/benchmark-results.md`):
   - First-request time was 632 ms median offline (the post says 646 ms).
   - A 4-run pilot on Opus 5.5 confirmed that the Script/direct switch works and that per-request
     usage can be measured.
@@ -1838,7 +1838,7 @@ check.
 
 ## 12. Session storage and configuration
 
-Tags: [RUN] seen in real files under `~/.factory` or `bench-data/app-sessions`. [CLI] read in the shipped CLI code. [CLI-INF] inferred from CLI code. [SDK] from the SDK type file. [LIVE] logged-in config cache. [DESIGN] recommendation for our build.
+Tags: [RUN] seen in real files under `~/.factory` or `bench-data/app-sessions` (in this repo: `evidence/factory-home/` and `evidence/bench/app-sessions/`). [CLI] read in the shipped CLI code. [CLI-INF] inferred from CLI code. [SDK] from the SDK type file. [LIVE] logged-in config cache. [DESIGN] recommendation for our build.
 
 ### 12.1 Session storage
 

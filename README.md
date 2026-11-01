@@ -13,6 +13,7 @@ This repo holds the build spec. There is no code yet.
 | [`spec/harness-spec.md`](spec/harness-spec.md) | The build spec: protocol, agent loop, tools, permissions, storage, TUI (§1–§13), then the desktop app, Missions, automations, side pane, worktrees and notifications (§14–§19). §9 lists the build phases. |
 | [`spec/prompts.md`](spec/prompts.md) | Original prompt and tool text for the agent, as templates. |
 | [`spec/app-inventory.md`](spec/app-inventory.md) | A screen-by-screen inventory of the reference desktop app, checked against the spec. |
+| [`evidence/`](evidence/README.md) | Raw captures and session files behind the spec's [RUN] facts. Reference only: do not copy their text into Rigwell. |
 
 ## Reading the spec
 
