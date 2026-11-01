@@ -1,7 +1,7 @@
 // One client connection = one session (spec §3.1.4 default). Maps protocol methods to a Session.
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import type { AutonomyLevel, CommandLists, InteractionMode, Message, ReasoningEffort } from "../core/types.ts";
+import type { AutonomyLevel, CommandLists, InteractionMode, Message, ReasoningEffort, Tool } from "../core/types.ts";
 import { ErrorCodes, METHOD_PREFIX, RpcError, RpcPeer } from "../protocol/rpc.ts";
 import { Session, SessionBusyError, type SessionSettings } from "../agent/session.ts";
 import { applyCompaction } from "../agent/compaction.ts";
@@ -28,6 +28,8 @@ export interface ConnectionOptions {
   retryBaseDelayMs?: number;
   /** Extra protocol methods (name without the prefix), e.g. the daemon's automation methods. */
   extraMethods?: Record<string, (p: Record<string, unknown>) => unknown>;
+  /** Extra agent tools for every session on this connection (e.g. the side pane's Browser tool). */
+  extraTools?: () => Tool[];
   log?: (m: string) => void;
 }
 
@@ -87,7 +89,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
       id, cwd, settings,
       resolveModel: (mid) => findModel(env.models, mid),
       createAdapter, streamWithRetry: streamWithRetry as any,
-      toolsFor: toolsForSession, decide, lists: env.lists,
+      toolsFor: opts.extraTools ? (o) => [...toolsForSession(o), ...opts.extraTools!()] : toolsForSession, decide, lists: env.lists,
       scriptToolModels: env.s.scriptToolModels, scriptLimits: env.s.scriptLimits,
       toolExecutionModeOverride: override,
       skipPermissions: skip,
