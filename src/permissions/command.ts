@@ -142,7 +142,9 @@ function between(tokens: string[]): string {
 export function matchesEntryAnywhere(segment: string, entry: string): boolean {
   const toks = tokensOf(entry);
   if (toks.length === 0) return false;
-  const body = between(toks);
+  // A last token that names a path (`of=/dev`) also covers paths under it (`of=/dev/sda`). A bare `/` stays exact.
+  const sub = /\/[^/]+$/.test(toks[toks.length - 1]) ? "(?:/\\S*)?" : "";
+  const body = between(toks) + sub;
   const re = toks.length === 1
     ? new RegExp(`^\\s*${PREFIXES}${body}${TRAIL}`, "i")
     : new RegExp(`${LEAD}${body}${TRAIL}`, "i");

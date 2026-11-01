@@ -140,3 +140,14 @@ describe("spec mode Execute", () => {
     expect(decide("Execute", ex("rm -rf /", "low"), s).decision).toBe("block");
   });
 });
+
+describe("deny entries that name a path", () => {
+  test("dd to a device asks, chmod on a subfolder does not hit the root entry", () => {
+    const L = defaultCommandLists();
+    expect(classifyCommand("dd if=/dev/zero of=/dev/sda", L).kind).toBe("ask");
+    expect(classifyCommand("dd of=/dev/sda bs=1M", L).kind).toBe("ask");
+    expect(classifyCommand("dd if=a.img of=out.img", L).kind).toBe("none");
+    expect(classifyCommand("chmod -R 777 /srv/app", L).kind).toBe("none");
+    expect(classifyCommand("chmod -R 777 /", L).kind).toBe("ask");
+  });
+});
