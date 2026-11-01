@@ -6,71 +6,11 @@ import type { Item, Panel, TuiState } from "./types.ts";
 export interface RenderOptions { width: number; height: number; color?: boolean }
 export interface Screen { lines: string[]; cursor: { row: number; col: number } | null }
 
-const ANSI_RE = new RegExp("\\x1b\\[[0-9;?]*[A-Za-z]", "g");
-export const stripAnsi = (s: string) => s.replace(ANSI_RE, "");
+import { stripAnsi, styler, wrapText, transcriptLines } from "./transcript.ts";
+export { stripAnsi, wrapText };
 
-/** Word-wrap plain text to `width`, keeping explicit newlines and hard-cutting long words. */
-export function wrapText(text: string, width: number): string[] {
-  const w = Math.max(1, width);
-  const out: string[] = [];
-  for (const raw of text.split("\n")) {
-    let line = raw.replace(/\t/g, "  ");
-    if (line.length <= w) { out.push(line); continue; }
-    while (line.length > w) {
-      let cut = line.lastIndexOf(" ", w);
-      if (cut <= 0) cut = w;
-      out.push(line.slice(0, cut));
-      line = line.slice(cut).replace(/^ /, "");
-    }
-    out.push(line);
-  }
-  return out;
-}
-
-function styler(color: boolean, theme: "dark" | "light") {
-  const wrap = (code: string) => (t: string) => (color ? `\x1b[${code}m${t}\x1b[0m` : t);
-  return {
-    bold: wrap("1"), dim: wrap(theme === "dark" ? "2" : "90"), red: wrap("31"), green: wrap("32"), yellow: wrap("33"),
-    cyan: wrap(theme === "dark" ? "36" : "34"), inverse: wrap("7"),
-  };
-}
-
+const loaded = (n: number) => (n > 0 ? `Loaded +${n}` : "Not found");
 const TIPS = ["Press ? for help.", "Shift+Tab switches to spec mode to plan before editing.", "Use @ to pick a file path and ! to run a shell command."];
-
-function toolSummary(i: Extract<Item, { kind: "tool" }>): string {
-  const inp = i.input ?? {};
-  const v = inp.path ?? inp.file_path ?? inp.command ?? inp.pattern ?? inp.query ?? inp.url ?? "";
-  return String(v).split("\n")[0];
-}
-
-function itemLines(i: Item, o: { width: number; detailed: boolean; showThinking: boolean }, st: ReturnType<typeof styler>): string[] {
-  const w = o.width;
-  switch (i.kind) {
-    case "user": {
-      const l = wrapText(i.text, w - 2);
-      return [...l.map((x, n) => st.bold((n === 0 ? "> " : "  ") + x)), ""];
-    }
-    case "assistant": return [...wrapText(i.text, w - 2).map((x, n) => (n === 0 ? "● " : "  ") + x), ""];
-    case "thinking": return o.showThinking ? [...wrapText("thinking: " + i.text, w - 2).map((x) => st.dim("  " + x)), ""] : [];
-    case "info": return wrapText(i.text, w - 2).map((x) => (i.level === "error" ? st.red("! " + x) : st.dim("  " + x)));
-    case "tool": {
-      const icon = i.status === "running" ? st.yellow("…") : i.status === "ok" ? st.green("✓") : st.red("✗");
-      const head = `${o.detailed ? "▾" : "▸"} ${i.name}${toolSummary(i) ? " " + toolSummary(i) : ""}`;
-      const out = [`  ${head.length > w - 6 ? head.slice(0, w - 7) + "…" : head} ${icon}`];
-      if (o.detailed) {
-        const inputText = JSON.stringify(i.input ?? {}, null, 2).split("\n").flatMap((l) => wrapText(l, w - 6));
-        out.push(...inputText.map((l) => st.dim("      " + l)));
-        const res = i.output ?? i.live;
-        if (res) {
-          const lines = res.split("\n").flatMap((l) => wrapText(l, w - 6));
-          out.push(...lines.slice(0, 40).map((l) => "      " + l));
-          if (lines.length > 40) out.push(st.dim(`      ... ${lines.length - 40} more lines`));
-        }
-      }
-      return out;
-    }
-  }
-}
 
 function panelLines(p: Panel, s: TuiState, w: number, maxBody: number, st: ReturnType<typeof styler>): string[] {
   const out: string[] = [];
@@ -163,7 +103,11 @@ export function render(s: TuiState, o: RenderOptions): Screen {
   let l = left.join(" · "), r = right.join(" · ");
   if (l.length + r.length + 1 > W) l = l.slice(0, Math.max(0, W - r.length - 2)) + "…";
   const status = st.inverse(l + " ".repeat(Math.max(1, W - l.length - r.length)) + r);
-  const footer = st.dim(("? for help" + (s.hint ? " · " + s.hint : "")).slice(0, W));
+  const footer = st.dim(("? for help" + (s.header.issues ? ` · ${s.header.issues} config issue${s.header.issues === 1 ? "" : "s"}: /diagnostics` : "") + (s.scroll > 0 ? " · scrolled: PageDown / Alt+PgDn for newer" : "") + (s.hint ? " · " + s.hint : "")).slice(0, W));
+  if (s.statusLine || s.statusLineHint) {
+    const pad = " ".repeat(Math.min(10, s.statusLinePadding ?? 0));
+    for (const l of (s.statusLine ?? s.statusLineHint ?? "").split("\n")) bottom.push((pad + l).slice(0, W));
+  }
   bottom.push(status, footer);
 
   // ---- top region
@@ -176,15 +120,20 @@ export function render(s: TuiState, o: RenderOptions): Screen {
     const header = [
       st.bold("Rigwell") + st.dim(`  v${s.version} · a local coding agent`),
       st.dim(s.cwd),
-      st.dim(`Skills: Not found · MCPs: Not found · AGENTS.md: ${s.header.agentsMd ? "Loaded" : "Not found"}`),
+      st.dim(`Skills: ${loaded(s.header.skills)} · MCPs: ${loaded(s.header.mcps)} · AGENTS.md: ${s.header.agentsMd ? "Loaded" : "Not found"}`),
       st.dim("Tip: " + TIPS[s.counter % TIPS.length]),
       st.dim("Enter send · Ctrl+Enter queue · Esc cancel · Shift+Tab mode · Ctrl+L autonomy · Ctrl+O details"),
       st.dim("/ commands · @ files · ! shell · ? help"),
       "",
     ].map((x) => (stripAnsi(x).length > W ? x.slice(0, W) : x));
-    const body = s.items.flatMap((i) => itemLines(i, { width: W, detailed: s.detailed, showThinking: s.showThinking }, st));
+    const body = transcriptLines(s.items, { width: W, detailed: s.detailed, showThinking: s.showThinking }, st).lines;
     top = [...header, ...body];
-    if (top.length > topH) top = top.slice(top.length - topH);
+    if (top.length > topH) {
+      const scroll = Math.min(s.scroll, top.length - topH);
+      const end = top.length - scroll;
+      top = top.slice(end - topH, end);
+      if (scroll > 0) top[top.length - 1] = st.dim(`  ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (PageDown)`);
+    }
   }
   const lines = [...top, ...Array(Math.max(0, topH - top.length)).fill(""), ...bottom].slice(-H);
   if (cursorInBottom) cursor = { row: Math.max(0, lines.length - bottom.length) + cursorInBottom.row - 0, col: Math.min(W - 1, cursorInBottom.col) };

@@ -3,7 +3,7 @@
 export interface Key { name: string; text?: string }
 
 export type Item =
-  | { kind: "user"; text: string }
+  | { kind: "user"; text: string; id?: string }
   | { kind: "assistant"; id: string; text: string }
   | { kind: "thinking"; id: string; text: string }
   | { kind: "tool"; id: string; name: string; input: Record<string, any>; status: "running" | "ok" | "error"; phase?: string; output?: string; live?: string }
@@ -15,7 +15,9 @@ export type PanelAction =
   | { type: "request"; requestId: string; method: "request_permission" | "ask_user" | "pick_options" }
   | { type: "confirm"; effects: Effect[] }
   | { type: "model" }
-  | { type: "resume" };
+  | { type: "resume" }
+  | { type: "rewind_pick" }
+  | { type: "rewind_mode"; messageId: string; text: string };
 
 export interface Panel {
   id: string;
@@ -40,6 +42,20 @@ export interface Panel {
   savePath?: string;
 }
 
+/** A slash-menu entry that is not built in: a custom command (Markdown file) or a user-invocable skill. */
+export interface CustomEntry {
+  name: string;
+  kind: "command" | "skill";
+  desc: string;
+  argHint?: string;
+  /** Command: prompt template with $ARGUMENTS / $1..$9. Skill: the skill body. */
+  body: string;
+  /** Skill file path (shown to the model in the wrapper). */
+  filePath?: string;
+  /** "project" | "user" | skill bucket, for listings. */
+  origin?: string;
+}
+
 export interface ModelEntry { id: string; displayName?: string }
 
 export interface TuiState {
@@ -48,7 +64,17 @@ export interface TuiState {
   homeDir: string;
   idPrefix: string;
   counter: number;
-  header: { agentsMd: boolean };
+  header: { agentsMd: boolean; skills: number; mcps: number; issues: number };
+  /** Terminal size (set by the app; used for scroll steps). */
+  rows: number;
+  cols: number;
+  /** Lines hidden below the transcript viewport (0 = following the bottom). */
+  scroll: number;
+  custom: CustomEntry[];
+  /** Output of the custom status line command (spec §13.1), shown above the status bar. */
+  statusLine?: string;
+  statusLineHint?: string;
+  statusLinePadding?: number;
   sessionId?: string;
   modelId: string;
   reasoning: string;
@@ -89,7 +115,7 @@ export interface TuiState {
 }
 
 export type Effect =
-  | { type: "send"; text: string; messageId: string }
+  | { type: "send"; text: string; messageId: string; queuePlacement?: "end_of_turn" | "end_of_loop" }
   | { type: "interrupt" }
   | { type: "settings"; patch: Record<string, unknown> }
   | { type: "answer"; requestId: string; method: string; result: unknown }
@@ -102,6 +128,11 @@ export type Effect =
   | { type: "files"; query: string }
   | { type: "copy"; text: string }
   | { type: "editor"; text: string }
+  | { type: "view"; name: "mcp" | "hooks" | "skills" | "commands" | "agents" | "diagnostics" | "statusline" | "automations" | "loop"; args: string }
+  | { type: "rewind"; messageId: string; restoreFiles: boolean }
+  | { type: "attention"; kind: "completion" | "awaiting" }
+  | { type: "status_line" }
+  | { type: "open_rewind" }
   | { type: "rpc"; method: string; params: Record<string, unknown>; label: string; after?: "resume_new" };
 
 export type TuiEvent =
@@ -112,7 +143,13 @@ export type TuiEvent =
   | { type: "session_ready"; result: any; fresh: boolean }
   | { type: "context_stats"; stats: any; show: boolean }
   | { type: "info"; text: string; level?: "info" | "error" }
-  | { type: "sessions"; sessions: { id: string; title?: string; updatedAt?: string }[] }
+  | { type: "sessions"; sessions: { id: string; title?: string; updatedAt?: string; pinned?: boolean }[] }
+  | { type: "overlay"; title: string; lines: string[] }
+  | { type: "extras"; custom: CustomEntry[]; skills: number; mcps?: number; issues?: number }
+  | { type: "status_line"; text: string | undefined; hint?: string; padding?: number }
+  | { type: "open_rewind" }
+  | { type: "resize"; rows: number; cols: number }
+  | { type: "rewound"; messageId: string; text: string; removedCount: number; restoredFiles: string[] }
   | { type: "file_matches"; query: string; items: string[] }
   | { type: "editor_result"; text: string }
   | { type: "disconnected"; message: string };
