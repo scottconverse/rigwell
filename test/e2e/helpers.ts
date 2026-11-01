@@ -21,7 +21,7 @@ export function makeRepo(): string {
   return dir;
 }
 
-export function makeHome(models: { provider: "anthropic" | "openai"; url: string; displayName: string }[]): string {
+export function makeHome(models: { provider: "anthropic" | "openai" | "generic-chat-completion-api"; url: string; displayName: string }[]): string {
   const home = mkdtempSync(join(tmpdir(), "rigwell-e2e-home-"));
   mkdirSync(home, { recursive: true });
   writeFileSync(join(home, "settings.json"), JSON.stringify({
@@ -32,6 +32,10 @@ export function makeHome(models: { provider: "anthropic" | "openai"; url: string
 
 /** Text of the last tool result the model was sent, for either provider's request body. */
 export function lastToolResult(body: any): string {
+  if (Array.isArray(body.messages) && body.messages.at(-1)?.role === "tool") {
+    const outs = body.messages.filter((m: any, i: number, a: any[]) => m.role === "tool" && a.slice(i + 1).every((x: any) => x.role === "tool"));
+    return outs.map((m: any) => m.content).join("\n");
+  }
   if (Array.isArray(body.messages)) {
     const last = body.messages.at(-1);
     const r = (last?.content ?? []).filter((b: any) => b.type === "tool_result").at(-1);

@@ -1,6 +1,6 @@
 import type { Message, ModelConfig, ModelRequest, StreamEvent } from "../../src/core/types.ts";
 
-export function model(provider: "anthropic" | "openai", baseUrl: string, extra: Partial<ModelConfig> = {}): ModelConfig {
+export function model(provider: ModelConfig["provider"], baseUrl: string, extra: Partial<ModelConfig> = {}): ModelConfig {
   return { id: "custom:fake", model: "fake-model", displayName: "Fake", provider, baseUrl, apiKey: "test-key", ...extra };
 }
 
