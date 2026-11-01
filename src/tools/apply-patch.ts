@@ -157,13 +157,17 @@ export function createApplyPatchTool(): Tool {
         return fail(e instanceof PatchError ? e.message : errMessage(e));
       }
       // Phase 2: write.
+      // Rewind snapshots: capture every file before the first write, record each result after it.
+      for (const w of writes) ctx.snapshots?.before(w.abs);
+      for (const d of deletes) ctx.snapshots?.before(d);
       try {
         for (const w of writes) {
           fs.mkdirSync(path.dirname(w.abs), { recursive: true });
           fs.writeFileSync(w.abs, w.content);
+          ctx.snapshots?.after(w.abs);
           ctx.readFiles.set(w.abs, recordOf(fs.statSync(w.abs)));
         }
-        for (const d of deletes) { fs.rmSync(d); ctx.readFiles.delete(d); }
+        for (const d of deletes) { fs.rmSync(d); ctx.snapshots?.after(d); ctx.readFiles.delete(d); }
       } catch (e) {
         return fail(`Patch partly applied: ${errMessage(e)}`);
       }

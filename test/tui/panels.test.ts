@@ -157,3 +157,57 @@ describe("pick_options panel", () => {
     expect(d.effects[0]).toMatchObject({ method: "pick_options", result: { selectedIds: ["b", "c"] } });
   });
 });
+
+describe("trust panel (rigwell.request_trust)", () => {
+  const trust = { type: "request" as const, id: "req-1", method: "request_trust", params: { cwd: "/work/proj", unlocks: ["project settings", "hooks"] } };
+
+  test("shows the folder and what trust unlocks; defaults to not trusting", () => {
+    const d = ev(driver(), trust);
+    expect(d.s.panels[0]).toMatchObject({ kind: "trust", title: "Do you trust this folder?", selected: 1 });
+    expect(d.s.panels[0].body.join("\n")).toContain("/work/proj");
+    expect(d.s.panels[0].body.join("\n")).toContain("hooks");
+    expect(d.s.panels[0].options.map((o) => o.label)).toEqual(["Yes, trust this folder", "No, don't trust it"]);
+  });
+
+  test("choosing yes answers {trust: true}; Enter on the default and Esc answer {trust: false} (no interrupt)", () => {
+    let d = key(ev(driver(), trust), "char", "1");
+    expect(d.effects).toEqual([{ type: "answer", requestId: "req-1", method: "request_trust", result: { trust: true } }]);
+    expect(d.s.panels.length).toBe(0);
+    d = key(ev(driver(), trust), "enter");
+    expect(d.effects).toEqual([{ type: "answer", requestId: "req-1", method: "request_trust", result: { trust: false } }]);
+    d = key(ev(driver(), trust), "esc");
+    expect(d.effects).toEqual([{ type: "answer", requestId: "req-1", method: "request_trust", result: { trust: false } }]);
+  });
+});
+
+describe("prompts re-shown after load_session", () => {
+  const ready = {
+    type: "session_ready" as const, fresh: true,
+    result: {
+      sessionId: "s1", isAgentLoopInProgress: true, workingState: "waiting_for_tool_confirmation",
+      pendingPermissions: [execReq("p1").params],
+      pendingAskUserRequests: [{ requestId: "q1", toolCallId: "t", questions: [{ index: 1, topic: "db", question: "Which?", options: ["a", "b"] }] }],
+    },
+  };
+
+  test("pending permissions and questions become panels, in order, and the session counts as running", () => {
+    const d = ev(driver(), ready);
+    expect(d.s.panels.map((p) => [p.kind, (p.action as any).requestId])).toEqual([["permission", "p1"], ["ask_user", "q1"]]);
+    expect(d.s.running).toBe(true);
+    expect(d.s.working).toBe("waiting_for_tool_confirmation");
+  });
+
+  test("answering a re-shown prompt yields the usual answer effect (the app sends it with answer_request)", () => {
+    let d = ev(driver(), ready);
+    d = key(d, "enter");
+    expect(d.effects.filter((e) => e.type === "answer")).toEqual([{ type: "answer", requestId: "p1", method: "request_permission", result: { selectedOption: "proceed_once" } }]);
+    d = key({ ...d, effects: [] }, "char", "2");
+    expect(d.effects).toEqual([{ type: "answer", requestId: "q1", method: "ask_user", result: { answers: [{ index: 1, question: "Which?", answer: "b" }] } }]);
+  });
+
+  test("nothing pending: an idle session as before", () => {
+    const d = ev(driver(), { type: "session_ready", fresh: true, result: { sessionId: "s2" } });
+    expect(d.s.panels).toEqual([]);
+    expect(d.s.running).toBe(false);
+  });
+});
