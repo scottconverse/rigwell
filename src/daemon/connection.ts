@@ -14,6 +14,7 @@ import { streamWithRetry } from "../adapters/retry.ts";
 import { toolsForSession } from "../tools/registry.ts";
 import { decide } from "../permissions/gate.ts";
 import { DEFAULT_COMMAND_LISTS } from "../permissions/lists.ts";
+import type { ToolExecutionMode } from "../core/types.ts";
 
 export interface ConnectionOptions {
   /** The client can answer rigwell.request_permission (stream-jsonrpc). False for plain `exec "prompt"`. */
@@ -27,6 +28,7 @@ export interface ConnectionOptions {
 
 const AUTONOMY = ["off", "low", "medium", "high"];
 const MODES = ["auto", "spec"];
+const EXEC_MODES = ["direct_only", "script_only"];
 const EFFORTS = ["none", "dynamic", "off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 function pick<T extends string>(v: unknown, allowed: string[], name: string): T | undefined {
@@ -65,7 +67,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
     return { s, models, lists };
   }
 
-  function build(id: string, cwd: string, settings: SessionSettings, p: Record<string, unknown>, env: ReturnType<typeof environment>, restored?: { messages: Message[]; tokenUsage?: any }) {
+  function build(id: string, cwd: string, settings: SessionSettings, p: Record<string, unknown>, env: ReturnType<typeof environment>, override: ToolExecutionMode | undefined, restored?: { messages: Message[]; tokenUsage?: any }) {
     const skip = opts.forced?.skipPermissions ?? p.skipPermissionsUnsafe === true;
     const f = files!;
     return new Session({
@@ -73,6 +75,8 @@ export function createConnection(write: (line: string) => void, opts: Connection
       resolveModel: (mid) => findModel(env.models, mid),
       createAdapter, streamWithRetry: streamWithRetry as any,
       toolsFor: toolsForSession, decide, lists: env.lists,
+      scriptToolModels: env.s.scriptToolModels, scriptLimits: env.s.scriptLimits,
+      toolExecutionModeOverride: override,
       skipPermissions: skip,
       autoRejectPermissionRequests: p.autoRejectPermissionRequests === true,
       shell: SHELL, retryBaseDelayMs: opts.retryBaseDelayMs,
@@ -122,7 +126,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
           autonomyLevel: opts.forced?.autonomyLevel ?? pick<AutonomyLevel>(p.autonomyLevel, AUTONOMY, "autonomyLevel") ?? (d.autonomyLevel as AutonomyLevel) ?? "off",
         };
         files = createSession({ id, cwd, title: typeof p.title === "string" ? p.title : undefined });
-        session = build(id, cwd, settings, p, env);
+        session = build(id, cwd, settings, p, env, pick<ToolExecutionMode>(p.toolExecutionMode, EXEC_MODES, "toolExecutionMode"));
         await session.persistSettings();
         notify({ type: "settings_updated", settings: session.settingsSnapshot() });
         return { ...sessionResult(), availableModels: listModelInfo(env.models) };
@@ -144,7 +148,8 @@ export function createConnection(write: (line: string) => void, opts: Connection
           interactionMode: (saved.interactionMode as InteractionMode) ?? "auto",
           autonomyLevel: opts.forced?.autonomyLevel ?? (saved.autonomyLevel as AutonomyLevel) ?? "off",
         };
-        session = build(id, cwd, settings, p, env, { messages: loaded.messages, tokenUsage: saved.tokenUsage });
+        const savedOverride = EXEC_MODES.includes(saved.toolExecutionModeOverride as string) ? (saved.toolExecutionModeOverride as ToolExecutionMode) : undefined;
+        session = build(id, cwd, settings, p, env, savedOverride, { messages: loaded.messages, tokenUsage: saved.tokenUsage });
         if (typeof saved.providerLock === "string") session.providerLock = saved.providerLock;
         return {
           ...sessionResult(), cwd, isAgentLoopInProgress: false, workingState: "idle",
@@ -163,6 +168,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
         if (session) {
           session.interrupt();
           await session.idle();
+          await session.stopBackgroundJobs();
           notify({ type: "agent_working_state_changed", newState: "idle" });
         }
         closed = true;
@@ -213,6 +219,6 @@ export function createConnection(write: (line: string) => void, opts: Connection
     peer,
     get session() { return session; },
     get closed() { return closed; },
-    async shutdown() { session?.interrupt(); await session?.idle(); peer.end(); },
+    async shutdown() { session?.interrupt(); await session?.idle(); await session?.stopBackgroundJobs(); peer.end(); },
   };
 }

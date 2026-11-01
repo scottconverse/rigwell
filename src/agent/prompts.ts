@@ -47,8 +47,11 @@ export function render(tpl: string, vars: Vars): string {
 const stripLead = (s: string) => (s.startsWith("\n") ? s.slice(1) : s);
 const truthy = (v: unknown) => (Array.isArray(v) ? v.length > 0 : Boolean(v));
 
-export function systemBlocks(): string[] {
-  return [render(PROMPT_TEXT.identity, { AGENT_NAME }), PROMPT_TEXT.system_base];
+/** Identity line, base prompt, and (script_only sessions) the short block saying tools are reached through Script. */
+export function systemBlocks(mode: "direct_only" | "script_only" = "direct_only"): string[] {
+  const blocks = [render(PROMPT_TEXT.identity, { AGENT_NAME }), PROMPT_TEXT.system_base];
+  if (mode === "script_only") blocks.push(PROMPT_TEXT.system_script);
+  return blocks;
 }
 
 function git(cwd: string, args: string[]): string | null {
@@ -71,6 +74,7 @@ export interface ContextInput {
   autonomy: AutonomyLevel;
   modelId: string;
   shell: string;
+  toolExecutionMode?: "direct_only" | "script_only";
 }
 
 /** Context blocks for the first user message (prompts.md §4; skills and project instructions are Phase 5). */
@@ -99,7 +103,7 @@ export function contextBlocks(c: ContextInput): string[] {
   } catch { listing = "(unreadable)"; }
   const session = render(PROMPT_TEXT.ctx_session, {
     DATE: new Date().toISOString().slice(0, 10), TIMEZONE: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    CWD: c.cwd, INTERACTION_MODE: c.interactionMode, AUTONOMY_LEVEL: c.autonomy, TOOL_EXECUTION_MODE: "direct_only",
+    CWD: c.cwd, INTERACTION_MODE: c.interactionMode, AUTONOMY_LEVEL: c.autonomy, TOOL_EXECUTION_MODE: c.toolExecutionMode ?? "direct_only",
     MODEL_ID: c.modelId, IS_GIT_REPO: isGit ? "yes" : "", GIT_BRANCH: branch, GIT_DEFAULT_BRANCH: defBranch,
     GIT_STATUS_TRUNCATED: statusLines.length > STATUS_MAX, GIT_STATUS_SHOWN: STATUS_MAX,
     GIT_STATUS_SHORT: statusLines.slice(0, STATUS_MAX).join("\n") || "(clean)", GIT_LOG_ONELINE: log, CWD_LISTING: listing,

@@ -36,6 +36,10 @@ export interface RigwellSettings {
   commandDenylist?: string[];
   commandBlocklist?: string[];
   customModels?: CustomModelEntry[];
+  /** Models (custom model id or API name) that run Script-only; all others run direct (spec §4.1). */
+  scriptToolModels?: string[];
+  /** Script limits: foregroundMs, sliceMs, totalMs, memoryBytes. */
+  scriptLimits?: { foregroundMs?: number; sliceMs?: number; totalMs?: number; memoryBytes?: number };
   compactionTokenLimit?: number;
   compactionThresholdCheckEnabled?: boolean;
   env?: Record<string, string>;
