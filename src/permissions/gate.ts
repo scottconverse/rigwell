@@ -29,6 +29,12 @@ export function decide(tool: string, input: Record<string, unknown>, ctx: Permis
     case "Script":
     case "script_job":
       return { decision: "allow" };
+    // Browser pane tool (src/sidepane/browser.ts): looking is free; acting on a page needs autonomy low or higher.
+    case "Browser": {
+      const a = str(input.action) ?? "";
+      if (["tabs", "snapshot", "screenshot"].includes(a) || ctx.autonomy !== "off") return { decision: "allow" };
+      return { decision: "ask", confirmationType: "exec", details: { toolName: tool, input }, impactLevel: "medium", alwaysLevel: "low", reason: "Drives the browser pane" };
+    }
     case "Edit":
     case "Create":
       return decideFileWrite(tool, input, ctx);
