@@ -1,6 +1,7 @@
 // BYOK custom models (spec §12.2) -> ModelConfig.
 import type { ModelConfig, ProviderKind, ReasoningEffort } from "../core/types.ts";
 import type { RigwellSettings } from "./settings.ts";
+import { KEYCHAIN_PREFIX, lookupCredential } from "./credentials.ts";
 
 export interface ModelProblem {
   index: number;
@@ -65,8 +66,16 @@ export function validateCustomModels(
     let apiKey: string | undefined;
     if (raw.apiKey !== undefined) {
       if (typeof raw.apiKey !== "string") return bad("apiKey must be a string");
+      if (raw.apiKey.startsWith(KEYCHAIN_PREFIX)) {
+        // A stored key (spec 12.2): `keychain:<name>` is looked up in the credential store.
+        const name = raw.apiKey.slice(KEYCHAIN_PREFIX.length).trim();
+        const stored = name ? lookupCredential(name) : undefined;
+        if (!stored) return bad(`no stored credential named ${JSON.stringify(name)} (store it with: rigwell credential set ${name || "<name>"})`);
+        apiKey = stored;
+      } else {
       if (PLACEHOLDER.test(raw.apiKey.trim())) return bad("apiKey looks like a placeholder");
       apiKey = expand(raw.apiKey, envs, missing);
+      }
       if (!missing.length && PLACEHOLDER.test(apiKey.trim())) return bad("apiKey looks like a placeholder");
     }
     let extraHeaders: Record<string, string> | undefined;

@@ -23,6 +23,29 @@ export function toolIdsFrom(p: Record<string, unknown>) {
   return Object.values(r).some((x) => x !== undefined) ? r : undefined;
 }
 
+/** tags: [{name, metadata?: Record<string,string>}]. */
+export function tagsFrom(v: unknown): { name: string; metadata?: Record<string, string> }[] | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (!Array.isArray(v)) return bad("tags must be a list");
+  return v.map((t, i) => {
+    if (!isObj(t) || typeof t.name !== "string" || !t.name.trim()) return bad(`tags[${i}].name is required`);
+    if (t.metadata !== undefined && (!isObj(t.metadata) || !Object.values(t.metadata).every((x) => typeof x === "string"))) bad(`tags[${i}].metadata must map names to strings`);
+    return { name: t.name, ...(t.metadata ? { metadata: t.metadata as Record<string, string> } : {}) };
+  });
+}
+
+/** update_session_settings tool id lists: a list replaces the stored one, null clears it, absent leaves it. */
+export function toolIdUpdates(p: Record<string, unknown>) {
+  const r: Record<string, string[] | null | undefined> = {};
+  let any = false;
+  for (const [k, key] of [["restrict", "restrictToolIds"], ["enabled", "enabledToolIds"], ["disabled", "disabledToolIds"], ["additional", "additionalToolIds"]] as const) {
+    if (p[key] === undefined) continue;
+    r[k] = p[key] === null ? null : strList(p[key], key);
+    any = true;
+  }
+  return any ? (r as { restrict?: string[] | null; enabled?: string[] | null; disabled?: string[] | null; additional?: string[] | null }) : undefined;
+}
+
 /** systemPrompt (string, or {type:"preset", preset, append}) with the deprecated systemPromptOverride string. */
 export function systemPromptFrom(p: Record<string, unknown>): string | { type: "preset"; preset?: string; append?: string } | undefined {
   const v = p.systemPrompt ?? p.systemPromptOverride;

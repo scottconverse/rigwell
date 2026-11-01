@@ -6,7 +6,7 @@ import type {
   PermissionDecision, ReasoningEffort, TokenUsage, Tool, ToolResultBlock, ToolUseBlock, FileReadRecord,
   AskQuestion, ImageBlock, SessionServices, TodoItem,
 } from "../core/types.ts";
-import type { ToolContext, ToolExecutionMode, ToolOutput } from "../core/types.ts";
+import type { ModelRequest, ToolContext, ToolExecutionMode, ToolOutput } from "../core/types.ts";
 import { SnapshotRecorder } from "../snapshots/index.ts";
 import { ModelError, zeroUsage } from "../core/types.ts";
 import { JobManager, type Job } from "../jobs/manager.ts";
@@ -32,7 +32,7 @@ import { renderAdditionalSkills, SkillRegistry } from "../skills/skills.ts";
 import { McpManager, isMcpAllowed, mcpTool, rememberMcp, type McpServerConfig } from "../mcp/index.ts";
 import { isStarted, runTask, TaskError, type ChildOptions, type ChildOutcome, type ParentContext, type TaskInput, type TaskLimits } from "../subagents/task.ts";
 import { agentCatalog, type CustomAgent } from "../subagents/agents.ts";
-import { exitSpecModeTool, saveSpec, skillTool, specFileName, specSaveFolder, taskTool } from "./extra-tools.ts";
+import { exitSpecModeTool, recommendMissionTool, upgradeModelTool, saveSpec, skillTool, specFileName, specSaveFolder, taskTool } from "./extra-tools.ts";
 import { TaskJob } from "../jobs/task.ts";
 import { resolveProfile, type ModelProfile, type ProfileSettings } from "./profiles.ts";
 import { schemaProblem, validate } from "./json-schema.ts";
@@ -64,6 +64,12 @@ export type TurnReason =
   | "model_provider_unavailable" | "model_rate_limited"
   | "structured_output_missing" | "structured_output_invalid" | "structured_output_schema_invalid";
 
+export interface SessionTag { name: string; metadata?: Record<string, string> }
+/** Settings swapped in while list_tools works out what a session would offer. */
+export interface ToolPreview {
+  modelId?: string; interactionMode?: InteractionMode; autonomyLevel?: AutonomyLevel; specModeModelId?: string;
+  skipPermissions?: boolean; depth?: number; toolIds?: SessionDeps["toolIds"] | null; mode?: ToolExecutionMode;
+}
 export interface PermissionAnswer { selectedOption: string; comment?: string; editedSpecContent?: string }
 export interface AskUserAnswer { cancelled?: boolean; answers: { index: number; question: string; answer: string }[] }
 export interface OutputFormat { type: "json_schema"; schema: Record<string, unknown> }
@@ -220,6 +226,35 @@ export interface SessionDeps {
   compactionTokenLimitPerModel?: Record<string, number>;
   /** Settings `subagentModelSettings`: { model?, reasoningEffort? } for every Task subagent without a model of its own. */
   subagentModelSettings?: { model?: string; reasoningEffort?: ReasoningEffort };
+  /** Enters mission mode for this session (the missions module's enter_mission_mode). Absent: RecommendMission is not offered. */
+  enterMissionMode?: () => Promise<Record<string, unknown>>;
+  /** The session this one continues (a fork's parent, or itself on resume): SessionStart hook previous_session_id. */
+  previousSessionId?: string;
+  /** The session that started this one (SessionStart hook calling_session_id). */
+  callingSessionId?: string;
+  /** Settings `toolResultModelChars`: tool results longer than this are cut for the model (default 120000). */
+  toolResultModelChars?: number;
+  /** Session tags (initialize_session / update_session_settings `tags`). */
+  tags?: SessionTag[];
+  /** Settings `modelUpgradePath`: model ids from weaker to stronger. Absent or exhausted: UpgradeModel is not offered. */
+  modelUpgradePath?: string[];
+}
+
+/** Tool results longer than this many characters are cut for the model (head and tail); the full text stays in `content`. */
+export const MODEL_RESULT_CHARS = 120_000;
+
+/** The model-facing version of a long tool result (spec 12.1 model_content), or undefined when it fits. */
+export function capForModel(content: string, limit: number): string | undefined {
+  if (content.length <= limit) return undefined;
+  const head = Math.floor(limit * 0.6);
+  const tail = limit - head;
+  return `${content.slice(0, head)}\n[... ${content.length - limit} characters omitted from the middle; the user has the full result ...]\n${content.slice(content.length - tail)}`;
+}
+
+/** Responses API fields a model profile asks for. */
+function openaiFields(p: ModelProfile): ModelRequest["openai"] {
+  const o = { ...(p.textVerbosity ? { textVerbosity: p.textVerbosity } : {}), ...(p.serviceTier ? { serviceTier: p.serviceTier } : {}), ...(p.safetyIdentifier ? { safetyIdentifier: p.safetyIdentifier } : {}), ...(p.extendedCache ? { extendedCache: true } : {}) };
+  return Object.keys(o).length ? o : undefined;
 }
 
 /** Waits on one running Script before the turn is stopped (2 hours of 5-minute waits). */
@@ -334,11 +369,15 @@ export class Session {
   private formatWasOn = false;
   private title: { value: string; manual: boolean; asked: boolean };
   private readonly svc: SessionServices;
+  private tags: SessionTag[];
+  private tagsSet = false;
   /** Result of the latest structured turn, for agent_turn_completed. */
   lastStructured?: unknown;
 
   constructor(private deps: SessionDeps, private host: SessionHost) {
     this.todos = deps.todos ? [...deps.todos] : [];
+    this.tags = deps.tags ? [...deps.tags] : [];
+    this.tagsSet = !!deps.tags;
     this.title = { value: deps.title?.value ?? "New Session", manual: deps.title?.manual ?? false, asked: !!deps.title?.manual || (deps.title?.value ?? "New Session") !== "New Session" };
     this.svc = {
       jobs: this.jobs,
@@ -381,6 +420,7 @@ export class Session {
         cwd: this.cwd,
         callTool: (name, input, meta) => this.callInner(name, input, meta),
         notify: (text) => this.notify({ type: "tool_progress_update", toolUseId: "script", toolName: "Script", update: { type: "status", text, timestamp: new Date().toISOString() } }),
+        processExited: (message) => this.notify({ type: "session_process_exited", message, timestamp: new Date().toISOString() }),
       },
     });
     this.jobs.onFinished(() => { if (!this.running) this.kick(); });
@@ -493,7 +533,11 @@ export class Session {
   tools(): Tool[] {
     const script = [this.scripts.scriptTool(), this.scripts.jobTool()];
     const task = this.taskOffered() ? [this.makeTaskTool()] : [];
-    const exit = this.specMode && this.interactive ? [exitSpecModeTool()] : [];
+    const exit = [
+      ...(this.specMode && this.interactive ? [exitSpecModeTool()] : []),
+      ...(this.recommendMissionOffered() ? [recommendMissionTool()] : []),
+      ...(this.nextUpgradeModel() && this.interactive && !this.deps.isChild ? [upgradeModelTool()] : []),
+    ];
     if (this.effectiveMode() === "script_only") {
       return this.byIds([...script, ...this.sessionTools(), ...(this.allowTaskInScripts() ? [] : task), ...exit]);
     }
@@ -505,8 +549,11 @@ export class Session {
   private setState(s: WorkingState) {
     if (this.workingState === s) return;
     this.workingState = s;
-    this.notify({ type: "agent_working_state_changed", newState: s });
+    this.notify({ type: "agent_working_state_changed", newState: s, ...(s === "idle" ? { backgroundWork: this.backgroundWork() } : {}) });
   }
+
+  /** Background jobs (Execute, Task, Script) still running; reported on idle working-state notifications. */
+  backgroundWork(): number { return this.jobs.list().filter((j) => j.status === "running").length; }
 
   settingsSnapshot(): Record<string, unknown> {
     return {
@@ -518,6 +565,7 @@ export class Session {
       ...(this.deps.toolIds?.disabled ? { disabledToolIds: this.deps.toolIds.disabled } : {}),
       ...(this.deps.toolIds?.additional ? { additionalToolIds: this.deps.toolIds.additional } : {}),
       ...(this.deps.systemPrompt ? { systemPrompt: this.deps.systemPrompt } : {}),
+      ...(this.tags.length ? { tags: this.tags } : {}),
       ...(this.deps.structuredOutputFormat ? { structuredOutputFormat: this.deps.structuredOutputFormat } : {}),
       ...(this.checkEnabled !== undefined || this.deps.compactionThresholdCheckEnabled !== undefined ? { compactionThresholdCheckEnabled: this.checkEnabled ?? this.deps.compactionThresholdCheckEnabled } : {}),
     };
@@ -544,6 +592,72 @@ export class Session {
     void this.persistSettings();
   }
 
+  /** update_session_settings `tags`: replaces the session's tags. */
+  setTags(tags: SessionTag[]) {
+    this.tags = [...tags];
+    this.tagsSet = true;
+    this.notify({ type: "settings_updated", settings: this.settingsSnapshot() });
+    void this.persistSettings();
+  }
+
+  /** update_session_settings tool id lists: the lists given replace the stored ones (null clears one). */
+  setToolIds(ids: { restrict?: string[] | null; enabled?: string[] | null; disabled?: string[] | null; additional?: string[] | null }) {
+    const next: NonNullable<SessionDeps["toolIds"]> = { ...(this.deps.toolIds ?? {}) };
+    for (const k of ["restrict", "enabled", "disabled", "additional"] as const) {
+      if (ids[k] === undefined) continue;
+      if (ids[k] === null) delete next[k]; else next[k] = ids[k]!;
+    }
+    this.deps.toolIds = Object.keys(next).length ? next : undefined;
+    this.builder.monitor.expectBreak("tool ids changed");
+    this.notify({ type: "settings_updated", settings: this.settingsSnapshot() });
+    void this.persistSettings();
+  }
+
+  /** Runs `fn` with some settings swapped in, then puts them back (the tool list is computed synchronously). */
+  private preview<T>(o: ToolPreview, fn: () => T): T {
+    const saved = { settings: { ...this.settings }, skip: this.deps.skipPermissions, sub: this.deps.subagents, ids: this.deps.toolIds, mode: this.deps.toolExecutionModeOverride };
+    try {
+      for (const k of ["modelId", "interactionMode", "autonomyLevel", "specModeModelId"] as const) if (o[k] !== undefined) (this.settings as any)[k] = o[k];
+      if (o.skipPermissions !== undefined) this.deps.skipPermissions = o.skipPermissions;
+      if (o.depth !== undefined && this.deps.subagents) this.deps.subagents = { ...this.deps.subagents, depth: o.depth };
+      if (o.toolIds !== undefined) this.deps.toolIds = o.toolIds ?? undefined;
+      if (o.mode) this.deps.toolExecutionModeOverride = o.mode;
+      return fn();
+    } finally {
+      Object.assign(this.settings, saved.settings);
+      this.deps.skipPermissions = saved.skip;
+      this.deps.subagents = saved.sub;
+      this.deps.toolIds = saved.ids;
+      this.deps.toolExecutionModeOverride = saved.mode;
+    }
+  }
+
+  /**
+   * list_tools: every tool the session could offer under the given settings, with whether it is callable now
+   * (offered directly or reachable from a Script, not removed by a tool id list) and where it comes from.
+   * restrictToolIds is a hard allowlist and hides the rest; disabledToolIds keeps a tool listed but not allowed.
+   */
+  listToolInfo(o: ToolPreview = {}): { tool: Tool; currentlyAllowed: boolean; source: "native" | "mcp" }[] {
+    const reach = () => [...this.tools(), ...this.scriptTools()];
+    const ids = o.toolIds === undefined ? this.deps.toolIds : o.toolIds ?? undefined;
+    const allowed = this.preview(o, reach);
+    const allowedNames = new Set(allowed.map((t) => t.name));
+    const wide = this.preview({ ...o, autonomyLevel: "high", skipPermissions: false, interactionMode: o.interactionMode === "spec" ? "spec" : "auto", mode: "direct_only", toolIds: ids ? { ...ids, disabled: undefined } : null }, reach);
+    const byName = new Map<string, Tool>();
+    for (const t of [...wide, ...allowed]) if (!byName.has(t.name)) byName.set(t.name, t);
+    for (const n of this.deferred.names()) {
+      const t = this.deferred.get(n);
+      if (t && !byName.has(n) && (!ids?.restrict || ids.restrict.includes(n))) byName.set(n, t);
+    }
+    return [...byName.values()].map((tool) => {
+      const deferred = this.deferred.get(tool.name) !== undefined;
+      return {
+        tool, source: this.mcp?.findTool(tool.name) ? "mcp" as const : "native" as const,
+        currentlyAllowed: allowedNames.has(tool.name) || (deferred && !(ids?.disabled ?? []).includes(tool.name)),
+      };
+    });
+  }
+
   private routedSettings() {
     const r = this.routed!;
     const eff = this.activeEffort();
@@ -567,7 +681,7 @@ export class Session {
       ...(this.settings.compactionModelId ? { compactionModelId: this.settings.compactionModelId } : {}),
       specModeModelId: this.settings.specModeModelId ?? null, specModeReasoningEffort: this.settings.specModeReasoningEffort ?? null,
       effectiveRouterModel: this.routed ? this.routedSettings() : undefined,
-      toolExecutionMode: this.effectiveMode(),
+      toolExecutionMode: this.effectiveMode(), toolExecutionModeModelId: this.currentModel()?.id ?? this.activeModelId(),
       ...(this.deps.toolExecutionModeOverride ? { toolExecutionModeOverride: this.deps.toolExecutionModeOverride } : {}),
       ...(this.deps.allowSubagentsInScripts ? { allowSubagentsInScripts: true } : {}),
       assistantActiveTimeMs: this.activeTimeMs,
@@ -577,6 +691,7 @@ export class Session {
       loadedDeferredToolNames: this.deferred.state().loaded, announcedDeferredToolNames: this.deferred.state().announced,
       ...(this.deps.toolIds ? { toolIds: this.deps.toolIds } : {}),
       ...(this.deps.systemPrompt ? { systemPrompt: this.deps.systemPrompt } : {}),
+      ...(this.tagsSet ? { tags: this.tags } : {}),
       ...(this.deps.structuredOutputFormat ? { structuredOutputFormat: this.deps.structuredOutputFormat } : {}),
       ...(this.deps.disableBuiltinSkills ? { disableBuiltinSkills: true } : {}),
       ...(this.compactionLimit ? { compactionTokenLimit: this.compactionLimit } : {}),
@@ -595,7 +710,10 @@ export class Session {
     if (this.hooks?.hasHooks() && !this.deps.isChild) {
       this.startup = (async () => {
         try {
-          const r = await this.hooks!.sessionStart(source, {}, AbortSignal.timeout(60_000));
+          const r = await this.hooks!.sessionStart(source, {
+            ...(this.deps.previousSessionId ? { previous_session_id: this.deps.previousSessionId } : {}),
+            ...(this.deps.callingSessionId ? { calling_session_id: this.deps.callingSessionId } : {}),
+          }, AbortSignal.timeout(60_000));
           Object.assign(this.hookEnv, r.envVars);
           if (r.additionalContext) this.startupContext.push(r.additionalContext);
           for (const m of r.systemMessages) await this.userNote(m);
@@ -845,6 +963,7 @@ export class Session {
         this.providerLock ??= model.provider;
         await this.push({
           id: messageId, role: "assistant", content, modelId: model.id, apiProvider: model.provider,
+          ...(this.routed && this.activeModelId() === AUTO_MODEL_ID ? { routerId: AUTO_MODEL_ID } : {}),
           reasoningEffort: this.activeEffort(), ...(done.openaiReasoning?.length ? { openaiReasoning: done.openaiReasoning } : {}),
         });
         this.lastCallContext = {
@@ -1083,6 +1202,7 @@ export class Session {
         case "tool_use_start":
           this.setState("streaming_assistant_message");
           partial.set(ev.index, { id: ev.id, name: ev.name, json: "" });
+          this.notify({ type: "tool_execution_phase_changed", toolUseId: ev.id, toolName: ev.name, phase: "streaming_input" });
           this.notify({ type: "tool_call", toolUse: { type: "tool_use", id: ev.id, name: ev.name, input: {} } });
           break;
         case "tool_input_delta": {
@@ -1268,7 +1388,7 @@ export class Session {
       model, sessionId: this.id, mode: this.effectiveMode(), tools: this.tools(), messages: this.messages,
       reasoningEffort: this.activeEffort(), signal,
       extraSystem: [...(prof.promptVariant ? [prof.promptVariant] : []), ...(this.deps.extraSystem ?? [])],
-      systemPrompt: this.deps.systemPrompt, toolDescriptions: prof.toolDescriptionOverrides, cacheStrategy: prof.cache.strategy,
+      systemPrompt: this.deps.systemPrompt, toolDescriptions: prof.toolDescriptionOverrides, cacheStrategy: prof.cache.strategy, openai: openaiFields(prof),
     };
   }
 
@@ -1320,7 +1440,8 @@ export class Session {
     for (const call of calls) {
       const phase = (p: string) => this.notify({ type: "tool_execution_phase_changed", toolUseId: call.id, toolName: call.name, phase: p });
       const finish = (content: string, isError: boolean, executed: boolean, images?: ImageBlock[]) => {
-        results.push({ type: "tool_result", tool_use_id: call.id, content, ...(isError ? { is_error: true } : {}), ...(images?.length ? { images } : {}) });
+        const cut = capForModel(content, this.deps.toolResultModelChars ?? MODEL_RESULT_CHARS);
+        results.push({ type: "tool_result", tool_use_id: call.id, content, ...(isError ? { is_error: true } : {}), ...(images?.length ? { images } : {}), ...(cut !== undefined ? { modelContent: cut } : {}) });
         this.notify({ type: "tool_result", toolUseId: call.id, messageId: `tool-result-${call.id}`, content, isError, ...(images?.length ? { images } : {}) });
         phase(executed ? "settled_after_execution" : "settled_without_execution");
       };
@@ -1369,6 +1490,12 @@ export class Session {
       if (call.name === "ExitSpecMode") {
         phase("executing");
         const out = await this.exitSpecMode(call, input, signal);
+        finish(out.content, !!out.isError, true);
+        continue;
+      }
+      if (call.name === "RecommendMission" || call.name === "UpgradeModel") {
+        phase("executing");
+        const out = call.name === "RecommendMission" ? await this.recommendMission(call, input) : await this.upgradeModel(call, input);
         finish(out.content, !!out.isError, true);
         continue;
       }
@@ -1645,7 +1772,7 @@ export class Session {
     if (calls.length < 2 || !this.host.requestPermission || this.deps.autoRejectPermissionRequests || this.hooks?.hasHooks()) return undefined;
     const asks: { call: ToolUseBlock; d: Extract<PermissionDecision, { decision: "ask" }> }[] = [];
     for (const call of calls) {
-      if (!tools.has(call.name) || call.name === "ExitSpecMode") continue;
+      if (!tools.has(call.name) || call.name === "ExitSpecMode" || call.name === "RecommendMission" || call.name === "UpgradeModel") continue;
       const d = this.gate(call.name, call.input);
       if (d.decision === "ask" && !d.options) asks.push({ call, d });
     }
@@ -1862,6 +1989,60 @@ export class Session {
       (comment ? `The user added: ${comment}\n` : "") +
       (saved ? `The plan is saved at ${saved}. ` : "") + "Carry it out now.";
     return { content: text, data: { approved: true, ...(saved ? { savedTo: saved } : {}) } };
+  }
+
+  /** RecommendMission is offered in a normal session with a client that can answer, when mission mode can be entered. */
+  private recommendMissionOffered(): boolean {
+    return !!this.deps.enterMissionMode && this.interactive && !this.deps.isChild && this.settings.interactionMode === "auto";
+  }
+
+  /** The next model on the settings `modelUpgradePath` (known models only), or undefined. */
+  nextUpgradeModel(): string | undefined {
+    const path = this.deps.modelUpgradePath;
+    if (!path?.length) return undefined;
+    const cur = this.settings.modelId;
+    const at = path.indexOf(cur);
+    const rest = at < 0 ? path : path.slice(at + 1);
+    return rest.find((id) => id !== cur && !!this.deps.resolveModel(id));
+  }
+
+  /** RecommendMission {reason}: asks (recommend_mission); on approval enters mission mode through the missions module. */
+  private async recommendMission(call: ToolUseBlock, input: Record<string, unknown>): Promise<ToolOutput> {
+    const reason = typeof input.reason === "string" ? input.reason.trim() : "";
+    if (!reason) return { content: "reason is required: say why this work suits a mission.", isError: true };
+    if (!this.recommendMissionOffered()) return { content: "Mission mode cannot be recommended here.", isError: true };
+    const r = await this.askRaw(call, {
+      decision: "ask", confirmationType: "recommend_mission", impactLevel: "low", alwaysLevel: null, details: { reason },
+      options: [{ label: "Yes, switch to mission mode", value: "proceed_once" }, { label: "No, keep working here", value: "cancel" }],
+    });
+    if (r.verdict === "rejected" || r.verdict === "no_approver") return { content: "No one can be asked right now. Carry on in this session.", isError: true };
+    const comment = r.answer?.comment?.trim();
+    if (r.verdict === "cancel") return { content: `The user declined mission mode. Carry on in this session. ${comment ? `The user said: ${comment}` : ""}`.trim(), data: { accepted: false } };
+    let res: Record<string, unknown>;
+    try { res = await this.deps.enterMissionMode!(); } catch (e) { return { content: `Could not enter mission mode: ${(e as Error)?.message ?? e}`, isError: true }; }
+    if (res.entered !== true) {
+      return { content: "The user accepted, but the folder is not ready for a mission (readiness check failed). Tell the user what the check found and carry on here.", data: { accepted: true, entered: false, readiness: res.readiness } };
+    }
+    return { content: `The user accepted. Mission mode is on: plan the mission with the user and propose it with ProposeMission. ${comment ? `The user added: ${comment}` : ""}`.trim(), data: { accepted: true, entered: true } };
+  }
+
+  /** UpgradeModel {reason}: asks (upgrade_model); on approval the session model becomes the next one on the upgrade path. */
+  private async upgradeModel(call: ToolUseBlock, input: Record<string, unknown>): Promise<ToolOutput> {
+    const reason = typeof input.reason === "string" ? input.reason.trim() : "";
+    if (!reason) return { content: "reason is required: say why a stronger model is needed.", isError: true };
+    const next = this.nextUpgradeModel();
+    if (!next) return { content: "No stronger model is configured (settings modelUpgradePath).", isError: true };
+    const from = this.settings.modelId;
+    const r = await this.askRaw(call, {
+      decision: "ask", confirmationType: "upgrade_model", impactLevel: "medium", alwaysLevel: null, details: { reason, fromModelId: from, toModelId: next },
+      options: [{ label: `Yes, switch to ${next}`, value: "proceed_once" }, { label: "No, keep the current model", value: "cancel" }],
+    });
+    if (r.verdict === "rejected" || r.verdict === "no_approver") return { content: "No one can be asked right now. Carry on with the current model.", isError: true };
+    const comment = r.answer?.comment?.trim();
+    if (r.verdict === "cancel") return { content: `The user declined the model upgrade. Carry on with the current model. ${comment ? `The user said: ${comment}` : ""}`.trim(), data: { approved: false } };
+    // updateSettings queues the tool-mode notice when the new model changes the tool mode.
+    this.updateSettings({ modelId: next });
+    return { content: `The user approved. This session now uses ${next} (was ${from}), from the next request on.`, data: { approved: true, from, to: next } };
   }
 
   // ---------- subagents (spec 5.9) ----------

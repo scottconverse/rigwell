@@ -24,6 +24,8 @@ export type ToolResultBlock = {
   is_error?: boolean;
   /** Images returned by the tool (Read of a PNG): sent to the model next to the text. */
   images?: ImageBlock[];
+  /** A shorter text the model sees instead of `content` when the result was cut for the model (spec 12.1 model_content). */
+  modelContent?: string;
   cache?: boolean;
 };
 /** An image the model sees (user attachment or a Read result). `data` is base64. */
@@ -51,6 +53,8 @@ export interface Message {
   modelId?: string;
   apiProvider?: string;
   reasoningEffort?: ReasoningEffort;
+  /** Set on turns the router picked the model for ("auto"). */
+  routerId?: string;
   openaiReasoning?: OpenAIReasoning[];
 }
 
@@ -119,6 +123,8 @@ export interface ModelRequest {
   cacheStrategy?: "anthropic-breakpoints" | "openai-auto" | "none";
   /** Stream guards (spec §4.2). Absent: the adapter defaults (no idle limit, 10 minute hard limit). */
   limits?: { idleTimeoutMs?: number; hardLimitMs?: number };
+  /** Responses API request fields from the model profile (spec 4.6.2). */
+  openai?: { textVerbosity?: string; serviceTier?: string; safetyIdentifier?: string | boolean; extendedCache?: boolean };
 }
 
 /**
@@ -254,7 +260,7 @@ export interface PermissionContext {
   cwd: string;
 }
 
-export type ConfirmationType = "edit" | "create" | "exec" | "mcp_tool" | "exit_spec_mode" | "apply_patch" | "fetch_url";
+export type ConfirmationType = "edit" | "create" | "exec" | "mcp_tool" | "exit_spec_mode" | "apply_patch" | "fetch_url" | "recommend_mission" | "upgrade_model";
 
 export type ToolExecutionMode = "direct_only" | "script_only";
 

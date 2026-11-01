@@ -186,6 +186,7 @@ function encodeMessage(m: Message): Record<string, unknown> {
   if (m.visibility) out.visibility = m.visibility;
   if (m.userMessageSource) out.userMessageSource = m.userMessageSource;
   if (m.modelId) out.modelId = m.modelId;
+  if (m.routerId) out.routerId = m.routerId;
   if (m.apiProvider) out.apiProvider = m.apiProvider;
   if (m.reasoningEffort) out.reasoningEffort = m.reasoningEffort;
   const r = m.openaiReasoning;
@@ -215,6 +216,7 @@ function encodeBlock(b: ContentBlock): Record<string, unknown> {
       return {
         type: "tool_result", tool_use_id: b.tool_use_id, is_error: b.is_error ?? false,
         content: b.images?.length ? [{ type: "text", text: b.content }, ...b.images.map((i) => ({ type: "image", mediaType: i.mediaType, data: i.data }))] : b.content,
+        ...(b.modelContent !== undefined ? { model_content: b.modelContent } : {}),
       };
     case "image":
       return { type: "image", mediaType: b.mediaType, data: b.data };
@@ -247,6 +249,7 @@ function decodeBlock(b: any): ContentBlock | null {
       return {
         type: "tool_result", tool_use_id: String(b.tool_use_id), content: c,
         ...(images.length ? { images } : {}), ...(b.is_error !== undefined ? { is_error: !!b.is_error } : {}),
+        ...(typeof b.model_content === "string" ? { modelContent: b.model_content } : {}),
       };
     }
     case "image":
@@ -269,6 +272,7 @@ function decodeMessage(rec: any): Message | null {
   if (m.visibility === "llm_only" || m.visibility === "user_only") msg.visibility = m.visibility;
   if (typeof m.userMessageSource === "string") msg.userMessageSource = m.userMessageSource;
   if (typeof m.modelId === "string") msg.modelId = m.modelId;
+  if (typeof m.routerId === "string") msg.routerId = m.routerId;
   if (typeof m.apiProvider === "string") msg.apiProvider = m.apiProvider;
   if (typeof m.reasoningEffort === "string") msg.reasoningEffort = m.reasoningEffort as ReasoningEffort;
   if (typeof m.openaiReasoningId === "string") {
