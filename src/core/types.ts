@@ -39,6 +39,8 @@ export interface Message {
   content: ContentBlock[];
   /** llm_only: model sees it, UI hides it. user_only: UI only. Absent: both. */
   visibility?: "llm_only" | "user_only";
+  /** Who sent a user message: "automation" for prompts injected by crons and automations. Absent for typed messages. */
+  userMessageSource?: string;
   // assistant-only metadata
   modelId?: string;
   apiProvider?: string;

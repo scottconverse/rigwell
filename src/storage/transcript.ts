@@ -178,6 +178,7 @@ export function createSession(opts: {
 function encodeMessage(m: Message): Record<string, unknown> {
   const out: Record<string, unknown> = { role: m.role, content: m.content.map(encodeBlock) };
   if (m.visibility) out.visibility = m.visibility;
+  if (m.userMessageSource) out.userMessageSource = m.userMessageSource;
   if (m.modelId) out.modelId = m.modelId;
   if (m.apiProvider) out.apiProvider = m.apiProvider;
   if (m.reasoningEffort) out.reasoningEffort = m.reasoningEffort;
@@ -242,6 +243,7 @@ function decodeMessage(rec: any): Message | null {
     content: m.content.map(decodeBlock).filter((x: ContentBlock | null): x is ContentBlock => x !== null),
   };
   if (m.visibility === "llm_only" || m.visibility === "user_only") msg.visibility = m.visibility;
+  if (typeof m.userMessageSource === "string") msg.userMessageSource = m.userMessageSource;
   if (typeof m.modelId === "string") msg.modelId = m.modelId;
   if (typeof m.apiProvider === "string") msg.apiProvider = m.apiProvider;
   if (typeof m.reasoningEffort === "string") msg.reasoningEffort = m.reasoningEffort as ReasoningEffort;

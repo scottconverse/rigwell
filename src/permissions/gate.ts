@@ -47,6 +47,19 @@ export function decide(tool: string, input: Record<string, unknown>, ctx: Permis
       if (["tabs", "snapshot", "screenshot"].includes(a) || ctx.autonomy !== "off") return { decision: "allow" };
       return { decision: "ask", confirmationType: "exec", details: { toolName: tool, input }, impactLevel: "medium", alwaysLevel: "low", reason: "Drives the browser pane" };
     }
+    // Automation tools (src/automations/tools.ts): reading is free; anything that creates, changes, deletes or starts a run
+    // always asks, so an unattended run (which cannot prompt) cannot make or change automations.
+    case "ListAutomations":
+    case "ReadAutomation":
+      return { decision: "allow" };
+    case "Loop":
+      if (input.action === "list") return { decision: "allow" };
+    // falls through
+    case "CreateAutomation":
+    case "EditAutomation":
+    case "DeleteAutomation":
+    case "RunAutomation":
+      return { decision: "ask", confirmationType: "exec", details: { toolName: tool, input }, impactLevel: "medium", alwaysLevel: null, reason: `${tool} changes or starts scheduled work` };
     case "Edit":
     case "Create":
       return decideFileWrite(tool, input, ctx);

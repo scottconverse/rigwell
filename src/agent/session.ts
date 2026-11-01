@@ -211,7 +211,7 @@ export class Session {
   workingState: WorkingState = "idle";
   providerLock?: string;
   private readFiles = new Map<string, FileReadRecord>();
-  private queue: { text: string; messageId: string }[] = [];
+  private queue: { text: string; messageId: string; source?: string }[] = [];
   private running = false;
   private abort?: AbortController;
   private activeTimeMs = 0;
@@ -484,8 +484,8 @@ export class Session {
   }
 
   /** Accepts a user message. Returns at once; the turn runs in the background. */
-  addUserMessage(text: string, messageId: string = crypto.randomUUID()) {
-    this.queue.push({ text, messageId });
+  addUserMessage(text: string, messageId: string = crypto.randomUUID(), source?: string) {
+    this.queue.push({ text, messageId, source });
     this.kick();
   }
 
@@ -508,7 +508,7 @@ export class Session {
       for (;;) {
         while (this.queue.length) {
           const next = this.queue.shift()!;
-          await this.runTurn(next.text, next.messageId);
+          await this.runTurn(next.text, next.messageId, undefined, next.source);
         }
         // A background job finished while the model was asleep: wake it with a reminder (spec §4.3).
         const wake = this.takeWake();
@@ -565,7 +565,7 @@ export class Session {
     await this.deps.persistence.appendMessage(msg, parent);
   }
 
-  private async runTurn(text: string, turnId: string, visibility?: "llm_only") {
+  private async runTurn(text: string, turnId: string, visibility?: "llm_only", source?: string) {
     const started = Date.now();
     this.abort = new AbortController();
     const signal = this.abort.signal;
@@ -619,7 +619,7 @@ export class Session {
         for (const n of [...this.deferred.takeNotices(), this.deferred.announcement()]) {
           if (n) await this.push({ id: `deferred-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: n }] });
         }
-        await this.push({ id: turnId, role: "user", ...(visibility ? { visibility } : {}), content: [{ type: "text", text: prompt }] });
+        await this.push({ id: turnId, role: "user", ...(visibility ? { visibility } : {}), ...(source ? { userMessageSource: source } : {}), content: [{ type: "text", text: prompt }] });
       }
 
       const repeat = new RepeatTracker();

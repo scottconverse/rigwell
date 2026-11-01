@@ -16,7 +16,7 @@ import { streamWithRetry } from "../adapters/retry.ts";
 import { toolsForSession } from "../tools/registry.ts";
 import { decide } from "../permissions/gate.ts";
 import { DEFAULT_COMMAND_LISTS } from "../permissions/lists.ts";
-import { discardSessionWorktree, handleWorktreeMethod, releaseWorktree, runSessionSetup, startSessionWorktree, worktreeSettings, type SessionWorktree } from "../worktree/connect.ts";
+import { discardSessionWorktree, handleWorktreeMethod, onSessionTitleUpdated, releaseWorktree, runSessionSetup, startSessionWorktree, worktreeSettings, type SessionWorktree } from "../worktree/connect.ts";
 import type { ToolExecutionMode } from "../core/types.ts";
 import { HookRunner, loadHooksConfig } from "../hooks/index.ts";
 import { fromInitConfigs, type McpServerInitConfig } from "../mcp/index.ts";
@@ -65,8 +65,13 @@ export function createConnection(write: (line: string) => void, opts: Connection
 
   const peer: RpcPeer = new RpcPeer(write, (m, p) => handle(m, p), opts.log);
 
-  const notify = (n: Record<string, unknown>) =>
+  const notify = (n: Record<string, unknown>) => {
     peer.notify(METHOD_PREFIX + "session_notification", { ...(session ? { sessionId: session.id } : {}), notification: n });
+    // A generated title renames a generated worktree branch (spec 18.2).
+    if (n.type === "session_title_updated" && n.updateType !== "manual" && worktree && session && typeof n.title === "string") {
+      void onSessionTitleUpdated(session.id, n.title, undefined, opts.log).catch(() => {});
+    }
+  };
 
   function need(): Session {
     if (!session) throw new RpcError(ErrorCodes.SESSION_DISCONNECTED, "No session: call initialize_session or load_session first");
@@ -253,7 +258,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
       case "add_user_message": {
         const s = need();
         if (typeof p.text !== "string" || !p.text.trim()) throw new RpcError(ErrorCodes.INVALID_PARAMS, "text is required");
-        s.addUserMessage(p.text, typeof p.messageId === "string" ? p.messageId : undefined);
+        s.addUserMessage(p.text, typeof p.messageId === "string" ? p.messageId : undefined, typeof p.userMessageSource === "string" ? p.userMessageSource : undefined);
         return {};
       }
       case "interrupt_session": need().interrupt(); return {};
