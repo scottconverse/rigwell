@@ -35,7 +35,9 @@ export function createCreateTool(): Tool {
       }
       try {
         fs.mkdirSync(path.dirname(abs), { recursive: true });
+        ctx.snapshots?.before(abs);
         fs.writeFileSync(abs, content);
+        ctx.snapshots?.after(abs);
         ctx.readFiles.set(abs, recordOf(fs.statSync(abs)));
       } catch (e) {
         return fail(`Cannot write ${abs}: ${errMessage(e)}`);

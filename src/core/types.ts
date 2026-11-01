@@ -176,6 +176,8 @@ export interface ToolContext {
   jobs?: import("../jobs/manager.ts").JobsApi;
   /** Extra environment for spawned commands (SessionStart hook exports). */
   env?: Record<string, string>;
+  /** File snapshots (rewind): Edit/Create call before(abs) ahead of writing and after(abs) once written. Never throws. */
+  snapshots?: { before(abs: string): void; after(abs: string): void };
 }
 
 export interface ToolOutput {
