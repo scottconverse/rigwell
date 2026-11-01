@@ -12,7 +12,7 @@ export type Item =
 export interface PanelOption { label: string; value: string }
 
 export type PanelAction =
-  | { type: "request"; requestId: string; method: "request_permission" | "ask_user" | "pick_options" }
+  | { type: "request"; requestId: string; method: "request_permission" | "ask_user" | "pick_options" | "request_trust" }
   | { type: "confirm"; effects: Effect[] }
   | { type: "model" }
   | { type: "resume" }
@@ -21,7 +21,7 @@ export type PanelAction =
 
 export interface Panel {
   id: string;
-  kind: "permission" | "batch" | "exit_spec" | "ask_user" | "pick_options" | "confirm" | "select";
+  kind: "permission" | "batch" | "exit_spec" | "ask_user" | "pick_options" | "trust" | "confirm" | "select";
   action: PanelAction;
   title: string;
   /** Preformatted body lines (the renderer wraps and folds them). */

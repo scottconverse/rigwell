@@ -13,7 +13,25 @@ export class Store<S> {
   protected set(patch: Partial<S>) { this.state = { ...this.state, ...patch }; for (const s of [...this.subs]) s(); }
 }
 
-export interface Prompt { requestId: string; method: "request_permission" | "ask_user" | "pick_options"; params: any; resolve(result: unknown): void }
+export interface Prompt {
+  requestId: string; method: "request_permission" | "ask_user" | "pick_options"; params: any; resolve(result: unknown): void;
+  /** Re-shown after load_session: answered with answer_request, and left open in the harness when the view closes. */
+  reshown?: boolean;
+}
+
+/** rigwell.request_trust questions. They arrive while a session is being created or resumed, before any session view exists, so the app shows them. */
+export interface TrustAsk { id: string; cwd: string; unlocks: string[]; resolve(result: { trust: boolean }): void }
+class TrustAsks extends Store<{ asks: TrustAsk[] }> {
+  constructor() { super({ asks: [] }); }
+  add(a: TrustAsk) { this.set({ asks: [...this.state.asks, a] }); }
+  answer(id: string, trust: boolean) {
+    const a = this.state.asks.find((x) => x.id === id);
+    if (!a) return;
+    this.set({ asks: this.state.asks.filter((x) => x !== a) });
+    a.resolve({ trust });
+  }
+}
+export const trustAsks = new TrustAsks();
 export interface SideEntry { id: string; question: string; answer: string; status: "pending" | "streaming" | "complete" | "error"; createdAt: number }
 
 export interface SessionState {
@@ -70,7 +88,7 @@ export class SessionController extends Store<SessionState> {
       this.conn = conn;
       conn.onNotification = (m, p) => this.onNotification(m, p);
       conn.onRequest = (m, p) => this.onRequest(m, p);
-      conn.onClose = () => { this.resolveAllPrompts(); this.set({ phase: this.state.phase === "error" ? "error" : "disconnected", working: "idle" }); };
+      conn.onClose = () => { this.resolveAllPrompts(false); this.set({ phase: this.state.phase === "error" ? "error" : "disconnected", working: "idle" }); };
       const r = await init(conn);
       const models = (r.availableModels ?? []).map(normalizeModel);
       this.set({
@@ -78,6 +96,7 @@ export class SessionController extends Store<SessionState> {
         settings: r.settings ?? {}, models, working: r.workingState ?? "idle",
         title: this.state.title,
       });
+      this.reshowPending(conn, r);
       void bridge().view.set(r.sessionId);
       void this.refreshSideChat();
     } catch (e) {
@@ -106,7 +125,24 @@ export class SessionController extends Store<SessionState> {
     if (items !== this.state.items) this.set({ items });
   }
 
+  /** Prompts a reattached session still waits on (load_session pendingPermissions / pendingAskUserRequests). */
+  private reshowPending(conn: DaemonConn, r: any) {
+    const add = (method: Prompt["method"], list: any[]) => {
+      for (const params of list ?? []) {
+        const requestId = typeof params?.requestId === "string" ? params.requestId : "";
+        if (!requestId || this.state.prompts.some((x) => x.requestId === requestId)) continue;
+        const resolve = (answer: unknown) => { void conn.request("answer_request", { requestId, answer }).catch(() => {}); };
+        this.set({ prompts: [...this.state.prompts, { requestId, method, params, resolve, reshown: true }] });
+      }
+    };
+    add("request_permission", r.pendingPermissions);
+    add("ask_user", r.pendingAskUserRequests);
+  }
+
   private onRequest(method: string, params: any): Promise<unknown> {
+    if (method === "request_trust") {
+      return new Promise((resolve) => trustAsks.add({ id: crypto.randomUUID(), cwd: String(params.cwd ?? this.state.cwd), unlocks: Array.isArray(params.unlocks) ? params.unlocks.map(String) : [], resolve }));
+    }
     if (method !== "request_permission" && method !== "ask_user" && method !== "pick_options") return Promise.reject(new Error(`Method not found: ${method}`));
     return new Promise((resolve) => {
       const requestId = String(params.requestId ?? crypto.randomUUID());
@@ -114,8 +150,9 @@ export class SessionController extends Store<SessionState> {
     });
   }
 
-  private resolveAllPrompts() {
-    for (const p of this.state.prompts) p.resolve(p.method === "request_permission" ? { selectedOption: "cancel" } : p.method === "ask_user" ? { cancelled: true, answers: [] } : { cancelled: true, selectedIds: [] });
+  /** `cancelReshown` false (the view closes): prompts shown again after a reload stay open in the harness for the next load_session. */
+  private resolveAllPrompts(cancelReshown = true) {
+    for (const p of this.state.prompts) if (cancelReshown || !p.reshown) p.resolve(p.method === "request_permission" ? { selectedOption: "cancel" } : p.method === "ask_user" ? { cancelled: true, answers: [] } : { cancelled: true, selectedIds: [] });
     if (this.state.prompts.length) this.set({ prompts: [] });
   }
 
@@ -180,5 +217,5 @@ export class SessionController extends Store<SessionState> {
     })());
   }
 
-  close() { this.resolveAllPrompts(); void bridge().view.set(null); this.conn?.close(); }
+  close() { this.resolveAllPrompts(false); void bridge().view.set(null); this.conn?.close(); }
 }
