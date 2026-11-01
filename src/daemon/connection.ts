@@ -18,6 +18,11 @@ import { decide } from "../permissions/gate.ts";
 import { DEFAULT_COMMAND_LISTS } from "../permissions/lists.ts";
 import { discardSessionWorktree, handleWorktreeMethod, releaseWorktree, runSessionSetup, startSessionWorktree, worktreeSettings, type SessionWorktree } from "../worktree/connect.ts";
 import type { ToolExecutionMode } from "../core/types.ts";
+import { HookRunner, loadHooksConfig } from "../hooks/index.ts";
+import { fromInitConfigs, type McpServerInitConfig } from "../mcp/index.ts";
+import { loadAgents } from "../subagents/agents.ts";
+import { TaskLimits } from "../subagents/task.ts";
+import { forkSession } from "../storage/fork.ts";
 
 export interface ConnectionOptions {
   /** The client can answer rigwell.request_permission (stream-jsonrpc). False for plain `exec "prompt"`. */
@@ -47,6 +52,10 @@ function pick<T extends string>(v: unknown, allowed: string[], name: string): T 
 }
 
 const SHELL = Bun.which("bash") ? "bash" : "sh";
+
+/** One limit tracker per process, shared by every connection (spec 5.9 Limits). Settings `subagentLimits` set it on first use. */
+let processLimits: TaskLimits | undefined;
+const limitsFor = (s: Record<string, unknown>) => (processLimits ??= new TaskLimits((s.subagentLimits as any) ?? {}));
 
 export function createConnection(write: (line: string) => void, opts: ConnectionOptions) {
   let session: Session | undefined;
@@ -84,9 +93,19 @@ export function createConnection(write: (line: string) => void, opts: Connection
 
   const modelOk = (env: ReturnType<typeof environment>, id: string) => !!findModel(env.models, id) || (id === AUTO_MODEL_ID && !!routerOf(env));
 
-  function build(id: string, cwd: string, settings: SessionSettings, p: Record<string, unknown>, env: ReturnType<typeof environment>, override: ToolExecutionMode | undefined, restored?: { messages: Message[]; tokenUsage?: any; deferred?: { loaded: string[]; announced: string[] }; archived?: Message[]; anchor?: string }) {
+  function persistenceFor(f: SessionFiles) {
+    return {
+      appendMessage: async (msg: Message, parent: string | null) => { await appendMessage(f, msg, parent); },
+      appendTurnOutcome: (o: { turnId: string; reason: string; resultKind: "text" | null }) => appendTurnOutcome(f, o),
+      appendCompaction: (rec: any) => appendCompaction(f, rec),
+      saveSettings: async (patch: Record<string, unknown>) => { updateSessionSettings(f, patch); },
+    };
+  }
+
+  function build(id: string, cwd: string, settings: SessionSettings, p: Record<string, unknown>, env: ReturnType<typeof environment>, override: ToolExecutionMode | undefined, restored?: { allowSubagentsInScripts?: boolean; messages: Message[]; tokenUsage?: any; deferred?: { loaded: string[]; announced: string[] }; archived?: Message[]; anchor?: string }) {
     const skip = opts.forced?.skipPermissions ?? p.skipPermissionsUnsafe === true;
     const f = files!;
+    const hooksConfig = loadHooksConfig({ cwd });
     return new Session({
       id, cwd, settings,
       resolveModel: (mid) => findModel(env.models, mid),
@@ -102,11 +121,22 @@ export function createConnection(write: (line: string) => void, opts: Connection
       guardSettings: { llmRequestTimeout: env.s.llmRequestTimeout as number | undefined, loopGuards: env.s.loopGuards as any },
       compaction: env.s.compaction as any, compactionTokenLimit: env.s.compactionTokenLimit,
       compactionThresholdCheckEnabled: env.s.compactionThresholdCheckEnabled, router: routerOf(env),
-      persistence: {
-        appendMessage: async (msg, parent) => { await appendMessage(f, msg, parent); },
-        appendTurnOutcome: (o) => appendTurnOutcome(f, o),
-        appendCompaction: (rec) => appendCompaction(f, rec),
-        saveSettings: async (patch) => { updateSessionSettings(f, patch); },
+      persistence: persistenceFor(f),
+      transcriptPath: f.transcriptPath,
+      hooksFor: (a) => new HookRunner({
+        config: hooksConfig, sessionId: a.sessionId, transcriptPath: a.transcriptPath, cwd, permissionMode: a.permissionMode, notify: a.notify,
+      }),
+      mcp: { servers: fromInitConfigs(p.mcpServers as McpServerInitConfig[] | undefined) },
+      allowSubagentsInScripts: restored?.allowSubagentsInScripts ?? (p.allowSubagentsInScripts === true || env.s.allowSubagentsInScripts === true),
+      specSaveDir: typeof env.s.specSaveDir === "string" ? env.s.specSaveDir : undefined,
+      subagents: {
+        limits: limitsFor(env.s), depth: 0, rootSessionId: id,
+        agents: loadAgents({ cwd, isValidModel: (m) => !!findModel(env.models, m) }).agents,
+        openChild: (o) => {
+          const cf = createSession({ id: o.id, cwd: o.cwd, title: o.title, extra: { callingSessionId: o.callingSessionId, callingToolUseId: o.callingToolUseId } });
+          updateSessionSettings(cf, { tags: [{ name: "subagent", metadata: { subagent: 1, depth: o.depth, ...(o.agentName ? { agent: o.agentName } : {}) } }] });
+          return { persistence: persistenceFor(cf), transcriptPath: cf.transcriptPath };
+        },
       },
     }, {
       notify,
@@ -114,6 +144,16 @@ export function createConnection(write: (line: string) => void, opts: Connection
         ? async (params) => (await peer.request(METHOD_PREFIX + "request_permission", params)) as any
         : undefined,
     });
+  }
+
+  /** Spec mode model and effort (spec 5.5.7): initialize_session params, else sessionDefaultSettings.specModeModel / specModeReasoningEffort. */
+  function specSettings(p: Record<string, unknown>, d: Record<string, unknown>, env: ReturnType<typeof environment>): Partial<SessionSettings> {
+    const model = (p.specModeModelId ?? d.specModeModel) as unknown;
+    const effort = pick<ReasoningEffort>(p.specModeReasoningEffort ?? d.specModeReasoningEffort, EFFORTS, "specModeReasoningEffort");
+    return {
+      ...(typeof model === "string" && findModel(env.models, model) ? { specModeModelId: model } : {}),
+      ...(effort ? { specModeReasoningEffort: effort } : {}),
+    };
   }
 
   function sessionResult() {
@@ -147,6 +187,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
           interactionMode: pick<InteractionMode>(p.interactionMode, MODES, "interactionMode") ?? (d.interactionMode as InteractionMode) ?? "auto",
           autonomyLevel: opts.forced?.autonomyLevel ?? pick<AutonomyLevel>(p.autonomyLevel, AUTONOMY, "autonomyLevel") ?? (d.autonomyLevel as AutonomyLevel) ?? "off",
           ...(env.s.compactionModel && findModel(env.models, env.s.compactionModel) ? { compactionModelId: env.s.compactionModel } : {}),
+          ...specSettings(p, d, env),
         };
         // Optional git worktree (spec §18): the session's cwd becomes the worktree path.
         worktree = (await startSessionWorktree(p.worktree, cwd, id, env.s, opts.log)) ?? undefined;
@@ -160,6 +201,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
           if (worktree) await discardSessionWorktree(worktree);
           throw e;
         }
+        session.start("startup");
         notify({ type: "settings_updated", settings: session.settingsSnapshot() });
         const setup = worktree ? await runSessionSetup(worktree, notify) : undefined;
         return {
@@ -185,9 +227,12 @@ export function createConnection(write: (line: string) => void, opts: Connection
           interactionMode: (saved.interactionMode as InteractionMode) ?? "auto",
           autonomyLevel: opts.forced?.autonomyLevel ?? (saved.autonomyLevel as AutonomyLevel) ?? "off",
           ...(typeof saved.compactionModelId === "string" ? { compactionModelId: saved.compactionModelId } : {}),
+          ...(typeof saved.specModeModelId === "string" ? { specModeModelId: saved.specModeModelId } : {}),
+          ...(typeof saved.specModeReasoningEffort === "string" ? { specModeReasoningEffort: saved.specModeReasoningEffort as ReasoningEffort } : {}),
         };
         const savedOverride = EXEC_MODES.includes(saved.toolExecutionModeOverride as string) ? (saved.toolExecutionModeOverride as ToolExecutionMode) : undefined;
         session = build(id, cwd, settings, p, env, savedOverride, {
+          allowSubagentsInScripts: saved.allowSubagentsInScripts === true || p.allowSubagentsInScripts === true || undefined,
           messages: view, archived, anchor: loaded.compaction?.anchorMessage.id, tokenUsage: saved.tokenUsage,
           deferred: {
             loaded: [...new Set([
@@ -198,6 +243,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
           },
         });
         if (typeof saved.providerLock === "string") session.providerLock = saved.providerLock;
+        session.start("resume");
         return {
           ...sessionResult(), cwd, isAgentLoopInProgress: false, workingState: "idle",
           tokenUsage: session.tokenUsage, availableModels: listModelInfo(env.models),
@@ -216,6 +262,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
           session.interrupt();
           await session.idle();
           await session.stopBackgroundJobs();
+          await session.end(typeof p.reason === "string" ? p.reason : "other");
           notify({ type: "agent_working_state_changed", newState: "idle" });
         }
         if (worktree) releaseWorktree(worktree.info.path);
@@ -242,6 +289,14 @@ export function createConnection(write: (line: string) => void, opts: Connection
           if (cm === null) s.settings.compactionModelId = undefined;
         }
         if (p.missionSettings && typeof p.missionSettings === "object" && files) updateSessionSettings(files, { missionSettings: p.missionSettings });
+        for (const k of ["specModeModelId", "specModeReasoningEffort"] as const) {
+          const v = p[k];
+          if (v === undefined) continue;
+          if (v !== null && typeof v !== "string") throw new RpcError(ErrorCodes.INVALID_PARAMS, `Invalid ${k}: ${JSON.stringify(v)}`);
+          if (k === "specModeModelId" && v !== null && !modelOk(environment(s.cwd), v as string)) throw new RpcError(ErrorCodes.INVALID_PARAMS, `Unknown model: ${v}`);
+          if (k === "specModeReasoningEffort" && v !== null) pick<ReasoningEffort>(v, EFFORTS, k);
+          if (v === null) s.settings[k] = undefined; else (patch as any)[k] = v;
+        }
         s.updateSettings(patch);
         return {};
       }
@@ -254,6 +309,25 @@ export function createConnection(write: (line: string) => void, opts: Connection
           if (e instanceof SessionBusyError) throw new RpcError(ErrorCodes.CONFLICT, e.message);
           throw new RpcError(ErrorCodes.INTERNAL_ERROR, `Compaction failed: ${(e as Error).message}`);
         }
+      }
+      case "list_mcp_servers": return need().listMcpServers();
+      case "add_mcp_server": {
+        const s = need();
+        try { return await s.addMcpServer(p as any); } catch (e) { throw new RpcError(ErrorCodes.INVALID_PARAMS, (e as Error).message); }
+      }
+      case "remove_mcp_server": {
+        const s = need();
+        if (typeof p.serverName !== "string" || !p.serverName) throw new RpcError(ErrorCodes.INVALID_PARAMS, "serverName is required");
+        if (p.settingsLevel !== undefined && p.settingsLevel !== "user") throw new RpcError(ErrorCodes.INVALID_PARAMS, 'settingsLevel must be "user"');
+        try { return await s.removeMcpServer(p.serverName, "user"); } catch (e) { throw new RpcError(ErrorCodes.INVALID_PARAMS, (e as Error).message); }
+      }
+      case "fork_session": {
+        const s = need();
+        if (s.isRunning) throw new RpcError(ErrorCodes.CONFLICT, "A turn is running; wait for it to finish before forking.");
+        if (p.title !== undefined && typeof p.title !== "string") throw new RpcError(ErrorCodes.INVALID_PARAMS, "title must be a string");
+        const tags = Array.isArray(p.tags) ? (p.tags as any[]).filter((t) => t && typeof t.name === "string") : undefined;
+        const dest = forkSession(files!, { title: p.title as string | undefined, tags });
+        return { newSessionId: dest.id };
       }
       case "list_tools": {
         const s = need();
@@ -292,6 +366,6 @@ export function createConnection(write: (line: string) => void, opts: Connection
     peer,
     get session() { return session; },
     get closed() { return closed; },
-    async shutdown() { session?.interrupt(); await session?.idle(); await session?.stopBackgroundJobs(); if (worktree) releaseWorktree(worktree.info.path); peer.end(); },
+    async shutdown() { session?.interrupt(); await session?.idle(); await session?.stopBackgroundJobs(); await session?.end("other"); if (worktree) releaseWorktree(worktree.info.path); peer.end(); },
   };
 }

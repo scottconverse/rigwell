@@ -174,6 +174,8 @@ export interface ToolContext {
   toolUseId?: string;
   /** Background jobs (Execute with background: true). */
   jobs?: import("../jobs/manager.ts").JobsApi;
+  /** Extra environment for spawned commands (SessionStart hook exports). */
+  env?: Record<string, string>;
 }
 
 export interface ToolOutput {
@@ -208,7 +210,7 @@ export interface PermissionContext {
   cwd: string;
 }
 
-export type ConfirmationType = "edit" | "create" | "exec";
+export type ConfirmationType = "edit" | "create" | "exec" | "mcp_tool" | "exit_spec_mode";
 
 export type ToolExecutionMode = "direct_only" | "script_only";
 
@@ -225,4 +227,6 @@ export type PermissionDecision =
       /** Lowest autonomy that would auto-approve this call; null when "always" must be hidden. */
       alwaysLevel: Exclude<AutonomyLevel, "off"> | null;
       reason?: string;
+      /** Replaces the default option list (MCP tools, ExitSpecMode). */
+      options?: { label: string; value: string }[];
     };
