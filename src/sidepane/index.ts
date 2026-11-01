@@ -4,7 +4,7 @@
 //   daemon.list_files, daemon.search_files, daemon.get_workspace_file_content, daemon.write_workspace_file_content,
 //   daemon.create_terminal, daemon.write_terminal_data, daemon.resize_terminal, daemon.close_terminal, daemon.list_terminals,
 //   daemon.browser_attach, daemon.browser_detach, daemon.browser_status,
-//   daemon.side_chat_ask, daemon.side_chat_list, daemon.side_chat_cancel.
+//   daemon.side_chat_ask, daemon.side_chat_list, daemon.side_chat_cancel, daemon.side_chat_set_writes, daemon.side_chat_promote.
 // Notifications (inside rigwell.session_notification): daemon.terminal_data, daemon.terminal_exit, daemon.side_chat_entry.
 //
 // One connection hosts one session, so each method resolves the session from the connection (params.sessionId, when
@@ -24,12 +24,16 @@ import { toolsForSession } from "../tools/registry.ts";
 import { BrowserRegistry, createBrowserTool } from "./browser.ts";
 import { listFiles, readWorkspaceFile, searchFiles, writeWorkspaceFile } from "./files.ts";
 import { TerminalManager, type TerminalOptions, type TerminalOwner } from "./pty.ts";
-import { SideChat, type SideChatEntry } from "./sidechat.ts";
+import { SideChat, type ForkInfo, type SideChatEntry } from "./sidechat.ts";
+import { hasBtwTag, openBtwFork, promoteBtwFork } from "./btw-store.ts";
+import { readSessionSettings } from "../storage/session-settings.ts";
+import { filesFor } from "../storage/transcript.ts";
 
 export * from "./files.ts";
 export * from "./pty.ts";
 export * from "./browser.ts";
 export * from "./sidechat.ts";
+export * from "./btw-store.ts";
 
 /** What the side pane needs to know about one connection. */
 export interface ConnCtx {
@@ -50,27 +54,33 @@ export interface SidePaneOptions {
   browserDefaultUrl?: string;
   browserIdleMs?: number;
   /** Builds the side-chat fork (tests may replace it). */
-  forkSession?: (main: Session, messages: Message[], host: ConstructorParameters<typeof Session>[1]) => Session;
+  forkSession?: (main: Session, messages: Message[], host: ConstructorParameters<typeof Session>[1], info: ForkInfo) => Session | Promise<Session>;
 }
 
-/** Default fork: same model and settings as the main session, read-only tools, permission requests auto-rejected. */
-export function defaultFork(main: Session, messages: Message[], host: ConstructorParameters<typeof Session>[1]): Session {
+/**
+ * Default fork: same model and settings as the main session, stored under btw/ with the btw-fork tag. Write tools
+ * (Edit, Create) are left out unless the user turned writes on; permission requests are auto-rejected either way.
+ */
+export async function defaultFork(main: Session, messages: Message[], host: ConstructorParameters<typeof Session>[1], info: ForkInfo = { priorExchanges: [], writes: false }): Promise<Session> {
   const loaded = loadSettings({ cwd: main.cwd });
   const s = loaded.settings;
   const models = resolveModels(s);
-  const readOnly = (o: { autonomy: "off" | "low" | "medium" | "high"; skipPermissions: boolean }): Tool[] =>
-    toolsForSession({ autonomy: o.autonomy, skipPermissions: false }).filter((t) => t.name !== "Edit" && t.name !== "Create");
+  const id = crypto.randomUUID();
+  const stored = await openBtwFork({ id, mainId: main.id, cwd: main.cwd, messages, priorExchanges: info.priorExchanges });
+  const tools = (o: { autonomy: "off" | "low" | "medium" | "high"; skipPermissions: boolean }): Tool[] =>
+    toolsForSession({ autonomy: o.autonomy, skipPermissions: false }).filter((t) => info.writes || (t.name !== "Edit" && t.name !== "Create"));
   return new Session({
-    id: `btw-${crypto.randomUUID()}`, cwd: main.cwd,
+    id, cwd: main.cwd,
     settings: { ...main.settings, autonomyLevel: "low", interactionMode: "auto" },
-    resolveModel: (id) => findModel(models, id),
+    resolveModel: (mid) => findModel(models, mid),
     createAdapter, streamWithRetry: streamWithRetry as any,
-    toolsFor: readOnly, decide,
+    toolsFor: tools, decide,
     lists: { allow: s.commandAllowlist ?? DEFAULT_COMMAND_LISTS.allow, deny: s.commandDenylist ?? DEFAULT_COMMAND_LISTS.deny, block: s.commandBlocklist ?? DEFAULT_COMMAND_LISTS.block },
     skipPermissions: false, autoRejectPermissionRequests: true,
     shell: Bun.which("bash") ? "bash" : "sh",
     messages: [...messages],
-    persistence: { appendMessage: async () => {}, appendTurnOutcome: async () => {}, saveSettings: async () => {} },
+    transcriptPath: stored.files.transcriptPath,
+    persistence: stored.persistence,
   }, host);
 }
 
@@ -102,7 +112,8 @@ export function createSidePane(opts: SidePaneOptions = {}) {
     if (!sc) {
       sc = new SideChat({
         mainMessages: () => s.messages,
-        fork: (messages, host) => (opts.forkSession ?? defaultFork)(s, messages, host),
+        fork: (messages, host, info) => (opts.forkSession ?? defaultFork)(s, messages, host, info),
+        promote: async (forkId, title) => { const f = await promoteBtwFork(forkId, s.cwd, title); return { sessionId: f.id }; },
         emit: (e) => currentEmit.get(s.id)?.(e),
       });
       sideChats.set(s.id, sc);
@@ -117,7 +128,12 @@ export function createSidePane(opts: SidePaneOptions = {}) {
   function methodsFor(ctx: ConnCtx): Record<string, (p: Params) => unknown> {
     return {
       // Sidebar: every stored session, newest first (no session needed on the connection).
-      "daemon.list_sessions": () => ({ sessions: listSessions().map((s) => ({ id: s.id, title: s.title, cwd: s.cwd, updatedAt: s.mtimeMs })) }),
+      // Side-chat forks (tag btw-fork) are hidden unless includeBtwForks is set (spec 17.4).
+      "daemon.list_sessions": (p) => ({
+        sessions: listSessions()
+          .filter((s) => p.includeBtwForks === true || !hasBtwTag(readSessionSettings({ settingsPath: s.transcriptPath.replace(/\.jsonl$/, ".settings.json") })))
+          .map((s) => ({ id: s.id, title: s.title, cwd: s.cwd, updatedAt: s.mtimeMs })),
+      }),
       "daemon.list_files": (p) => listFiles(session(ctx, p).cwd, p),
       "daemon.search_files": (p) => searchFiles(session(ctx, p).cwd, p),
       "daemon.get_workspace_file_content": (p) => readWorkspaceFile(session(ctx, p).cwd, p),
@@ -146,7 +162,19 @@ export function createSidePane(opts: SidePaneOptions = {}) {
         if (!q) throw bad("question is required");
         return { entry: sideChat(ctx, s).ask(q) };
       },
-      "daemon.side_chat_list": (p) => { const s = session(ctx, p); return { entries: sideChats.get(s.id)?.entries ?? [] }; },
+      "daemon.side_chat_list": (p) => { const s = session(ctx, p); const sc = sideChats.get(s.id); return { entries: sc?.entries ?? [], writes: sc?.writes ?? false }; },
+      "daemon.side_chat_set_writes": (p) => {
+        const s = session(ctx, p);
+        if (typeof p.enabled !== "boolean") throw bad("enabled must be a boolean");
+        sideChat(ctx, s).setWrites(p.enabled);
+        return { writes: p.enabled };
+      },
+      "daemon.side_chat_promote": async (p) => {
+        const s = session(ctx, p);
+        const sc = sideChats.get(s.id);
+        if (!sc) throw new RpcError(ErrorCodes.ENTITY_NOT_FOUND, "No side chat in this session");
+        try { return await sc.promote(str(p, "entryId")); } catch (e) { throw bad((e as Error).message); }
+      },
       "daemon.side_chat_cancel": (p) => { sideChats.get(session(ctx, p).id)?.cancel(); return {}; },
     };
   }
