@@ -86,7 +86,7 @@ test("stale lock is stolen", async () => {
 test("loader skips garbage lines, tolerates unknown record types, requires session_start", async () => {
   const files = createSession({ id: "g1", cwd });
   await appendMessage(files, { id: "a", role: "user", content: [{ type: "text", text: "hi" }] }, null);
-  appendFileSync(files.transcriptPath, "{not json\n" + JSON.stringify({ type: "todo_state", id: "t", todos: {} }) + "\n");
+  appendFileSync(files.transcriptPath, "{not json\n" + JSON.stringify({ type: "future_record", id: "t", todos: {} }) + "\n");
   const l = loadSession("g1", cwd);
   expect(l.messages.length).toBe(1);
   expect(l.skippedLines).toBe(1);

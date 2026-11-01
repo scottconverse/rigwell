@@ -39,7 +39,7 @@ import { schemaProblem, validate } from "./json-schema.ts";
 import {
   createAskUserTool, createStructuredOutputTool, createTaskOutputTool, createTaskStopTool, createTodoWriteTool, renderTodoList,
 } from "../tools/session-tools.ts";
-import { attachSandbox, sandboxStatus } from "../sandbox/controller.ts";
+import { attachSandbox, sandboxStatus, sandboxStatusLabel } from "../sandbox/controller.ts";
 
 export type WorkingState =
   | "idle" | "thinking" | "streaming_assistant_message" | "waiting_for_tool_confirmation" | "executing_tool"
@@ -77,6 +77,8 @@ export interface PendingPrompt {
   kind: "permission" | "ask_user";
   params: Record<string, unknown>;
   resolve: (answer: any) => void;
+  /** The answer used when the turn is interrupted while the prompt is open. */
+  fallback: unknown;
 }
 
 /** A user message waiting for its turn. */
@@ -365,7 +367,7 @@ export class Session {
     });
     if (deps.mcp) {
       this.mcp = new McpManager({
-        cwd: deps.cwd,
+        cwd: deps.cwd, projectTrusted: deps.projectTrusted,
         onStatusChanged: (info) => {
           this.syncMcpTools();
           this.notify({ type: "mcp_status_changed", server: info, summary: this.mcp?.listServers().summary });
@@ -646,7 +648,7 @@ export class Session {
   private prompt<T>(kind: PendingPrompt["kind"], requestId: string, params: Record<string, unknown>, send: (() => Promise<T>) | undefined, fallback: T): Promise<T> {
     return new Promise<T>((resolve) => {
       if (!send) return resolve(fallback);
-      this.prompts.set(requestId, { requestId, kind, params, resolve: (a) => { this.prompts.delete(requestId); resolve(a as T); } });
+      this.prompts.set(requestId, { requestId, kind, params, fallback, resolve: (a) => { this.prompts.delete(requestId); resolve(a as T); } });
       send().then(
         (a) => this.prompts.get(requestId)?.resolve(a),
         (e) => { if ((e as { code?: number })?.code !== DISCONNECTED) this.prompts.get(requestId)?.resolve(fallback); },
@@ -670,7 +672,11 @@ export class Session {
   /** Resolves when no turn is running. */
   async idle() { while (this.currentRun) await this.currentRun; }
 
-  interrupt() { this.abort?.abort(); }
+  interrupt() {
+    this.abort?.abort();
+    // An interrupted turn stops waiting on the client.
+    for (const p of [...this.prompts.values()]) p.resolve(p.fallback);
+  }
 
   private async drain() {
     this.running = true;
@@ -799,7 +805,7 @@ export class Session {
             modelId: this.activeModelId(), shell: this.deps.shell, toolExecutionMode: this.effectiveMode(),
             instructions: this.instrBlock, skills: this.skills.contextBlock(this.currentModel()?.maxContextLimit),
             extra: this.startupContext.splice(0).map((t) => `<system-reminder>\nSessionStart hook:\n${t}\n</system-reminder>`),
-            todos: this.todos,
+            todos: this.todos, sandboxLabel: sandboxStatusLabel(sandboxStatus(this.id, this.cwd)),
           });
           await this.push({ id: `context-${turnId}`, role: "user", visibility: "llm_only", content: ctx.map((t) => ({ type: "text", text: t })) });
         }

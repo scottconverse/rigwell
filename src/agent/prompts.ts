@@ -91,6 +91,8 @@ export interface ContextInput {
   extra?: string[];
   /** The carried todo list for the todos block. */
   todos?: { status: string; content: string }[];
+  /** Sandbox status text for the environment block (sandboxStatusLabel). */
+  sandboxLabel?: string;
 }
 
 /** Context blocks for the first user message (prompts.md section 4): environment, instructions, skills, session, todos. */
@@ -98,7 +100,7 @@ export function contextBlocks(c: ContextInput): string[] {
   const env = render(PROMPT_TEXT.ctx_environment, {
     OS_NAME: os.type(), OS_VERSION: os.release(), ARCH: os.arch(), SHELL: c.shell,
     PATH_STYLE: process.platform === "win32" ? "windows" : "posix", HOME_DIR: os.homedir(),
-    DETECTED_TOOLS: detectTools(), SANDBOX_STATUS: "off (not available in this build)",
+    DETECTED_TOOLS: detectTools(), SANDBOX_STATUS: c.sandboxLabel ?? "off",
     NETWORK_STATUS: "not restricted by the harness",
   });
   const isGit = git(c.cwd, ["rev-parse", "--is-inside-work-tree"]) === "true";
