@@ -28,6 +28,7 @@ export interface BuildInput {
   toolDescriptions?: Record<string, string>;
   /** Model profile: "none" sends no cache markers. */
   cacheStrategy?: ModelRequest["cacheStrategy"];
+  openai?: ModelRequest["openai"];
 }
 
 /** Messages the model sees, in order. Encrypted reasoning is dropped when the provider changed. */
@@ -41,6 +42,14 @@ export function modelMessages(messages: Message[], provider: string, noImages = 
       // or a resumed session would not extend the request it sent before it was saved.
       if (out.content.some((b) => b.type === "tool_result" && b.is_error === false)) {
         out = { ...out, content: out.content.map((b) => (b.type === "tool_result" && b.is_error === false ? { type: "tool_result" as const, tool_use_id: b.tool_use_id, content: b.content } : b)) };
+      }
+      // A result cut for the model: the model sees the short version, the user and the transcript keep the full one.
+      if (out.content.some((b) => b.type === "tool_result" && b.modelContent !== undefined)) {
+        out = { ...out, content: out.content.map((b) => {
+          if (b.type !== "tool_result" || b.modelContent === undefined) return b;
+          const { modelContent, ...rest } = b;
+          return { ...rest, content: modelContent };
+        }) };
       }
       return out;
     });
@@ -136,7 +145,7 @@ export class RequestBuilder {
     return {
       model: i.model, sessionId: i.sessionId, system: [...systemBlocks(i.mode, systemChoice(i.systemPrompt)), ...(i.extraSystem ?? [])],
       tools: i.tools.map((t) => ({ name: t.name, description: i.toolDescriptions?.[t.name] ?? t.description, inputSchema: t.inputSchema })),
-      messages, ...(i.cacheStrategy ? { cacheStrategy: i.cacheStrategy } : {}),
+      messages, ...(i.cacheStrategy ? { cacheStrategy: i.cacheStrategy } : {}), ...(i.openai ? { openai: i.openai } : {}),
       maxOutputTokens: i.maxOutputTokens ?? i.model.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
       reasoningEffort: i.reasoningEffort, signal: i.signal,
     };

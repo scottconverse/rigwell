@@ -77,7 +77,17 @@ export function buildOpenAIBody(req: ModelRequest): Record<string, unknown> {
     body.reasoning = { effort: eff.toLowerCase(), summary: "auto" };
     body.include = ["reasoning.encrypted_content"];
   }
+  const o = req.openai;
+  if (o?.textVerbosity) body.text = { verbosity: o.textVerbosity };
+  if (o?.serviceTier) body.service_tier = o.serviceTier;
+  if (o?.safetyIdentifier) body.safety_identifier = o.safetyIdentifier === true ? req.sessionId : o.safetyIdentifier;
+  if (o?.extendedCache && isOpenAIBaseUrl(req.model.baseUrl)) body.prompt_cache_retention = "24h";
   return { ...body, ...(req.model.extraArgs ?? {}) };
+}
+
+/** OpenAI's own API only: Azure and custom endpoints never get prompt_cache_retention (spec 4.6.2). */
+export function isOpenAIBaseUrl(baseUrl: string): boolean {
+  try { return new URL(baseUrl).hostname === "api.openai.com"; } catch { return false; }
 }
 
 interface ItemState {

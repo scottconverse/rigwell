@@ -116,6 +116,8 @@ describe("auto model", () => {
     });
     const asst = loadTranscript(findSession(s.sessionId, s.repo)!).messages.filter((m) => m.role === "assistant");
     expect(asst.every((m) => m.modelId === "custom:Mid-2")).toBe(true);
+    expect(asst.every((m) => m.routerId === "auto")).toBe(true); // routed turns carry the router id (spec 12.1)
+    expect(st.toolExecutionModeModelId).toBe("custom:Mid-2"); // the model the tool mode was chosen for
   }, 30_000);
 
   test("when the chosen model's provider keeps failing, the next candidate by score answers", async () => {
