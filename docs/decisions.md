@@ -168,3 +168,48 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
     401, 404, 409 (paused or running), 413 (256 KB), 429 capped. Dedupe window 60 s. Deliveries go to `memory/deliveries.json`.
 63. **Crons:** `$RIGWELL_HOME/crons/<scope>/<sessionId>/<id>.json`, with the prompt stored in the record. The "previous prompt
     still queued" check is `session.isRunning`. Methods are `rigwell.*` (listed in `src/automations/index.ts`), not `daemon.*`.
+
+## Phase 2: Script mode
+
+64. **Sandbox engine:** QuickJS compiled to WebAssembly (`quickjs-emscripten`, pinned 0.31.0) inside a separate child process
+    (`src/script/runner.ts`, spawned with `bun`, nearly empty environment). The spec says not to rely on `node:vm`; QuickJS has no
+    host objects at all (no process, require, fetch, timers, module loader), so a constructor-chain or `import()` escape finds nothing.
+    The child gives a kill switch (SIGKILL on stop or time limit); the interrupt handler stops endless synchronous loops
+    (`sliceMs`), a memory limit and stack limit stop blow-ups. Host functions are passed to a bootstrap function as arguments and
+    never become globals. This is spec option 3 (QuickJS in WASM) plus process isolation; the Rust+V8 option was not built.
+65. **Protocol to the child:** NDJSON on stdin/stdout. Every tool call, `results.search` and `results.get` is a message to the
+    parent; the parent runs the real tool through the session (same `decide`/`askPermission` path as a direct call).
+66. **Names and binding:** tools are bound under their Phase 1 names (`tools.Read`, `tools.Edit`, ...). Only tools the session really
+    has are bound; the Script description drops the signatures (and the "MORE TOOLS" paragraph) of LS, Skill, ToolSearch and
+    load_tools while those tools do not exist. `{{SCRIPT_EXTRA_BINDINGS}}` is empty. `Task` is not callable (no subagents yet).
+67. **Structured results (S1):** Read, Grep, Glob, Edit, Create results are parsed from the direct tool's text (`src/script/bindings.ts`);
+    Execute returns `ToolOutput.data` (new optional field) so a non-zero exit resolves with `{exitCode,...}` instead of rejecting.
+    A refused or failed call rejects with an Error; refusals have `name === "PermissionDenied"`.
+68. **Limits:** 128 calls in flight (the rest queue), 5 MiB per result, 1,024 output events, 5 MiB output, 64 KiB printed (head and
+    tail kept), 32 KiB per printed value, 1 MiB of input blocks. Sizes of the printed caps count characters, not bytes. Images are
+    not shown (a placeholder line is printed). Foreground window 5 min; whole program 2 h; one synchronous slice 120 s. All three
+    are overridable with `settings.scriptLimits` {foregroundMs,totalMs,sliceMs,memoryBytes}.
+69. **Result log and output log:** `$RIGWELL_HOME/artifacts/scripts/<sessionId>/results.jsonl` holds every inner result except plain
+    Read (also failed calls, as strings). `results.search` ranks by term hits (all terms must occur in tool, input or result);
+    `results.get(job_id, call)` returns the stored value. `<toolUseId>.log` per run is the full printed output plus a line per call;
+    it is the `log_ref` in the result. The outer result `content` is the JSON result shape (no array footer).
+70. **Permissions:** the outer `Script` and `script_job` calls are allowed by the gate; each inner call is gated alone, with one
+    prompt each when needed. "No, cancel" or no approver during a foreground Script stops the turn like a direct call; in a
+    background Script it only throws PermissionDenied into the program. Hooks are not run for inner calls (Phase 5).
+71. **Transcript and notifications:** inner calls are `user_only` messages `repl-tool-call:<runId>-<n>` and `repl-tool-result:<runId>-<n>`;
+    notifications use `toolUseId` `<runId>-<n>` and `scriptExecution` on the `tool_call`.
+72. **Jobs and wake:** `src/jobs/manager.ts`. Ids: `scr_<12 hex>` for Scripts, `job_<12 hex>` for Execute. A job counts as background
+    once detached (`//@background`, the 5 min window passing, or Execute `background:true`). When a detached job finishes and its
+    result was not read (script_job wait/status/stop marks it read), the session appends an `llm_only` user message
+    `<system-reminder>...` and runs a turn (id `wake-<uuid>`). If a turn is running, the wake runs right after it. Jobs still running
+    at `close_session` are stopped without a wake. Background Execute has no default timeout. `rigwell exec "prompt"` waits for
+    background work and its wake turns before exiting.
+73. **script_job** is shipped (not WaitForScript). Wait default and cap 300,000 ms; `stop` waits for the job to end.
+74. **Wait guard (spec 4.2):** a batch made only of `script_job wait` on one job that is still running counts; at 24 the turn ends
+    with the prompts 7.3 texts (user text as a `create_message` notification, transcript text as an `llm_only` message). No nudge
+    and the Script keeps running. Only this guard is built; the other loop guards belong to a later phase.
+75. **Tool mode:** `settings.scriptToolModels` (custom model id or API model name) puts a model on script_only; the session override
+    is `toolExecutionMode` at `initialize_session` (kept in the session settings as `toolExecutionModeOverride`). script_only sends
+    Script and script_job and adds the system_script block; direct_only sends the core tools plus Script and script_job. The effective
+    mode is reported in `settingsSnapshot` and the context block. When `update_session_settings` changes the model and the mode
+    changes with it, a `llm_only` notice is appended before the next user message.

@@ -9,7 +9,6 @@ import { ModelError, zeroUsage } from "../core/types.ts";
 import { JobManager, type Job } from "../jobs/manager.ts";
 import { ToolCallError } from "../script/bindings.ts";
 import { ScriptService, type ScriptLimits } from "../script/service.ts";
-import { PROMPT_TEXT } from "./prompt-text.generated.ts";
 import { contextBlocks, guardText, systemBlocks } from "./prompts.ts";
 
 export type WorkingState =

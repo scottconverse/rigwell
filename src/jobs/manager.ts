@@ -150,7 +150,8 @@ export class JobManager implements JobsApi {
 
   async stopAll(): Promise<void> {
     const live = this.list().filter((j) => j.status === "running");
-    for (const j of live) j.stop();
+    // Stopped on shutdown: nobody is left to wake.
+    for (const j of live) { j.reported = true; j.stop(); }
     await Promise.all(live.map((j) => j.done.catch(() => {})));
   }
 }
