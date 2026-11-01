@@ -1,4 +1,4 @@
-import { sse, splitChunks, startFake, type FakeServer, type FakeTurn, type FakeTurnSpec } from "./types.ts";
+import { PrefixCache, sse, splitChunks, startFake, type FakeOptions, type FakeServer, type FakeTurn, type FakeTurnSpec, type PrefixModel } from "./types.ts";
 export type { FakeServer, FakeTurn } from "./types.ts";
 
 function render(turn: FakeTurnSpec, idx: number): string[] {
@@ -8,7 +8,7 @@ function render(turn: FakeTurnSpec, idx: number): string[] {
     type: "message_start",
     message: {
       id: `msg_fake_${idx}`, type: "message", role: "assistant", model: "fake", content: [], stop_reason: null,
-      usage: { input_tokens: u.input ?? 10, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: u.cacheRead ?? 0 },
+      usage: { input_tokens: u.input ?? 10, output_tokens: 1, cache_creation_input_tokens: u.cacheCreation ?? 0, cache_read_input_tokens: u.cacheRead ?? 0 },
     },
   }));
   let i = 0;
@@ -40,6 +40,24 @@ function render(turn: FakeTurnSpec, idx: number): string[] {
   return f;
 }
 
-export function startFakeAnthropic(script: FakeTurn[]): Promise<FakeServer> {
-  return startFake(script, render, (_s, message) => ({ type: "error", error: { type: "api_error", message } }));
+const stripCache = (b: any) => { const { cache_control: _c, ...rest } = b; return JSON.stringify(rest); };
+
+/** Anthropic order is tools, system, messages; a breakpoint ends at the block that carries cache_control. */
+export function anthropicPrefix(body: any): PrefixModel {
+  const blocks: string[] = [];
+  const breakpoints: number[] = [];
+  for (const t of body.tools ?? []) blocks.push(JSON.stringify(t));
+  for (const b of body.system ?? []) { blocks.push(stripCache(b)); if (b.cache_control) breakpoints.push(blocks.length); }
+  for (const m of body.messages ?? []) {
+    for (const b of m.content ?? []) {
+      blocks.push(JSON.stringify({ role: m.role, block: JSON.parse(stripCache(b)) }));
+      if (b.cache_control) breakpoints.push(blocks.length);
+    }
+  }
+  return { blocks, breakpoints };
+}
+
+export function startFakeAnthropic(script: FakeTurn[], opts: FakeOptions = {}): Promise<FakeServer> {
+  return startFake(script, render, (_s, message) => ({ type: "error", error: { type: "api_error", message } }),
+    opts.simulateCache ? { model: anthropicPrefix, sim: new PrefixCache("explicit") } : undefined);
 }

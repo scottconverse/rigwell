@@ -270,3 +270,49 @@ has a [DESIGN] default, Phase 1 uses it and it is not repeated here. Each entry:
     Script and script_job and adds the system_script block; direct_only sends the core tools plus Script and script_job. The effective
     mode is reported in `settingsSnapshot` and the context block. When `update_session_settings` changes the model and the mode
     changes with it, a `llm_only` notice is appended before the next user message.
+
+## Phase 3: Cache + budget
+
+86. **Request builder** (`src/agent/request.ts`) owns request assembly: `[system][tools][history]`, the `user_only` filter, the
+    provider-change reasoning strip, and the cache markers. The builder also registers each main-chain request with the cache monitor.
+    A stored `is_error: false` on a tool result is dropped when the request is built, because the in-memory form has no field and a
+    resumed session must send the same bytes as before it was saved (found by the persistence test).
+87. **Breakpoints** (prompts.md section 4): four 1-hour markers in all: last system block and newest user message (set in the Anthropic
+    adapter), plus the `<skills>` block and the `<todos>` block of the context message. Without a skills block the marker moves to the last
+    block before `<session>`. Markers are a request-time `cache: true` flag on copies of the blocks (`TextBlock.cache`, never stored).
+88. **Tools array**: it is computed from (mode, autonomy, skip-permissions) only. Deferred loads never touch it. In `direct_only` it holds
+    the core tools, `load_tools`, `call_tool`, `Script`, `script_job` (the two new tools are always present so a later MCP connect needs no
+    array change); in `script_only` it is `Script` and `script_job`. Changing autonomy across the read-only line (Edit and Create appear)
+    or the model/mode does change the array; the monitor logs that with a cause ("autonomy changed (tool list)", "model changed"). Sending
+    Edit and Create at every autonomy level would avoid that break but changes the Phase 1 tool list, so it is listed as a proposal.
+89. **Deferred tools** (`src/agent/deferred.ts`): `Session.registerDeferredTool(tool)` / `unregisterDeferredTool(name)` (MCP will use them).
+    Names are announced in an `llm_only` reminder (`deferred-<uuid>` message) before the next user message; changes later are delta
+    reminders ("now available" / "no longer available"). Reminders produced while tools run ride as text blocks in the same user message as
+    the tool results (no extra consecutive user message). `load_tools` text is PROMPT_TEXT; `call_tool` has no text in prompts.md, so a short
+    description was written in code. A loaded tool is announced once with its signature. `ToolSearch` (keyword match over name and
+    description, all words required, or `select:a,b`; loads up to `limit`, default 5, `more` counts the rest) exists only as a Script binding.
+90. **Script bindings for deferred tools**: the sandbox `tools` object is now a Proxy. Names in the static list work as before; any other
+    name is forwarded to the host, which accepts it only for a loaded deferred tool (`tools.server.tool` forwards `server__tool`).
+    This is what lets a tool loaded by `tools.ToolSearch` be called in the same Script.
+91. **Permissions for deferred tools**: `call_tool` and a Script call to a loaded tool are judged by the target tool: category `read`
+    is allowed, anything else asks (no "always" option; spec 5.5.4 says MCP tools ask). `load_tools` and `ToolSearch` are allowed.
+92. **Persistence**: `<id>.settings.json` gains `loadedDeferredToolNames` and `announcedDeferredToolNames`. `load_session` restores both,
+    so a loaded tool stays loaded and a tool that registers later is callable at once. Phase 4 copies the loaded names into
+    `compaction_state`.
+93. **Cache monitor** (`src/agent/cache-monitor.ts`): per session, compares each request with the previous one block by block (system,
+    each tool, each message block; cache markers ignored). A miss logs the first divergent block and a cause (known causes from the
+    session, else inferred). Numbers: strict-append share over comparable requests (the first request has no predecessor), cache-read
+    share token weighted and median, last 20 divergences. `get_context_stats` returns them under `cache`.
+94. **get_context_stats** adds `breakdown` (estimated tokens, chars/4, per category: systemPrompt, tools, mcpTools, userInfo, agentsMd,
+    customAgents, skills, messages) and `breakdownAccuracy`. `used` stays exact when a model call has happened. Deferred reminders count
+    as mcpTools; `<environment>`, `<session>`, `<todos>` as userInfo; `<project_instructions>` as agentsMd; `<skills>` as skills.
+95. **Budget** (`src/agent/budget.ts`, `test/agent/budget.test.ts`): measured at autonomy high, empty temp dir: direct system 5,102 chars,
+    tools 18,077; script system 5,360, tools 7,863; context blocks 533. Budgets are those plus about 10 percent (direct 5,620 / 19,900,
+    script 5,900 / 8,650, context 1,000). A second test fails if a budget is more than 15 percent above the measured size.
+96. **warmup_cache**: builds the current prefix request, `max_tokens` 16; when history ends with an assistant message it adds a throwaway
+    user message and puts a breakpoint on the last history block, so the next real request finds the prefix. Not part of the monitored
+    chain, not stored; its usage is added to the session totals. Failures are logged, the method still returns `{}`. A running turn
+    makes it a no-op.
+97. **Fake servers** can simulate prefix caching (`startFakeAnthropic(script, { simulateCache: true })`, same for OpenAI): Anthropic
+    reads the longest earlier breakpoint that is a prefix and within 20 blocks of one of its own breakpoints; OpenAI reads the common
+    prefix once it is 1,024 tokens or more. Tokens are chars/4. Off by default.

@@ -29,6 +29,10 @@ export function decide(tool: string, input: Record<string, unknown>, ctx: Permis
     case "Script":
     case "script_job":
       return { decision: "allow" };
+    // Loading a deferred tool changes nothing on disk; calling it is gated on its own (session.gate).
+    case "load_tools":
+    case "ToolSearch":
+      return { decision: "allow" };
     case "Edit":
     case "Create":
       return decideFileWrite(tool, input, ctx);

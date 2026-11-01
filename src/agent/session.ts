@@ -9,7 +9,10 @@ import { ModelError, zeroUsage } from "../core/types.ts";
 import { JobManager, type Job } from "../jobs/manager.ts";
 import { ToolCallError } from "../script/bindings.ts";
 import { ScriptService, type ScriptLimits } from "../script/service.ts";
-import { contextBlocks, guardText, systemBlocks } from "./prompts.ts";
+import { contextBlocks, guardText } from "./prompts.ts";
+import { DeferredRegistry, type DeferredState } from "./deferred.ts";
+import { RequestBuilder } from "./request.ts";
+import { contextBreakdown } from "./context-stats.ts";
 
 export type WorkingState =
   | "idle" | "thinking" | "streaming_assistant_message" | "waiting_for_tool_confirmation" | "executing_tool";
@@ -65,6 +68,10 @@ export interface SessionDeps {
   /** Restored state (load_session). */
   messages?: Message[];
   tokenUsage?: TokenUsage;
+  /** Deferred tools loaded and announced before this session was saved (spec §6.2, §12.1). */
+  deferred?: Partial<DeferredState>;
+  /** Log sink (cache monitor, guards). */
+  log?: (m: string) => void;
 }
 
 /** Waits on one running Script before the turn is stopped (2 hours of 5-minute waits). */
@@ -121,6 +128,10 @@ export class Session {
   private waitStreak = { jobId: "", count: 0 };
   /** Set by an inner Script call whose permission was refused in a way that ends the turn. */
   private pendingStop?: TurnReason;
+  /** Deferred tools (MCP and others): announced by name, loaded with load_tools. */
+  readonly deferred: DeferredRegistry;
+  /** Builds every request and runs the cache monitor (spec §6). */
+  readonly builder: RequestBuilder;
 
   constructor(private deps: SessionDeps, private host: SessionHost) {
     this.id = deps.id;
@@ -129,9 +140,11 @@ export class Session {
     this.messages = deps.messages ?? [];
     this.tokenUsage = deps.tokenUsage ?? zeroUsage();
     this.lastMode = this.effectiveMode();
+    this.deferred = new DeferredRegistry(deps.deferred);
+    this.builder = new RequestBuilder(deps.log);
     this.scripts = new ScriptService({
       sessionId: this.id, jobs: this.jobs, limits: deps.scriptLimits,
-      toolNames: () => this.coreTools().map((t) => t.name),
+      toolNames: () => this.scriptTools().map((t) => t.name),
       host: {
         cwd: this.cwd,
         callTool: (name, input, meta) => this.callInner(name, input, meta),
@@ -154,13 +167,25 @@ export class Session {
     return this.deps.toolsFor({ autonomy: this.settings.autonomyLevel, skipPermissions: this.deps.skipPermissions });
   }
 
+  /** Core tools plus ToolSearch and load_tools: what a Script binds (loaded deferred tools bind by name on call). */
+  private scriptTools(): Tool[] {
+    return [...this.coreTools(), this.deferred.toolSearchTool(), this.deferred.loadToolsTool()];
+  }
+
+  /** Makes a tool deferred: announced by name, schema sent only after load_tools. MCP tools register through here. */
+  registerDeferredTool(tool: Tool) { this.deferred.register(tool); }
+  unregisterDeferredTool(name: string) { this.deferred.unregister(name); }
+
   get isRunning() { return this.running; }
 
-  /** Tools sent to the model: Script and script_job always; the core tools too in direct_only. */
+  /**
+   * Tools sent to the model: Script and script_job always; the core tools, load_tools and call_tool too in
+   * direct_only. Loading a deferred tool never changes this list (spec §6.2).
+   */
   tools(): Tool[] {
     const core = this.coreTools();
     const script = [this.scripts.scriptTool(), this.scripts.jobTool()];
-    return this.effectiveMode() === "script_only" ? script : [...core, ...script];
+    return this.effectiveMode() === "script_only" ? script : [...core, this.deferred.loadToolsTool(), this.deferred.callToolTool(), ...script];
   }
 
   private notify(n: Record<string, unknown>) { this.host.notify(n); }
@@ -176,6 +201,10 @@ export class Session {
   }
 
   updateSettings(p: Partial<SessionSettings>) {
+    const causes: string[] = [];
+    if (p.modelId !== undefined && p.modelId !== this.settings.modelId) causes.push("model changed");
+    if (p.autonomyLevel !== undefined && p.autonomyLevel !== this.settings.autonomyLevel) causes.push("autonomy changed (tool list)");
+    if (causes.length) this.builder.monitor.expectBreak(causes.join(", "));
     Object.assign(this.settings, Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined)));
     const mode = this.effectiveMode();
     if (mode !== this.lastMode) {
@@ -195,6 +224,7 @@ export class Session {
       assistantActiveTimeMs: this.activeTimeMs,
       tokenUsage: this.tokenUsage, inclusiveTokenUsage: this.tokenUsage, lastCallTokenUsage: this.lastCallTokenUsage,
       ...(this.providerLock ? { providerLock: this.providerLock, apiProviderLock: this.providerLock } : {}),
+      loadedDeferredToolNames: this.deferred.state().loaded, announcedDeferredToolNames: this.deferred.state().announced,
     });
   }
 
@@ -294,6 +324,9 @@ export class Session {
       for (const n of this.pendingNotices.splice(0)) {
         await this.push({ id: `notice-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: n }] });
       }
+      for (const n of [...this.deferred.takeNotices(), this.deferred.announcement()]) {
+        if (n) await this.push({ id: `deferred-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: n }] });
+      }
       await this.push({ id: turnId, role: "user", ...(visibility ? { visibility } : {}), content: [{ type: "text", text }] });
 
       for (;;) {
@@ -301,14 +334,7 @@ export class Session {
         const model = this.deps.resolveModel(this.settings.modelId);
         if (!model) throw new ModelError("rejected", `Unknown model: ${this.settings.modelId}`);
         const messageId = crypto.randomUUID();
-        const tools = this.tools();
-        const req = {
-          model, sessionId: this.id, system: systemBlocks(this.effectiveMode()),
-          tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
-          messages: this.modelMessages(model.provider),
-          maxOutputTokens: model.maxOutputTokens ?? 32000,
-          reasoningEffort: this.settings.reasoningEffort, signal,
-        };
+        const req = this.builder.build(this.buildInput(model, signal));
         this.setState("thinking");
         const partial = new Map<number, { id: string; name: string; json: string }>();
         const textBlocks = new Set<number>();
@@ -352,6 +378,7 @@ export class Session {
         if (!done) throw new ModelError("empty_response", "model stream ended without a final message");
         // The final message is the source of truth; deltas were display only (a retried stream may have repeated them).
         const content: ContentBlock[] = done.content;
+        this.builder.monitor.recordUsage(done.usage);
         turnUsage = addUsage(turnUsage, done.usage);
         this.tokenUsage = addUsage(this.tokenUsage, done.usage);
         this.lastCallTokenUsage = { inputTokens: done.usage.inputTokens, cacheReadTokens: done.usage.cacheReadTokens, outputTokens: done.usage.outputTokens };
@@ -368,7 +395,10 @@ export class Session {
         const calls = content.filter((b): b is ToolUseBlock => b.type === "tool_use");
         if (!calls.length) break;
         const outcome = await this.runTools(calls, signal);
-        await this.push({ id: crypto.randomUUID(), role: "user", content: outcome.results });
+        // Notices about tools loaded during this batch, and tools that appeared or went away, ride in the same message.
+        const extra = [...this.deferred.takeNotices(), this.deferred.announcement()]
+          .filter((t): t is string => !!t).map((text) => ({ type: "text" as const, text }));
+        await this.push({ id: crypto.randomUUID(), role: "user", content: [...outcome.results, ...extra] });
         if (outcome.stop) { reason = outcome.stop; break; }
         if (await this.scriptWaitGuard(calls)) break;
       }
@@ -393,11 +423,49 @@ export class Session {
     this.abort = undefined;
   }
 
-  /** Messages the model sees, in order. Encrypted reasoning is dropped when the provider changed. */
-  private modelMessages(provider: string): Message[] {
-    return this.messages
-      .filter((m) => m.visibility !== "user_only")
-      .map((m) => (m.openaiReasoning && m.apiProvider !== provider ? { ...m, openaiReasoning: undefined } : m));
+  private buildInput(model: ModelConfig, signal?: AbortSignal) {
+    return {
+      model, sessionId: this.id, mode: this.effectiveMode(), tools: this.tools(), messages: this.messages,
+      reasoningEffort: this.settings.reasoningEffort, signal,
+    };
+  }
+
+  /** get_context_stats extras: breakdown by category (estimated tokens) and the cache monitor numbers. */
+  contextStats(limit: number) {
+    const model = this.deps.resolveModel(this.settings.modelId);
+    const used = this.lastCallTokenUsage.inputTokens + this.lastCallTokenUsage.cacheReadTokens + this.lastCallTokenUsage.outputTokens;
+    const breakdown = model ? contextBreakdown(this.builder.preview(this.buildInput(model))) : undefined;
+    const estimated = breakdown ? Object.values(breakdown).reduce((a, b) => a + b, 0) : 0;
+    const now = used || estimated;
+    return {
+      used: now, remaining: Math.max(0, limit - now), limit, accuracy: used ? "exact" : "estimated",
+      updatedAt: new Date().toISOString(),
+      ...(breakdown ? { breakdown, breakdownAccuracy: "estimated" } : {}),
+      cache: this.builder.monitor.stats(),
+    };
+  }
+
+  /** warmup_cache: sends a priming request for the current prefix. Best effort; never throws. */
+  async warmupCache(): Promise<void> {
+    if (this.running) return;
+    const model = this.deps.resolveModel(this.settings.modelId);
+    if (!model) return;
+    try {
+      const input = this.buildInput(model);
+      const req = this.builder.buildWarmup(input);
+      if (!req.messages.length) {
+        req.messages = [{ id: "warmup", role: "user", content: [{ type: "text", text: "<system-reminder>Cache warm-up. Reply with one word.</system-reminder>" }] }];
+      }
+      for await (const ev of this.deps.streamWithRetry(this.deps.createAdapter(model), req, { strategy: "non_interactive", baseDelayMs: this.deps.retryBaseDelayMs })) {
+        if (ev.type === "message_done") {
+          this.tokenUsage = addUsage(this.tokenUsage, ev.usage);
+          this.deps.log?.(`[cache] warmup: read ${ev.usage.cacheReadTokens}, created ${ev.usage.cacheCreationTokens}, uncached ${ev.usage.inputTokens}`);
+        }
+      }
+      this.notify({ type: "session_token_usage_changed", sessionId: this.id, tokenUsage: this.tokenUsage, lastCallTokenUsage: this.lastCallTokenUsage });
+    } catch (e) {
+      this.deps.log?.(`[cache] warmup failed: ${(e as Error)?.message ?? e}`);
+    }
   }
 
   private async runTools(calls: ToolUseBlock[], signal: AbortSignal): Promise<{ results: ToolResultBlock[]; stop?: TurnReason }> {
@@ -416,10 +484,7 @@ export class Session {
       const tool = tools.get(call.name);
       if (!tool) { finish(`Unknown tool: ${call.name}. Use one of: ${[...tools.keys()].join(", ")}.`, true, false); continue; }
 
-      const d = this.deps.decide(call.name, call.input, {
-        autonomy: this.settings.autonomyLevel, interactionMode: this.settings.interactionMode,
-        skipPermissions: this.deps.skipPermissions, lists: this.deps.lists, cwd: this.cwd,
-      });
+      const d = this.gate(call.name, call.input);
       if (d.decision === "block" || d.decision === "missing_risk") { finish(d.message, true, false); continue; }
       if (d.decision === "ask") {
         const verdict = await this.askPermission(call, d);
@@ -451,6 +516,31 @@ export class Session {
     return { results, stop };
   }
 
+  /** Permission decision for one call. Deferred tools (MCP and others) ask unless they only read; call_tool is judged by its target. */
+  private gate(name: string, input: Record<string, unknown>): PermissionDecision {
+    let target: Tool | undefined;
+    let args = input;
+    if (name === "call_tool") {
+      const r = this.deferred.resolveCallable(String(input.name ?? ""));
+      if (typeof r === "string") return { decision: "allow" }; // the tool call itself returns the error text
+      target = r;
+      args = (input.args && typeof input.args === "object" ? input.args : {}) as Record<string, unknown>;
+    } else if (!this.scriptTools().some((t) => t.name === name) && this.deferred.get(name)) {
+      target = this.deferred.get(name);
+    }
+    if (target) {
+      if (this.deps.skipPermissions || target.category === "read") return { decision: "allow" };
+      return {
+        decision: "ask", confirmationType: "exec", impactLevel: "high", alwaysLevel: null,
+        details: { toolName: target.name, input: args }, reason: `Deferred tool ${target.name}`,
+      };
+    }
+    return this.deps.decide(name, input, {
+      autonomy: this.settings.autonomyLevel, interactionMode: this.settings.interactionMode,
+      skipPermissions: this.deps.skipPermissions, lists: this.deps.lists, cwd: this.cwd,
+    });
+  }
+
   /**
    * One tool call made from inside a Script. It takes the same path as a direct call: permission
    * gate (a prompt per call that needs one), execution, notifications and transcript records.
@@ -472,15 +562,20 @@ export class Session {
       await finish(message, true);
       throw new ToolCallError(message, errName);
     };
-    const tool = this.coreTools().find((t) => t.name === name);
-    if (!tool) return refuse(`Unknown tool: ${name}. Available in a Script: ${this.coreTools().map((t) => t.name).join(", ")}.`);
+    let tool = this.scriptTools().find((t) => t.name === name);
+    if (!tool) {
+      // A deferred tool: callable once loaded (tools.server.tool is the name server__tool).
+      if (!this.deferred.get(name) && !this.deferred.isLoaded(name)) {
+        return refuse(`Unknown tool: ${name}. Available in a Script: ${this.scriptTools().map((t) => t.name).join(", ")}, plus deferred tools after tools.load_tools.`);
+      }
+      const r = this.deferred.resolveCallable(name);
+      if (typeof r === "string") return refuse(r);
+      tool = r;
+    }
     if (name === "Execute" && input.background === true) {
       return refuse("background is not available inside a Script. Start the whole Script with //@background instead.");
     }
-    const d = this.deps.decide(name, input, {
-      autonomy: this.settings.autonomyLevel, interactionMode: this.settings.interactionMode,
-      skipPermissions: this.deps.skipPermissions, lists: this.deps.lists, cwd: this.cwd,
-    });
+    const d = this.gate(name, input);
     if (d.decision === "block") return refuse(d.message, "PermissionDenied");
     if (d.decision === "missing_risk") return refuse(d.message);
     if (d.decision === "ask") {
