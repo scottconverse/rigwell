@@ -1,37 +1,30 @@
 // Sidebar and command palette (spec §14.3).
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { SessionRow } from "../lib/app-model.ts";
+import { ago, groupByProject, projectName, sidebarRows, type SessionRow } from "../lib/sessions.ts";
+import { useAddFolder } from "./Home.tsx";
 
-function ago(ms: number): string {
-  const s = Math.max(0, (Date.now() - ms) / 1000);
-  if (s < 60) return "now";
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h`;
-  return `${Math.floor(s / 86400)}d`;
-}
-const projectName = (cwd?: string) => (cwd ? cwd.split("/").filter(Boolean).pop() ?? cwd : "No folder");
-
-export function Sidebar({ sessions, current, daemon, go, openPalette }: { sessions: SessionRow[]; current?: string; daemon: string; go(r: string): void; openPalette(): void }) {
+export function Sidebar({ sessions, current, daemon, route, go, openPalette }: { sessions: SessionRow[]; current?: string; daemon: string; route?: string; go(r: string): void; openPalette(): void }) {
   const [group, setGroup] = useState(true);
   const [lookback, setLookback] = useState(30);
   const [project, setProject] = useState("");
-  const rows = useMemo(() => sessions.filter((s) => (lookback ? Date.now() - s.updatedAt < lookback * 86400_000 : true) && (!project || s.cwd === project)), [sessions, lookback, project]);
+  const adder = useAddFolder((p) => go(`/?folder=${encodeURIComponent(p)}`));
+  // Pinned first, archived and subagent sessions hidden (spec §14.3, §12.1).
+  const rows = useMemo(() => sidebarRows(sessions, { lookbackDays: lookback, project }), [sessions, lookback, project]);
   const projects = useMemo(() => [...new Set(sessions.map((s) => s.cwd).filter(Boolean) as string[])], [sessions]);
-  const groups = useMemo(() => {
-    const m = new Map<string, SessionRow[]>();
-    for (const r of rows) { const k = group ? r.cwd ?? "" : "all"; m.set(k, [...(m.get(k) ?? []), r]); }
-    return [...m.entries()];
-  }, [rows, group]);
+  const groups = useMemo(() => (group ? groupByProject(rows) : ([["all", rows]] as [string, SessionRow[]][])), [rows, group]);
   return (
     <nav className="sidebar" aria-label="Sidebar">
       <div className="side-top drag">
         <button className="side-btn primary" onClick={() => go("/")}>New Session</button>
+        <button className={`side-btn ${route?.startsWith("/missions") ? "on" : ""}`} onClick={() => go("/missions")}>Mission Control</button>
+        <button className={`side-btn ${route?.startsWith("/automations") ? "on" : ""}`} onClick={() => go("/automations")}>Automations</button>
         <button className="side-btn" onClick={openPalette}>Search <kbd>Ctrl+K</kbd></button>
       </div>
       <div className="side-filters">
         <select value={lookback} onChange={(e) => setLookback(Number(e.target.value))} aria-label="Last activity"><option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option><option value={0}>All</option></select>
         <select value={project} onChange={(e) => setProject(e.target.value)} aria-label="Project"><option value="">All projects</option>{projects.map((p) => <option key={p} value={p}>{projectName(p)}</option>)}</select>
         <label className="check small"><input type="checkbox" checked={group} onChange={(e) => setGroup(e.target.checked)} />Group</label>
+        <button className="small" title="Add a project folder" aria-label="Add folder" onClick={() => void adder.pick()}>Add folder</button>
       </div>
       <div className="side-list">
         {groups.map(([k, list]) => (
@@ -39,7 +32,7 @@ export function Sidebar({ sessions, current, daemon, go, openPalette }: { sessio
             {group && <div className="side-group-head"><span>{projectName(k)}</span><button title="New session in this project" aria-label={`New session in ${projectName(k)}`} onClick={() => go(`/?folder=${encodeURIComponent(k)}`)}>+</button></div>}
             {list.map((s) => (
               <button key={s.id} className={`side-row ${s.id === current ? "on" : ""}`} onClick={() => go(`/sessions/${s.id}`)} title={s.cwd}>
-                <span className="side-title">{s.title}</span><span className="muted small">{ago(s.updatedAt)}</span>
+                <span className="side-title">{s.pinned && <span className="pin" title="Pinned" aria-label="Pinned">* </span>}{s.title}</span><span className="muted small">{ago(s.updatedAt)}</span>
               </button>
             ))}
           </div>
@@ -52,6 +45,7 @@ export function Sidebar({ sessions, current, daemon, go, openPalette }: { sessio
         <span className="spacer" />
         <button aria-label="Settings" onClick={() => go("/settings/general")}>Settings</button>
       </div>
+      {adder.dialog}
     </nav>
   );
 }
@@ -64,11 +58,11 @@ export function Palette({ sessions, go, close, actions }: { sessions: SessionRow
   const [sel, setSel] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => input.current?.focus(), []);
-  const pages = [{ id: "home", label: "Home", run: () => go("/") }];
-  const settingsPages = ["general", "appearance", "notifications", "support"].map((p) => ({ id: p, label: `Settings: ${p[0].toUpperCase()}${p.slice(1)}`, run: () => go(`/settings/${p}`) }));
+  const pages = [{ id: "home", label: "Home", run: () => go("/") }, { id: "missions", label: "Go to Mission Control", run: () => go("/missions") }, { id: "automations", label: "Go to Automations", run: () => go("/automations") }];
+  const settingsPages = ["general", "appearance", "notifications", "session-defaults", "missions", "custom-models", "worktrees", "connectors", "session-management", "usage", "support"].map((p) => ({ id: p, label: `Settings: ${p.split("-").map((w, i) => (i ? w : w[0].toUpperCase() + w.slice(1))).join(" ")}`, run: () => go(`/settings/${p}`) }));
   const items = useMemo(() => {
     const ql = q.toLowerCase();
-    const sess = sessions.filter((s) => (!look || Date.now() - s.updatedAt < look * 86400_000) && `${s.title} ${s.cwd ?? ""}`.toLowerCase().includes(ql)).slice(0, 30).map((s) => ({ id: s.id, label: s.title, sub: projectName(s.cwd), kind: "Sessions" as PalTab, run: () => go(`/sessions/${s.id}`) }));
+    const sess = sessions.filter((s) => s.archivedAt == null && !s.isSubagent && (!look || Date.now() - s.updatedAt < look * 86400_000) && `${s.title} ${s.cwd ?? ""}`.toLowerCase().includes(ql)).slice(0, 30).map((s) => ({ id: s.id, label: s.title, sub: projectName(s.cwd), kind: "Sessions" as PalTab, run: () => go(`/sessions/${s.id}`) }));
     const match = (l: string) => l.toLowerCase().includes(ql);
     const all = [
       ...sess,

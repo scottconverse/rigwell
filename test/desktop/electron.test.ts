@@ -28,6 +28,7 @@ maybe("desktop app end to end", () => {
   let fake: FakeServer, web: ReturnType<typeof Bun.serve>, xvfb: ChildProcess | undefined, app: any, page: any;
   let repo: string, home: string, display: string, gate: string;
   const webHits: string[] = [];
+  let firstSession = "";
   const sideBodies: any[] = [];
 
   async function launch() {
@@ -39,6 +40,8 @@ maybe("desktop app end to end", () => {
   }
 
   const composerSend = async (text: string) => {
+    // The composer ignores Enter until the session is connected; wait for it so the message cannot be lost.
+    await page.locator(".composer[data-ready=true]").first().waitFor({ timeout: 30_000 });
     const ta = page.getByLabel("Message").first();
     await ta.fill(text);
     await ta.press("Enter");
@@ -84,6 +87,7 @@ maybe("desktop app end to end", () => {
     await composerSend("hello");
     await page.locator(".assistant", { hasText: "hi there" }).first().waitFor({ timeout: 30_000 });
     expect(page.url()).toContain("#/sessions/");
+    firstSession = page.url().split("#/sessions/")[1].split(/[?#]/)[0];
 
     await page.keyboard.press("Control+p");
     await page.locator(".tree-row", { hasText: "greet.js" }).click();
@@ -154,6 +158,98 @@ maybe("desktop app end to end", () => {
     const hellos = await page.locator(".assistant", { hasText: "hi there" }).count();
     await composerSend("hello again");
     await page.waitForFunction((n: number) => document.querySelectorAll(".assistant").length > 0 && [...document.querySelectorAll(".assistant")].filter((e) => e.textContent?.includes("hi there")).length > n, hellos, { timeout: 40_000 });
+  }, 90_000);
+
+  test("Automations: create one, run it now, and see the run; the quit warning shows", async () => {
+    await page.getByRole("button", { name: "Automations" }).click();
+    await page.getByRole("heading", { name: "Automations" }).waitFor();
+    await page.getByRole("button", { name: "New automation" }).click();
+    await page.getByLabel("Name", { exact: true }).fill("Nightly check");
+    await page.getByLabel("Instructions").fill("Say hello and stop.");
+    await page.getByLabel("Project folder").fill(repo);
+    await page.getByRole("dialog").getByRole("button", { name: "Create" }).click();
+    // The detail page opens after creation.
+    await page.getByRole("heading", { name: "Nightly check" }).waitFor({ timeout: 20_000 });
+    await page.getByTestId("quit-warning").waitFor();
+    await page.getByRole("button", { name: "Run now" }).first().click();
+    await page.getByRole("table", { name: "Recent runs" }).getByText(/success|in progress/).first().waitFor({ timeout: 40_000 });
+    await page.getByRole("table", { name: "Recent runs" }).getByRole("button", { name: "Open session" }).first().waitFor({ timeout: 40_000 });
+    // Pause moves it to the Paused tab.
+    await page.getByRole("button", { name: "Pause", exact: true }).click();
+    await page.getByTestId("automation-status").getByText("Paused").waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Back to Automations" }).click();
+    await page.getByRole("tab", { name: /^Paused/ }).click();
+    await page.getByRole("button", { name: "Nightly check", exact: true }).waitFor();
+    // Resume it, so it counts as active again, then dismiss the quit warning: the choice is stored in the desktop settings.
+    await page.getByRole("button", { name: "Resume Nightly check" }).click();
+    await page.getByRole("tab", { name: /^Active/ }).click();
+    await page.getByTestId("quit-warning").getByRole("button", { name: "Don't show again" }).click();
+    await page.getByTestId("quit-warning").waitFor({ state: "detached" });
+    expect(JSON.parse(readFileSync(join(home, "desktop-settings.json"), "utf8")).automationQuitWarningDismissed).toBe(true);
+  }, 120_000);
+
+  test("Mission Control lists a mission and shows a running one with its features", async () => {
+    // A stored session to hang the mission on: the one created in the first test.
+    expect(firstSession).toBeTruthy();
+    const dir = join(home, "missions", firstSession);
+    mkdirSync(dir, { recursive: true });
+    const state = (s: string) => JSON.stringify({ missionId: "mis_00000001", state: s, workingDirectory: repo, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), lastReviewedHandoffCount: 0, initialFeatureCount: 2, featureRetryBudgetBonus: {} });
+    const features = (running: boolean) => JSON.stringify({ features: [
+      { id: "api-1", description: "Add the health endpoint", skillName: "w", milestone: "m1", status: "completed", workerSessionIds: ["worker-aaaa1111"] },
+      { id: "ui-2", description: "Show the status", skillName: "w", milestone: "m1", status: running ? "in_progress" : "pending", workerSessionIds: running ? ["worker-bbbb2222"] : [], ...(running ? { currentWorkerSessionId: "worker-bbbb2222" } : {}) },
+    ] });
+    writeFileSync(join(dir, "mission.md"), "# Build the status page\n\nA fake mission.\n");
+    writeFileSync(join(dir, "state.json"), state("paused"));
+    writeFileSync(join(dir, "features.json"), features(false));
+    await page.getByRole("button", { name: "Mission Control" }).click();
+    await page.getByRole("heading", { name: "Mission Control" }).waitFor();
+    await page.getByRole("tab", { name: /^Paused/ }).click();
+    await page.getByTestId("mission-list").getByText("Build the status page").waitFor({ timeout: 20_000 });
+    await page.getByTestId("mission-list").getByText("Build the status page").click();
+    await page.getByTestId("mission-state").getByText("Paused").waitFor({ timeout: 20_000 });
+    // The runner (a fake: the files) moves the mission to running; the page follows without a reload.
+    writeFileSync(join(dir, "features.json"), features(true));
+    writeFileSync(join(dir, "state.json"), state("running"));
+    await page.getByTestId("mission-state").getByText("Running").waitFor({ timeout: 20_000 });
+    await page.getByRole("table", { name: "Features" }).getByText("Show the status").waitFor();
+    await page.getByRole("button", { name: "Stop worker for ui-2" }).waitFor();
+    expect(await page.getByTestId("mission-stats").innerText()).toContain("1/2");
+    writeFileSync(join(dir, "state.json"), state("paused"));
+    await page.getByRole("button", { name: "Back to Mission Control" }).click();
+  }, 120_000);
+
+  test("adding a folder asks for trust and records it", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "rigwell-trust-"));
+    await app.evaluate(({ dialog }: any, f: string) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [f] }); }, folder);
+    await page.getByRole("button", { name: "Add folder" }).click();
+    await page.getByRole("dialog", { name: "Trust this folder?" }).waitFor();
+    // Cancelling adds nothing.
+    await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
+    expect(JSON.parse(readFileSync(join(home, "settings.json"), "utf8")).trustedFolders?.[folder]).toBeUndefined();
+    await page.getByRole("button", { name: "Add folder" }).click();
+    await page.getByRole("button", { name: "Trust folder" }).click();
+    await page.waitForFunction((f: string) => location.hash.includes(encodeURIComponent(f)), folder, { timeout: 10_000 });
+    expect(JSON.parse(readFileSync(join(home, "settings.json"), "utf8")).trustedFolders[folder]).toHaveProperty("trustedAt");
+  }, 60_000);
+
+  // Needs rigwell.rename_session / pin_session / archive_session from the harness branch; runs once that is merged.
+  const harnessHasSessionMenu = /"rename_session"/.test(readFileSync(join(import.meta.dir, "../../src/daemon/connection.ts"), "utf8"));
+  if (!harnessHasSessionMenu) console.log("[session header menu e2e skipped: rigwell.rename_session is not in this build yet; runs after the harness merge]");
+  (harnessHasSessionMenu ? test : test.skip)("session header menu: Rename, Pin and Archive", async () => {
+    await page.locator(".side-row", { hasText: "hello" }).first().click();
+    await page.locator(".composer[data-ready=true]").first().waitFor({ timeout: 30_000 });
+    await page.getByRole("button", { name: "Session menu" }).click();
+    await page.getByRole("menuitem", { name: "Rename" }).click();
+    await page.getByRole("dialog", { name: "Rename session" }).getByLabel("Title").fill("Renamed by test");
+    await page.getByRole("dialog").getByRole("button", { name: "Rename" }).click();
+    await page.locator("h1", { hasText: "Renamed by test" }).waitFor({ timeout: 15_000 });
+    await page.locator(".side-title", { hasText: "Renamed by test" }).waitFor({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Session menu" }).click();
+    await page.getByRole("menuitem", { name: "Pin", exact: true }).click();
+    await page.locator(".side-row", { hasText: "Renamed by test" }).locator(".pin").waitFor({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Session menu" }).click();
+    await page.getByRole("menuitem", { name: "Archive" }).click();
+    await page.locator(".side-row", { hasText: "Renamed by test" }).waitFor({ state: "detached", timeout: 15_000 });
   }, 90_000);
 
   test("switching theme shows no flash, and the next launch paints in the saved theme from the first frame", async () => {

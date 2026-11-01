@@ -100,6 +100,10 @@ export function validateCustomModels(
       ...(raw.reasoningEffort !== undefined ? { reasoningEffort: raw.reasoningEffort } : {}),
       // spec 12.2: noImageSupport defaults to true for generic-chat-completion-api, false otherwise
       ...(raw.noImageSupport !== undefined ? { noImageSupport: raw.noImageSupport } : raw.provider === "generic-chat-completion-api" ? { noImageSupport: true } : {}),
+      // Profile fields (spec 4.1, 4.6.4): checked where they are used (src/agent/profiles.ts).
+      ...(raw.profile && typeof raw.profile === "object" && !Array.isArray(raw.profile) ? { profile: raw.profile as Record<string, unknown> } : {}),
+      ...(raw.reasoningField === "reasoning" || raw.reasoningField === "reasoning_content" ? { reasoningField: raw.reasoningField } : {}),
+      ...(raw.fileEditToolProfile === "apply-patch" || raw.fileEditToolProfile === "create-edit" ? { fileEditToolProfile: raw.fileEditToolProfile } : {}),
       ...(raw.apiProvider !== undefined ? { apiProvider: raw.apiProvider } : {}),
       ...(raw.chatCompletionRequest ? { chatCompletionRequest: raw.chatCompletionRequest } : {}),
       ...(raw.chatCompletionRequestByProvider ? { chatCompletionRequestByProvider: raw.chatCompletionRequestByProvider } : {}),

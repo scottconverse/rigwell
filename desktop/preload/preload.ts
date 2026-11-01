@@ -38,6 +38,17 @@ const api = {
     update: (patch: unknown): Promise<unknown> => ipcRenderer.invoke("settings:update", patch),
     onChanged: (cb: Cb<unknown>) => on("settings:changed", cb),
   },
+  userSettings: {
+    get: (): Promise<Record<string, any>> => ipcRenderer.invoke("userSettings:get"),
+    update: (patch: unknown): Promise<Record<string, any>> => ipcRenderer.invoke("userSettings:update", patch),
+    trustFolder: (folder: string): Promise<Record<string, any>> => ipcRenderer.invoke("userSettings:trustFolder", folder),
+  },
+  profiles: {
+    list: (folder: string): Promise<{ repoRoot: string | null; profiles: any[] }> => ipcRenderer.invoke("profiles:list", folder),
+    save: (folder: string, profile: unknown): Promise<string> => ipcRenderer.invoke("profiles:save", folder, profile),
+    remove: (folder: string, id: string): Promise<void> => ipcRenderer.invoke("profiles:delete", folder, id),
+  },
+  skills: { list: (cwd: string): Promise<any[]> => ipcRenderer.invoke("skills:list", cwd) },
   dialog: {
     pickFolder: (): Promise<string | null> => ipcRenderer.invoke("dialog:pickFolder"),
     pickFile: (filters?: { name: string; extensions: string[] }[]): Promise<string | null> => ipcRenderer.invoke("dialog:pickFile", filters),

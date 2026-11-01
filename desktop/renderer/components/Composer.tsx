@@ -1,4 +1,14 @@
 import { useEffect, useRef, useState } from "react";
+import type { SessionController } from "../lib/session.ts";
+import { ConnectorsDialog, SkillsDialog } from "./Dialogs.tsx";
+import { ModelPicker } from "./ModelPicker.tsx";
+
+const MODES = [
+  { id: "auto", label: "Normal", hint: "do the work directly" },
+  { id: "spec", label: "Spec", hint: "research and plan before changes" },
+  { id: "mission", label: "Mission", hint: "long jobs with parallel workers" },
+];
+const MODE_LABEL: Record<string, string> = { auto: "Normal", spec: "Spec", mission: "Mission" };
 
 export interface ComposerSettings { modelId?: string; reasoningEffort?: string; interactionMode?: string; autonomyLevel?: string }
 
@@ -23,10 +33,19 @@ export function Composer(props: {
   onSend(text: string): void;
   onStop(): void;
   extra?: React.ReactNode;
+  /** The live session, when there is one: enables the Connectors dialog. */
+  session?: SessionController;
+  /** Folder used by the Skills dialog. */
+  cwd?: string;
+  autoAvailable?: boolean;
+  pinnedModels?: string[];
+  /** Mode chip: Mission was chosen. */
+  onMission?(): void;
 }) {
   const [text, setText] = useState("");
   const [help, setHelp] = useState(false);
-  const [modelOpen, setModelOpen] = useState(false);
+  const [modeOpen, setModeOpen] = useState(false);
+  const [dialog, setDialog] = useState<"connectors" | "skills" | null>(null);
   const lastEsc = useRef(0);
   const ta = useRef<HTMLTextAreaElement>(null);
   const off = (id: string) => props.disabledShortcuts?.includes(id);
@@ -54,38 +73,38 @@ export function Composer(props: {
     if (e.key === "?" && !text) { e.preventDefault(); setHelp(true); }
   };
 
-  const model = props.models.find((m) => m.id === s.modelId);
-  const grouped = props.models.reduce<Record<string, typeof props.models>>((acc, m) => { (acc[m.provider ?? "other"] ??= []).push(m); return acc; }, {});
 
   return (
-    <div className="composer">
+    <div className="composer" data-ready={!props.disabled}>
       <textarea ref={ta} value={text} rows={2} placeholder={props.placeholder ?? "What would you like to work on?"} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} aria-label="Message" />
       <div className="chips">
-        <div className="chip-wrap">
-          <button className="chip" onClick={() => setModelOpen(!modelOpen)} aria-haspopup="listbox" title="Model">{model?.displayName ?? s.modelId ?? "Model"}</button>
-          {modelOpen && (
-            <div className="menu model-menu" role="listbox">
-              {Object.entries(grouped).map(([prov, ms]) => (
-                <div key={prov}>
-                  <div className="menu-group">{prov}</div>
-                  {ms.map((m) => <button key={m.id} role="option" aria-selected={m.id === s.modelId} className="menu-item" onClick={() => { props.onChange({ modelId: m.id }); setModelOpen(false); }}>{m.displayName ?? m.id}</button>)}
-                </div>
-              ))}
-              {!props.models.length && <div className="menu-group">No models configured</div>}
-            </div>
-          )}
-        </div>
+        <ModelPicker models={props.models} value={s.modelId} autoAvailable={props.autoAvailable} pinned={props.pinnedModels} onPick={(id) => props.onChange({ modelId: id })} />
         <button className="chip" title={AUTONOMY_TIPS[s.autonomyLevel ?? "off"]} onClick={() => props.onChange({ autonomyLevel: cycle(AUTONOMY, s.autonomyLevel === "off" ? "high" : s.autonomyLevel) })}>
           Autonomy: {s.autonomyLevel ?? "off"}
         </button>
-        <button className="chip" title="Normal or Spec mode (Shift+Tab)" onClick={() => props.onChange({ interactionMode: s.interactionMode === "spec" ? "auto" : "spec" })}>{s.interactionMode === "spec" ? "Spec" : "Normal"}</button>
+        <div className="chip-wrap">
+          <button className="chip" aria-haspopup="menu" aria-expanded={modeOpen} title="Mode: Normal, Spec (Shift+Tab) or Mission" onClick={() => setModeOpen(!modeOpen)}>{MODE_LABEL[s.interactionMode ?? "auto"] ?? "Normal"}</button>
+          {modeOpen && (
+            <div className="menu" role="menu" aria-label="Mode">
+              {MODES.map((m) => (
+                <button key={m.id} role="menuitemradio" aria-checked={(s.interactionMode ?? "auto") === m.id} className="menu-item" onClick={() => { setModeOpen(false); if (m.id === "mission") props.onMission?.(); else props.onChange({ interactionMode: m.id }); }}>
+                  {m.label}<span className="muted small"> {m.hint}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <button className="chip" title="Reasoning (Tab)" onClick={() => props.onChange({ reasoningEffort: cycle(REASONING, s.reasoningEffort) })}>Reasoning: {s.reasoningEffort ?? "high"}</button>
+        {props.session && <button className="chip" onClick={() => setDialog("connectors")} title="MCP servers">Connectors</button>}
+        <button className="chip" onClick={() => setDialog("skills")} title="Skills">Skills</button>
         {props.extra}
         <span className="spacer" />
         {props.busy
           ? <button className="send stop" onClick={props.onStop} aria-label="Stop">Stop</button>
           : <button className="send" disabled={!text.trim() || props.disabled} onClick={send} aria-label="Send">Send</button>}
       </div>
+      {dialog === "connectors" && props.session && <ConnectorsDialog ctl={props.session} onClose={() => setDialog(null)} />}
+      {dialog === "skills" && <SkillsDialog ctl={props.session} cwd={props.cwd ?? ""} onClose={() => setDialog(null)} />}
       {help && (
         <div className="overlay" onClick={() => setHelp(false)}>
           <div className="dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Shortcuts and modes">

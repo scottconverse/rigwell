@@ -35,6 +35,16 @@ Environment: `RIGWELL_HOME` (data folder), `RIGWELL_DAEMON_CMD` (JSON array that
 Notifications inside `session_notification`: `daemon.terminal_data`, `daemon.terminal_exit`, `daemon.side_chat_entry`.
 Agent tool: `Browser`.
 
+## Pages added in the gap wave
+
+Routes: `#/missions`, `#/missions/<sessionId>`, `#/automations`, `#/automations/<id>`, and settings pages `session-defaults`, `missions`,
+`custom-models`, `worktrees`, `connectors`, `session-management`, `usage`. The sidebar lists Mission Control and Automations, shows pinned
+sessions first and hides archived ones, and has an Add folder button that runs the trust prompt. The session header menu has Pin, Rename and
+Archive (`rigwell.pin_session`, `rename_session`, `archive_session`; `list_sessions` falls back to `daemon.list_sessions` on older daemons).
+The composer has a searchable model picker, a Normal / Spec / Mission mode menu, and Connectors and Skills dialogs. Home has a Worktree toggle
+(defaults to the `runInWorktree` setting). The browser pane can reopen closed tabs, move tabs, step to the next or previous tab and take a screenshot.
+Main process helpers: `desktop/main/user-settings.ts` (masked settings file, trusted folders, setup profiles) and `desktop/main/skills.ts`.
+
 ## Tests
 
 `bun test test/desktop` (no Electron needed except `electron.test.ts`, which skips itself when Electron, Playwright or Xvfb is missing).

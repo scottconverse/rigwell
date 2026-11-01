@@ -2,13 +2,17 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { app, useApp, useStore } from "../lib/app-model.ts";
 import { SessionController } from "../lib/session.ts";
 import { toMarkdown } from "../lib/transcript.ts";
+import { readinessText } from "../lib/missions.ts";
 import { Composer } from "./Composer.tsx";
+import { ConfirmDialog, TextDialog } from "./Dialogs.tsx";
 import { Prompts } from "./Prompts.tsx";
 import { SidePane, type PaneTab } from "./SidePane.tsx";
 import { Transcript } from "./Transcript.tsx";
 
 /** Controllers for sessions created in this window, so Home can hand one over without reconnecting. */
 export const live = new Map<string, SessionController>();
+/** Sessions started from Home with the Mission mode chip: enter mission mode once the session is on screen (spec §15.1). */
+export const pendingMission = new Set<string>();
 
 const PANE_KEYS: { test(e: KeyboardEvent): boolean; tab: PaneTab; id: string }[] = [
   { id: "files", tab: "files", test: (e) => e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "p" },
@@ -25,13 +29,14 @@ function useController(sessionId: string): { ctl?: SessionController; error?: st
 
   useEffect(() => { setCtl(live.get(sessionId)); setError(undefined); }, [sessionId]);
 
-  const cwd = a.sessions.find((s) => s.id === sessionId)?.cwd;
+  const row = a.sessions.find((s) => s.id === sessionId);
+  const cwd = row?.cwd;
   const phase = useSyncExternalStore(ctl?.subscribe ?? noopSubscribe, () => ctl?.getSnapshot().phase);
   const down = phase === "disconnected";
   useEffect(() => {
     if ((ctl && !down) || trying.current || a.daemon.state !== "running" || !cwd) return;
     trying.current = true;
-    SessionController.resume(sessionId, cwd).then((c) => { live.set(sessionId, c); setCtl(c); setError(undefined); }, (e) => setError((e as Error).message)).finally(() => { trying.current = false; });
+    SessionController.resume(sessionId, cwd, { title: row?.title, pinned: row?.pinned, archived: row?.archivedAt != null }).then((c) => { live.set(sessionId, c); setCtl(c); setError(undefined); }, (e) => setError((e as Error).message)).finally(() => { trying.current = false; });
   }, [ctl, down, a.daemon.state, cwd, sessionId]);
   useEffect(() => { if (!cwd && a.daemon.state === "running" && !ctl) void app.refresh(); }, [cwd, a.daemon.state, ctl]);
   return { ctl, error };
@@ -54,7 +59,18 @@ function Loaded({ ctl }: { ctl: SessionController }) {
   const [prefill, setPrefill] = useState<string>();
   const [menu, setMenu] = useState(false);
   const [toast, setToast] = useState("");
+  const [dialog, setDialog] = useState<null | "rename" | { readiness: string }>(null);
   const off = a.settings?.disabledShortcuts ?? [];
+
+  /** Mode chip: Mission. The readiness check runs first; a folder that is not ready asks before going on (spec §15.7). */
+  const enterMission = useCallback(async (anyway = false) => {
+    try {
+      const r = await ctl.enterMission(anyway);
+      if (!r.entered) setDialog({ readiness: readinessText(r.readiness) }); else { setDialog(null); setToast(r.modelSwitched ? "Mission mode on; switched to the orchestrator model" : "Mission mode on"); setTimeout(() => setToast(""), 2200); }
+    } catch (e) { setToast((e as Error).message); setTimeout(() => setToast(""), 3000); }
+  }, [ctl]);
+  const sid = state.sessionId;
+  useEffect(() => { if (state.phase === "ready" && sid && pendingMission.delete(sid)) void enterMission(); }, [state.phase, sid, enterMission]);
 
   const showTab = useCallback((t: PaneTab) => { setMounted((m) => new Set(m).add(t)); setTab(t); setPaneOpen(true); }, []);
 
@@ -72,6 +88,11 @@ function Loaded({ ctl }: { ctl: SessionController }) {
   const say = (t: string) => { setToast(t); setTimeout(() => setToast(""), 1600); };
   const copy = async (t: string, what: string) => { await navigator.clipboard.writeText(t).catch(() => {}); say(`Copied ${what}`); setMenu(false); };
   const id = state.sessionId ?? "";
+  /** Header menu actions use the contract methods; the sidebar list is refreshed afterwards. */
+  const act = async (fn: () => Promise<unknown>, done: string) => {
+    setMenu(false);
+    try { await fn(); say(done); void app.refresh(); } catch (e) { say((e as Error).message); }
+  };
 
   if (state.phase === "error") return <div className="center-note">Could not connect: {state.error}</div>;
 
@@ -88,6 +109,9 @@ function Loaded({ ctl }: { ctl: SessionController }) {
             <button aria-label="Session menu" aria-haspopup="menu" onClick={() => setMenu(!menu)}>...</button>
             {menu && (
               <div className="menu right" role="menu">
+                <button role="menuitem" className="menu-item" onClick={() => void act(() => ctl.setPinned(!state.pinned), state.pinned ? "Unpinned" : "Pinned")}>{state.pinned ? "Unpin" : "Pin"}</button>
+                <button role="menuitem" className="menu-item" onClick={() => { setMenu(false); setDialog("rename"); }}>Rename</button>
+                <button role="menuitem" className="menu-item" onClick={() => void act(() => ctl.setArchived(!state.archived), state.archived ? "Unarchived" : "Archived")}>{state.archived ? "Unarchive" : "Archive"}</button>
                 <button role="menuitem" className="menu-item" onClick={() => { showTab("terminal"); setMenu(false); }}>Open terminal</button>
                 <button role="menuitem" className="menu-item" onClick={() => void copy(state.cwd, "working folder")}>Copy working folder</button>
                 <button role="menuitem" className="menu-item" onClick={() => void copy(id, "session id")}>Copy session id</button>
@@ -101,11 +125,13 @@ function Loaded({ ctl }: { ctl: SessionController }) {
         <Prompts prompts={state.prompts} onAnswer={(rid, r) => ctl.answer(rid, r)} />
         <Composer
           settings={state.settings} models={state.models.length ? state.models : a.models} busy={state.working !== "idle"} disabled={state.phase !== "ready"}
-          disabledShortcuts={off} autoFocus placeholder="Message the agent"
+          disabledShortcuts={off} autoFocus placeholder="Message the agent" session={ctl} cwd={state.cwd} autoAvailable={!!a.userSettings.autoRouter} onMission={() => void enterMission()}
           onChange={(p) => void ctl.updateSettings({ ...p })} onSend={(t) => void ctl.send(t)} onStop={() => ctl.interrupt()}
           extra={<button className="chip" onClick={() => { const last = [...state.items].reverse().find((i) => i.kind === "assistant"); setPrefill(last && last.kind === "assistant" ? `About this: "${last.text.slice(0, 200)}"\n\n` : ""); showTab("side"); }}>Side chat</button>}
         />
         {toast && <div className="toast" role="status">{toast}</div>}
+        {dialog === "rename" && <TextDialog title="Rename session" label="Title" initial={state.title} action="Rename" onCancel={() => setDialog(null)} onSubmit={(v) => { setDialog(null); void act(() => ctl.rename(v), "Renamed"); }} />}
+        {dialog && typeof dialog === "object" && <ConfirmDialog title="This folder is not ready for a mission" body={`${dialog.readiness}\n\nYou can continue anyway.`} action="Continue anyway" onCancel={() => setDialog(null)} onConfirm={() => void enterMission(true)} />}
       </div>
       <div className={paneOpen ? "pane-slot open" : "pane-slot"} hidden={!paneOpen}>
         <SidePane
