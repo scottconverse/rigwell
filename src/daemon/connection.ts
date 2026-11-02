@@ -121,7 +121,8 @@ export function createConnection(write: (line: string) => void, opts: Connection
     for (const w of loaded.warnings) opts.log?.(`[settings] ${w}`);
     const s = loaded.settings;
     // Org modelPolicy: blocked and not-allowed models disappear from the picker and cannot be selected (spec 12.2).
-    const models = resolveModels(s).filter((m) => modelAllowed(s.modelPolicy, [m.id, m.model], m.id.startsWith("custom:")));
+    // allowCustomModels=false already removed the lower levels' customModels when the settings were merged (storage/org.ts).
+    const models = resolveModels(s).filter((m) => modelAllowed(s.modelPolicy, [m.id, m.model], false));
     const lists: CommandLists = {
       allow: s.commandAllowlist ?? DEFAULT_COMMAND_LISTS.allow,
       deny: s.commandDenylist ?? DEFAULT_COMMAND_LISTS.deny,

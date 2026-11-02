@@ -89,7 +89,7 @@ function hooksView(c: ViewCtx): View {
     lines.push(ev);
     for (const g of groups) for (const h of g.hooks) {
       n++;
-      lines.push(`  ${g.matcher ? `[${g.matcher}] ` : ""}${h.command}  (${h.timeout ?? 60}s${g.level ? ", " + g.level : ""})`);
+      lines.push(`  ${g.matcher ? `[${g.matcher}] ` : ""}${h.command}  (${h.timeout ?? 60}s${g.level ? ", " + g.level : ""})${g.level === "org" ? "  [managed by org]" : ""}`);
     }
   }
   if (!n) lines.push("No hooks are configured.");
@@ -151,7 +151,7 @@ async function diagnosticsView(c: ViewCtx): Promise<View> {
     if (sm.configError) { issues++; lines.push(`  config: ${sm.configError}`); }
   } catch (e) { lines.push(`  not available: ${errText(e)}`); }
   lines.push("", "Settings sources (highest priority first)");
-  for (const src of loaded.sources) lines.push(`  ${src.level.padEnd(8)} ${src.path || "(built in)"}`);
+  for (const src of loaded.sources) lines.push(`  ${src.level.padEnd(8)} ${src.path || "(built in)"}${src.level === "org" ? "  [managed by org]" : ""}`);
   const problems: string[] = [...loaded.warnings];
   const hooks = loadHooksConfig({ cwd: s.cwd });
   problems.push(...hooks.warnings);
