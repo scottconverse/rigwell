@@ -14,6 +14,7 @@ const log = (m: string) => process.stderr.write(m + "\n");
 const USAGE = `Usage:
   rigwell exec --input-format stream-jsonrpc --output-format stream-jsonrpc [options]
   rigwell exec [options] "<prompt>"
+  rigwell sessions search <query> [--semantic] [--limit <n>] [--cwd <dir>] [--json]
   rigwell daemon [--socket <path>] [--ws-port <n>] [--no-ws]
   rigwell [tui] [options]        interactive terminal UI (default when no subcommand is given)
   rigwell eval <run|report|tasks> [options]   (see rigwell eval --help)
@@ -250,6 +251,29 @@ async function main() {
     process.exit(0);
   }
   if (cmd === "auth") process.exit(await (await import("../auth/cli.ts")).authMain(argv));
+  if (cmd === "sessions") {
+    const [sub, ...rest] = argv;
+    if (sub !== "search") fail("usage: rigwell sessions search <query> [--semantic] [--limit <n>] [--cwd <dir>] [--json]");
+    const words: string[] = [];
+    let mode: "lexical" | "semantic" = "lexical", limit: number | undefined, cwd: string | undefined, json = false;
+    for (let i = 0; i < rest.length; i++) {
+      const k = rest[i]!;
+      if (k === "--semantic") mode = "semantic";
+      else if (k === "--limit") limit = Number(rest[++i]);
+      else if (k === "--cwd") cwd = resolve(rest[++i] ?? fail("--cwd needs a value"));
+      else if (k === "--json") json = true;
+      else if (k.startsWith("--")) fail(`unknown option ${k}`);
+      else words.push(k);
+    }
+    if (!words.length) fail("sessions search needs a query");
+    if (limit !== undefined && !(limit > 0)) fail("--limit needs a positive number");
+    const { searchSessions } = await import("../storage/session-list.ts");
+    const hits = await searchSessions(words.join(" "), mode, { cwd, limit });
+    if (json) process.stdout.write(JSON.stringify(hits) + "\n");
+    else if (!hits.length) process.stdout.write("No matches.\n");
+    else for (const h of hits) process.stdout.write(`${h.sessionId}  ${h.title}  (lines ${h.lineStart}-${h.lineEnd}, score ${h.score})\n    ${h.snippet}\n`);
+    process.exit(0);
+  }
   if (cmd === "eval") return (await import("../eval/cli.ts")).evalMain(argv);
   if (cmd === "daemon") {
     const i = argv.indexOf("--socket");
