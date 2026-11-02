@@ -8,6 +8,7 @@ import { midStreamBreak } from "./errors.ts";
 import { DEFAULT_TIMEOUT_MS, apiUrl, safeJson, sseRequest } from "./sse.ts";
 import { bedrockHeaders } from "./bedrock-auth.ts";
 import { openaiWs, wsEligible, wsReport, WsFallback, type WsOptions } from "./openai-ws.ts";
+import { oauthHeaders } from "../auth/headers.ts";
 
 export function mapInput(messages: Message[]): Record<string, unknown>[] {
   const items: Record<string, unknown>[] = [];
@@ -123,6 +124,7 @@ export class OpenAIResponsesAdapter implements ModelAdapter {
     let headers: Record<string, string> = {
       "content-type": "application/json",
       ...(m.apiKey ? { authorization: `Bearer ${m.apiKey}` } : {}),
+      ...(m.oauth ? await oauthHeaders(m) : {}),
       ...(m.extraHeaders ?? {}),
     };
     const url = apiUrl(m.baseUrl, "responses");

@@ -5,6 +5,7 @@ import {
 } from "../core/types.ts";
 import { midStreamBreak } from "./errors.ts";
 import { DEFAULT_TIMEOUT_MS, apiUrl, safeJson, sseRequest } from "./sse.ts";
+import { oauthHeaders } from "../auth/headers.ts";
 
 const CACHE = { type: "ephemeral", ttl: "1h" } as const;
 
@@ -189,6 +190,7 @@ export class AnthropicAdapter implements ModelAdapter {
       "content-type": "application/json",
       "anthropic-version": "2023-06-01",
       ...(m.apiKey ? { "x-api-key": m.apiKey } : {}),
+      ...(m.oauth ? await oauthHeaders(m) : {}),
       ...(m.extraHeaders ?? {}),
     };
     const url = apiUrl(m.baseUrl, "messages");

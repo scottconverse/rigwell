@@ -187,6 +187,10 @@ export interface SessionDeps {
   /** Restored from a compaction_state record: messages before the anchor (UI only) and the anchor's id. */
   archived?: Message[];
   compactionAnchorId?: string;
+  /** Variables from the session's named environment: added to Execute and background jobs (SessionStart hook exports win). */
+  extraEnv?: Record<string, string>;
+  /** Removes secret values from tool output before it reaches the transcript, the notifications or the model. */
+  redact?: (text: string) => string;
   /** Builds the hook runner for this session (and for each subagent). Absent: no hooks. */
   hooksFor?: (a: HooksFactoryArgs) => HookRunner | undefined;
   transcriptPath?: string;
@@ -544,7 +548,10 @@ export class Session {
     return this.byIds([...this.baseTools(), ...this.sessionTools(), ...task, ...exit, this.deferred.loadToolsTool(), this.deferred.callToolTool(), ...script]);
   }
 
-  private notify(n: Record<string, unknown>) { this.host.notify(n); }
+  private notify(n: Record<string, unknown>) {
+    const redact = this.deps.redact;
+    this.host.notify(redact ? (redactDeep(n, redact) as Record<string, unknown>) : n);
+  }
 
   private setState(s: WorkingState) {
     if (this.workingState === s) return;
@@ -1439,7 +1446,8 @@ export class Session {
     let stop: TurnReason | undefined = batch?.cancelled ? "permission_rejected" : undefined;
     for (const call of calls) {
       const phase = (p: string) => this.notify({ type: "tool_execution_phase_changed", toolUseId: call.id, toolName: call.name, phase: p });
-      const finish = (content: string, isError: boolean, executed: boolean, images?: ImageBlock[]) => {
+      const finish = (rawContent: string, isError: boolean, executed: boolean, images?: ImageBlock[]) => {
+        const content = this.deps.redact ? this.deps.redact(rawContent) : rawContent;
         const cut = capForModel(content, this.deps.toolResultModelChars ?? MODEL_RESULT_CHARS);
         results.push({ type: "tool_result", tool_use_id: call.id, content, ...(isError ? { is_error: true } : {}), ...(images?.length ? { images } : {}), ...(cut !== undefined ? { modelContent: cut } : {}) });
         this.notify({ type: "tool_result", toolUseId: call.id, messageId: `tool-result-${call.id}`, content, isError, ...(images?.length ? { images } : {}) });
@@ -1759,7 +1767,7 @@ export class Session {
   /** What a tool run sees. */
   private toolContext(signal: AbortSignal) {
     return {
-      cwd: this.cwd, sessionId: this.id, readFiles: this.readFiles, signal, env: this.hookEnv,
+      cwd: this.cwd, sessionId: this.id, readFiles: this.readFiles, signal, env: { ...this.deps.extraEnv, ...this.hookEnv },
       readLineNumbers: this.profile().readLineNumbers, imagesSupported: this.currentModel()?.noImageSupport !== true, session: this.svc,
     };
   }
@@ -2176,4 +2184,12 @@ export function todoNudgeText(todos: TodoItem[]): string {
   const open = todos.filter((t) => t.status !== "completed");
   return `<system-reminder>\nYour todo list still has ${open.length} open item${open.length === 1 ? "" : "s"}:\n${renderTodoList(open)}\n` +
     "Finish them now, or update the list with TodoWrite (mark done items completed, drop what no longer applies). If you are stopping on purpose, say why in your answer.\n</system-reminder>";
+}
+
+/** Applies `fn` to every string in a JSON-like value (secret redaction on outgoing notifications). */
+function redactDeep(v: unknown, fn: (t: string) => string): unknown {
+  if (typeof v === "string") return fn(v);
+  if (Array.isArray(v)) return v.map((x) => redactDeep(x, fn));
+  if (v && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, redactDeep(x, fn)]));
+  return v;
 }

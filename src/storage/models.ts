@@ -2,6 +2,7 @@
 import type { BedrockConfig, ModelConfig, ProviderKind, ReasoningEffort } from "../core/types.ts";
 import type { RigwellSettings } from "./settings.ts";
 import { KEYCHAIN_PREFIX, lookupCredential } from "./credentials.ts";
+import { parseOAuthProviders, type OAuthProviderConfig } from "../auth/config.ts";
 
 export interface ModelProblem {
   index: number;
@@ -81,6 +82,7 @@ export function validateCustomModels(
   const problems: ModelProblem[] = [];
   const list = Array.isArray(settings.customModels) ? settings.customModels : [];
   const envs = [env, settings.env ?? {}]; // process env wins over settings.env
+  const oauth = parseOAuthProviders(settings.oauthProviders, env);
   list.forEach((raw, index) => {
     const bad = (message: string) => problems.push({ index, model: typeof raw?.model === "string" ? raw.model : undefined, message });
     if (!raw || typeof raw !== "object") return bad("entry is not an object");
@@ -90,10 +92,18 @@ export function validateCustomModels(
     if (raw.apiProvider !== undefined && (typeof raw.apiProvider !== "string" || !raw.apiProvider.trim())) return bad("apiProvider must be a non-empty string");
     for (const k of ["chatCompletionRequest", "chatCompletionRequestByProvider"] as const)
       if (raw[k] !== undefined && (typeof raw[k] !== "object" || raw[k] === null || Array.isArray(raw[k]))) return bad(`${k} must be an object`);
-    // baseUrl is required unless `bedrock` is set (spec 12.2); google has a public default.
+    // credentialSource (spec 12.2): a connected account plan instead of a key. Not combinable with apiKey or apiKeyHelper.
+    let oauthProvider: OAuthProviderConfig | undefined;
+    if (raw.credentialSource !== undefined) {
+      if (typeof raw.credentialSource !== "string" || !raw.credentialSource.trim()) return bad("credentialSource must be a non-empty string");
+      if (raw.apiKey !== undefined || raw.apiKeyHelper !== undefined) return bad("credentialSource cannot be combined with apiKey or apiKeyHelper");
+      oauthProvider = oauth.providers.get(raw.credentialSource);
+      if (!oauthProvider) return bad(`credentialSource ${JSON.stringify(raw.credentialSource)} is not a valid entry of oauthProviders${oauth.problems.length ? ` (${oauth.problems.join("; ")})` : ""}`);
+    }
+    // baseUrl is required unless `bedrock` is set (spec 12.2), the OAuth provider gives apiBaseUrl, or the provider is google.
     const bedrockRaw = raw.bedrock;
     if (raw.provider === "bedrock-converse" && !bedrockRaw) return bad("bedrock settings are required for provider bedrock-converse");
-    if (raw.baseUrl === undefined && (bedrockRaw || raw.provider === "google")) { /* derived below */ }
+    if (raw.baseUrl === undefined && (bedrockRaw || raw.provider === "google" || oauthProvider?.apiBaseUrl)) { /* derived below */ }
     else if (typeof raw.baseUrl !== "string" || !/^https?:\/\/\S+$/.test(raw.baseUrl)) return bad("baseUrl must be an http(s) URL");
     if (raw.reasoningEffort !== undefined && !EFFORTS.includes(raw.reasoningEffort)) return bad(`invalid reasoningEffort ${JSON.stringify(raw.reasoningEffort)}`);
     for (const k of ["maxOutputTokens", "maxContextLimit"] as const)
@@ -140,7 +150,7 @@ export function validateCustomModels(
     }
     if (missing.length) return bad(`unset environment variable(s): ${[...new Set(missing)].join(", ")}`);
 
-    const baseUrl: string = typeof raw.baseUrl === "string" ? raw.baseUrl : defaultBaseUrl(raw.provider as ProviderKind, bedrock);
+    const baseUrl: string = typeof raw.baseUrl === "string" ? raw.baseUrl : oauthProvider?.apiBaseUrl ?? defaultBaseUrl(raw.provider as ProviderKind, bedrock);
     const displayName = typeof raw.displayName === "string" && raw.displayName.trim() ? raw.displayName : raw.model;
     models.push({
       id: `custom:${displayName.trim().replace(/\s+/g, "-")}-${index}`,
@@ -148,6 +158,7 @@ export function validateCustomModels(
       displayName,
       provider: raw.provider as ProviderKind,
       baseUrl,
+      ...(oauthProvider ? { oauth: oauthProvider } : {}),
       ...(apiKey !== undefined ? { apiKey } : {}),
       ...(extraHeaders ? { extraHeaders } : {}),
       ...(raw.extraArgs ? { extraArgs: raw.extraArgs } : {}),
