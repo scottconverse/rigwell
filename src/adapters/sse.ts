@@ -58,13 +58,25 @@ export const RESPONSE_LIMIT_HEADER = "x-response-time-limit-ms";
  * `timeoutMs` is the hard limit for the whole response; `idleMs` (optional) cuts a stream that sends no bytes
  * for that long (spec §4.2). Both surface as retryable "timeout" errors with `cause` set.
  */
-export async function* sseRequest(
+export function sseRequest(
   url: string,
   init: { headers: Record<string, string>; body: string },
   userSignal: AbortSignal | undefined,
   timeoutMs: number,
   idleMs?: number,
 ): AsyncGenerator<SSEEvent> {
+  return guardedRequest(url, init, userSignal, timeoutMs, idleMs, parseSSE);
+}
+
+/** Same guards as sseRequest, with the body parser chosen by the caller (Bedrock reads AWS event streams). */
+export async function* guardedRequest<T>(
+  url: string,
+  init: { headers: Record<string, string>; body: string },
+  userSignal: AbortSignal | undefined,
+  timeoutMs: number,
+  idleMs: number | undefined,
+  parse: (body: ReadableStream<Uint8Array>, onChunk?: () => void) => AsyncGenerator<T>,
+): AsyncGenerator<T> {
   const started = Date.now();
   const timeoutCtl = new AbortController();
   const idleCtl = new AbortController();
@@ -109,7 +121,7 @@ export async function* sseRequest(
     if (!res.body) throw networkError("response had no body");
     armIdle();
     try {
-      for await (const ev of parseSSE(res.body, armIdle)) yield ev;
+      for await (const ev of parse(res.body, armIdle)) yield ev;
     } catch (e) {
       if (e instanceof ModelError) throw e;
       throw timeoutError() ?? classifyThrown(e, userSignal);
