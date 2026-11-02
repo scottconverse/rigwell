@@ -11,7 +11,7 @@ import { handoffBrief, isHandoffId, loadHandoff } from "../agent/handoff.ts";
 import { hasProjectConfig, isFolderTrusted, loadSettings, trustFolder } from "../storage/settings.ts";
 import { findModel, listModelInfo, resolveModels, validateCustomModels } from "../storage/models.ts";
 import { appendCompaction, appendMessage, appendTitle, appendTodoState, appendTurnOutcome, createSession, findSession, loadTranscript, type SessionFiles } from "../storage/transcript.ts";
-import { listSessionEntries } from "../storage/session-list.ts";
+import { listSessionEntries, searchSessions } from "../storage/session-list.ts";
 import { outputFormatFrom, systemPromptFrom, tagsFrom, toolIdUpdates, toolIdsFrom, userMessageFrom } from "./params.ts";
 import { gitRepoOf } from "./gitrepo.ts";
 import { readSessionSettings, updateSessionSettings } from "../storage/session-settings.ts";
@@ -28,7 +28,11 @@ import { fromInitConfigs, type McpServerInitConfig } from "../mcp/index.ts";
 import { loadAgents } from "../subagents/agents.ts";
 import { TaskLimits } from "../subagents/task.ts";
 import { forkSession } from "../storage/fork.ts";
+import { handleAuthMethod } from "../auth/methods.ts";
+import { handleSecretsMethod } from "../secrets/methods.ts";
+import { SecretsError, redactSecrets, resolveEnvironment, type ResolvedEnvironment } from "../secrets/store.ts";
 import { RewindError, rewindSession } from "../snapshots/index.ts";
+import { automationSetupParams } from "../automations/setup.ts";
 
 /** Sessions whose client went away while a prompt was open: kept for a reconnecting load_session (spec 3.1.5 pending lists). */
 const parked = new Map<string, { session: Session; files: SessionFiles; worktree?: SessionWorktree; timer: ReturnType<typeof setTimeout> }>();
@@ -145,8 +149,19 @@ export function createConnection(write: (line: string) => void, opts: Connection
       ...(t.disabled ? { disabledToolIds: t.disabled } : {}), ...(t.additional ? { additionalToolIds: t.additional } : {}),
       ...(saved.systemPrompt ? { systemPrompt: saved.systemPrompt } : {}), ...(saved.structuredOutputFormat ? { structuredOutputFormat: saved.structuredOutputFormat } : {}),
       ...(saved.disableBuiltinSkills ? { disableBuiltinSkills: true } : {}),
+      ...(typeof saved.environment === "string" ? { environment: saved.environment } : {}),
       ...(Array.isArray(saved.tags) ? { tags: saved.tags } : {}),
     };
+  }
+
+  /** The session's named environment (initialize_session `environment`): variables for Execute and hooks, never for the prompt. */
+  function sessionEnvironment(p: Record<string, unknown>): ResolvedEnvironment | undefined {
+    if (p.environment === undefined || p.environment === null || p.environment === "") return undefined;
+    if (typeof p.environment !== "string") throw new RpcError(ErrorCodes.INVALID_PARAMS, "environment must be a string");
+    try { return resolveEnvironment(p.environment); } catch (e) {
+      if (e instanceof SecretsError) throw new RpcError(e.kind === "not_found" ? ErrorCodes.ENTITY_NOT_FOUND : ErrorCodes.INVALID_PARAMS, e.message);
+      throw e;
+    }
   }
 
   function pendingLists(s: Session) {
@@ -182,8 +197,10 @@ export function createConnection(write: (line: string) => void, opts: Connection
     const skip = (opts.forced?.skipPermissions ?? p.skipPermissionsUnsafe === true) && autonomyAllowed("high", env.s.maxAutonomyLevel);
     const f = files!;
     const hooksConfig = loadHooksConfig({ cwd, trustProject: env.trusted });
+    const sessionEnv = sessionEnvironment(p);
     return new Session({
       id, cwd, settings,
+      ...(sessionEnv ? { extraEnv: sessionEnv.env, redact: (t: string) => redactSecrets(t, sessionEnv.secrets) } : {}),
       resolveModel: (mid) => findModel(env.models, mid),
       createAdapter, streamWithRetry: streamWithRetry as any,
       toolsFor: ((base) => (opts.wrapTools ? (o: Parameters<typeof toolsForSession>[0]) => opts.wrapTools!(base(o)) : base))(opts.extraTools ? (o: Parameters<typeof toolsForSession>[0]) => [...toolsForSession(o), ...opts.extraTools!()] : toolsForSession), decide, lists: env.lists,
@@ -212,7 +229,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
       persistence: persistenceFor(f),
       transcriptPath: f.transcriptPath,
       hooksFor: (a) => new HookRunner({
-        config: hooksConfig, sessionId: a.sessionId, transcriptPath: a.transcriptPath, cwd, permissionMode: a.permissionMode, notify: a.notify,
+        config: hooksConfig, sessionId: a.sessionId, transcriptPath: a.transcriptPath, cwd, permissionMode: a.permissionMode, notify: a.notify, env: sessionEnv?.env,
       }),
       mcp: { servers: fromInitConfigs(p.mcpServers as McpServerInitConfig[] | undefined) },
       allowSubagentsInScripts: restored?.allowSubagentsInScripts ?? (p.allowSubagentsInScripts === true || env.s.allowSubagentsInScripts === true),
@@ -262,6 +279,11 @@ export function createConnection(write: (line: string) => void, opts: Connection
 
   async function handle(method: string, p: Record<string, unknown>): Promise<unknown> {
     switch (method) {
+      case "start_automation_setup": {
+        // Guided "create by chatting" (spec 16.8): a normal session with the setup block added to its system prompt.
+        if (typeof p.cwd !== "string" || !p.cwd) throw new RpcError(ErrorCodes.INVALID_PARAMS, "cwd is required");
+        return { ...(await handle("initialize_session", automationSetupParams(p)) as Record<string, unknown>), automationSetup: true };
+      }
       case "initialize_session": {
         if (session) throw new RpcError(ErrorCodes.CONFLICT, "This connection already has a session");
         if (typeof p.cwd !== "string" || !p.cwd) throw new RpcError(ErrorCodes.INVALID_PARAMS, "cwd is required");
@@ -278,6 +300,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
         if (findSession(id, cwd)) throw new RpcError(ErrorCodes.CONFLICT, `Session ${id} already exists; use load_session`);
         // Check the structured params before anything is created.
         toolIdsFrom(p); systemPromptFrom(p); outputFormatFrom(p.structuredOutputFormat, "structuredOutputFormat"); tagsFrom(p.tags);
+        sessionEnvironment(p);
         await resolveTrust(cwd);
         const env = environment(cwd);
         const d = env.s.sessionDefaultSettings ?? {};
@@ -300,6 +323,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
           files = createSession({ id, cwd: sessionCwd, title: typeof p.title === "string" ? p.title : undefined, ...(typeof p.callingSessionId === "string" && p.callingSessionId ? { extra: { callingSessionId: p.callingSessionId } } : {}) });
           session = build(id, sessionCwd, settings, p, env, pick<ToolExecutionMode>(p.toolExecutionMode, EXEC_MODES, "toolExecutionMode"));
           if (worktree) updateSessionSettings(files, { worktree: worktreeSettings(worktree) });
+          if (typeof p.environment === "string" && p.environment) updateSessionSettings(files, { environment: p.environment }); // the name only, never values
           await session.persistSettings();
         } catch (e) {
           if (worktree) await discardSessionWorktree(worktree);
@@ -418,6 +442,11 @@ export function createConnection(write: (line: string) => void, opts: Connection
       case "list_sessions": {
         const limit = typeof p.limit === "number" && p.limit > 0 ? Math.floor(p.limit) : undefined;
         return { sessions: listSessionEntries({ cwd: typeof p.cwd === "string" ? resolve(p.cwd) : undefined, includeArchived: p.includeArchived === true, includeBtwForks: p.includeBtwForks === true, limit }) };
+      }
+      case "search_sessions": {
+        if (typeof p.query !== "string" || !p.query.trim()) throw new RpcError(ErrorCodes.INVALID_PARAMS, "query must be a non-empty string");
+        if (p.mode !== undefined && p.mode !== "lexical" && p.mode !== "semantic") throw new RpcError(ErrorCodes.INVALID_PARAMS, "mode must be lexical or semantic");
+        return { hits: await searchSessions(p.query, p.mode ?? "lexical", { cwd: typeof p.cwd === "string" ? resolve(p.cwd) : undefined, includeArchived: p.includeArchived === true, limit: typeof p.limit === "number" ? p.limit : undefined }) };
       }
       case "interrupt_session": need().interrupt(); return {};
       case "close_session": {
@@ -558,6 +587,10 @@ export function createConnection(write: (line: string) => void, opts: Connection
         if (opts.extraMethods?.[method]) return opts.extraMethods[method](p);
         const w = await handleWorktreeMethod(method, p, { cwd: session?.cwd, settings: () => environment(session?.cwd ?? process.cwd()).s, log: opts.log });
         if (w.handled) return w.result;
+        const a = await handleAuthMethod(method, p, () => environment(session?.cwd ?? process.cwd()).s);
+        if (a.handled) return a.result;
+        const sx = handleSecretsMethod(method, p);
+        if (sx.handled) return sx.result;
         throw new RpcError(ErrorCodes.METHOD_NOT_FOUND, `Method not found or not in this build: ${METHOD_PREFIX}${method}`);
       }
     }

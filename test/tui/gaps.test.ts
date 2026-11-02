@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initialState } from "../../src/tui/reducer.ts";
 import { focusAllows, makeWav, playSound, progressSequence, runStatusLine, scaleWav, soundSettings, statusLineConfig, findPlayer } from "../../src/tui/attention.ts";
+import { BUILTIN_SKILLS } from "../../src/skills/index.ts";
 import { expandEntry, loadCustomEntries, parseLoop } from "../../src/tui/customcmd.ts";
 import { parseKeys } from "../../src/tui/keys.ts";
 import { render, stripAnsi } from "../../src/tui/render.ts";
@@ -40,16 +41,19 @@ afterAll(() => { if (oldHome === undefined) delete process.env.RIGWELL_HOME; els
 
 describe("custom commands and skills", () => {
   test("loads project and user commands plus skills; built-in names and duplicates are skipped", () => {
-    const { entries, skills } = loadCustomEntries(proj, "/nonexistent-home");
+    const all = loadCustomEntries(proj, "/nonexistent-home");
+    const entries = all.entries.filter((e) => e.origin !== "builtin");
     expect(entries.map((e) => `${e.kind}:${e.name}:${e.origin}`)).toEqual(["command:review:project", "command:plain:user", "skill:tidy:project-dir"]);
-    expect(skills).toBe(1);
+    // built-in skills are offered too, but the project command "review" wins over the built-in skill of that name
+    expect(all.entries.filter((e) => e.origin === "builtin").map((e) => e.name)).not.toContain("review");
+    expect(all.skills).toBe(1 + BUILTIN_SKILLS.length);
     expect(entries[0].desc).toBe("Review a file");
     expect(entries[0].argHint).toBe("<file>");
     expect(entries[1].desc).toBe("Plain prompt");
   });
 
   test("expansion substitutes $ARGUMENTS and $n, appends arguments when there is no placeholder", () => {
-    const { entries } = loadCustomEntries(proj, "/nonexistent-home");
+    const entries = loadCustomEntries(proj, "/nonexistent-home").entries.filter((e) => e.origin !== "builtin");
     expect(expandEntry(entries[0], "a.ts and more")).toBe("Review a.ts carefully. Extra: a.ts and more");
     expect(expandEntry(entries[1], "")).toBe("# Plain prompt\nDo the thing.");
     expect(expandEntry(entries[1], "now")).toBe("# Plain prompt\nDo the thing.\n\nnow");
@@ -60,9 +64,10 @@ describe("custom commands and skills", () => {
 
   test("they appear in the / menu and running one sends the expanded prompt", () => {
     const { entries, skills } = loadCustomEntries(proj, "/nonexistent-home");
+    const nSkills = skills;
     let d = driver();
     d = ev(d, { type: "extras", custom: entries, skills, mcps: 2, issues: 1 });
-    expect(d.s.header).toMatchObject({ skills: 1, mcps: 2, issues: 1 });
+    expect(d.s.header).toMatchObject({ skills: nSkills, mcps: 2, issues: 1 });
     expect(matchCommands("re", d.s.custom).map((c) => c.name)).toContain("review");
     d = type(d, "/rev");
     expect(stripAnsi(render(d.s, { width: 80, height: 30, color: false }).lines.join("\n"))).toContain("/review <file>  Review a file");

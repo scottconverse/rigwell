@@ -1,7 +1,7 @@
 import { PrefixCache, sse, splitChunks, startFake, type FakeOptions, type FakeServer, type FakeTurn, type FakeTurnSpec, type PrefixModel } from "./types.ts";
 export type { FakeServer, FakeTurn } from "./types.ts";
 
-function render(turn: FakeTurnSpec, idx: number): string[] {
+export function anthropicFrames(turn: FakeTurnSpec, idx: number): string[] {
   const f: string[] = [];
   const u = turn.usage ?? {};
   f.push(sse("message_start", {
@@ -58,6 +58,6 @@ export function anthropicPrefix(body: any): PrefixModel {
 }
 
 export function startFakeAnthropic(script: FakeTurn[], opts: FakeOptions = {}): Promise<FakeServer> {
-  return startFake(script, render, (_s, message) => ({ type: "error", error: { type: "api_error", message } }),
+  return startFake(script, anthropicFrames, (_s, message) => ({ type: "error", error: { type: "api_error", message } }),
     opts.simulateCache ? { model: anthropicPrefix, sim: new PrefixCache("explicit") } : undefined);
 }

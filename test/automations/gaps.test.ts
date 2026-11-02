@@ -204,7 +204,7 @@ describe("agent tools", () => {
   test("names, schemas and permission decisions", () => {
     const svc = createAutomationService({});
     const tools = automationTools(svc);
-    expect(tools.map((t) => t.name)).toEqual(["CreateAutomation", "ListAutomations", "ReadAutomation", "EditAutomation", "DeleteAutomation", "RunAutomation", "Loop"]);
+    expect(tools.map((t) => t.name)).toEqual(["CreateAutomation", "ListAutomations", "ReadAutomation", "EditAutomation", "DeleteAutomation", "RunAutomation", "Loop", "ListAutomationTemplates", "PreviewSchedule"]);
     for (const t of tools) { expect(t.description.length).toBeGreaterThan(40); expect((t.inputSchema as any).type).toBe("object"); }
     const pctx = { autonomy: "high", interactionMode: "auto", skipPermissions: false, lists: { allow: [], deny: [], block: [] }, cwd: "/x" } as any;
     expect(decide("ListAutomations", {}, pctx).decision).toBe("allow");

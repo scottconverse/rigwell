@@ -5,6 +5,7 @@ import {
 } from "../core/types.ts";
 import { midStreamBreak } from "./errors.ts";
 import { DEFAULT_TIMEOUT_MS, apiUrl, safeJson, sseRequest } from "./sse.ts";
+import { oauthHeaders } from "../auth/headers.ts";
 
 const CACHE = { type: "ephemeral", ttl: "1h" } as const;
 
@@ -102,6 +103,84 @@ function streamError(data: any): ModelError {
   }
 }
 
+/** Turns parsed Anthropic stream events into normalized events (shared with Bedrock Anthropic). */
+export async function* anthropicEvents(source: AsyncIterable<any>): AsyncGenerator<StreamEvent> {
+  const usage: TokenUsage = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, thinkingTokens: 0 };
+  const blocks = new Map<number, BlockState>();
+  let stopReason: string | null = null;
+  let finished = false;
+
+  for await (const data of source) {
+    const type: string = data.type;
+    if (type === "error") throw streamError(data);
+    if (type === "message_start") {
+      const u = data.message?.usage ?? {};
+      usage.inputTokens = u.input_tokens ?? 0;
+      usage.outputTokens = u.output_tokens ?? 0;
+      usage.cacheCreationTokens = u.cache_creation_input_tokens ?? 0;
+      usage.cacheReadTokens = u.cache_read_input_tokens ?? 0;
+    } else if (type === "content_block_start") {
+      const idx: number = data.index;
+      const cb = data.content_block ?? {};
+      const st: BlockState = { kind: "ignore", text: "", signature: "", id: "", name: "", json: "" };
+      if (cb.type === "text") {
+        st.kind = "text";
+        if (cb.text) { st.text = cb.text; yield { type: "text_delta", index: idx, text: cb.text }; }
+      } else if (cb.type === "thinking") {
+        st.kind = "thinking";
+        if (cb.thinking) { st.text = cb.thinking; yield { type: "thinking_delta", index: idx, text: cb.thinking }; }
+        if (cb.signature) st.signature = cb.signature;
+      } else if (cb.type === "tool_use") {
+        st.kind = "tool_use"; st.id = cb.id; st.name = cb.name;
+        yield { type: "tool_use_start", index: idx, id: cb.id, name: cb.name };
+      }
+      blocks.set(idx, st);
+    } else if (type === "content_block_delta") {
+      const idx: number = data.index;
+      const st = blocks.get(idx);
+      const d = data.delta ?? {};
+      if (!st) continue;
+      if (d.type === "text_delta" && st.kind === "text") {
+        st.text += d.text; yield { type: "text_delta", index: idx, text: d.text };
+      } else if (d.type === "thinking_delta" && st.kind === "thinking") {
+        st.text += d.thinking; yield { type: "thinking_delta", index: idx, text: d.thinking };
+      } else if (d.type === "signature_delta" && st.kind === "thinking") {
+        st.signature += d.signature;
+      } else if (d.type === "input_json_delta" && st.kind === "tool_use") {
+        st.json += d.partial_json; yield { type: "tool_input_delta", index: idx, partialJson: d.partial_json };
+      }
+    } else if (type === "content_block_stop") {
+      const st = blocks.get(data.index);
+      if (st && st.kind !== "ignore") yield { type: "block_stop", index: data.index };
+    } else if (type === "message_delta") {
+      if (data.delta?.stop_reason) stopReason = data.delta.stop_reason;
+      const u = data.usage ?? {};
+      if (u.output_tokens !== undefined) usage.outputTokens = u.output_tokens;
+      if (u.input_tokens !== undefined) usage.inputTokens = u.input_tokens;
+      if (u.cache_creation_input_tokens !== undefined) usage.cacheCreationTokens = u.cache_creation_input_tokens;
+      if (u.cache_read_input_tokens !== undefined) usage.cacheReadTokens = u.cache_read_input_tokens;
+    } else if (type === "message_stop") {
+      finished = true;
+      break;
+    }
+  }
+  if (!finished) throw midStreamBreak();
+
+  const content: ContentBlock[] = [];
+  for (const idx of [...blocks.keys()].sort((a, b) => a - b)) {
+    const st = blocks.get(idx)!;
+    if (st.kind === "text") {
+      if (st.text !== "") content.push({ type: "text", text: st.text });
+    } else if (st.kind === "thinking") {
+      content.push({ type: "thinking", thinking: st.text, ...(st.signature ? { signature: st.signature, signatureProvider: "anthropic" } : {}) });
+    } else if (st.kind === "tool_use") {
+      const parsed = st.json.trim() === "" ? {} : safeJson(st.json);
+      content.push({ type: "tool_use", id: st.id, name: st.name, input: parsed && typeof parsed === "object" ? parsed : {} });
+    }
+  }
+  yield { type: "message_done", content, stopReason: mapStop(stopReason), usage };
+}
+
 export class AnthropicAdapter implements ModelAdapter {
   constructor(private opts: { timeoutMs?: number } = {}) {}
 
@@ -111,87 +190,19 @@ export class AnthropicAdapter implements ModelAdapter {
       "content-type": "application/json",
       "anthropic-version": "2023-06-01",
       ...(m.apiKey ? { "x-api-key": m.apiKey } : {}),
+      ...(m.oauth ? await oauthHeaders(m) : {}),
       ...(m.extraHeaders ?? {}),
     };
     const url = apiUrl(m.baseUrl, "messages");
-    const usage: TokenUsage = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, thinkingTokens: 0 };
-    const blocks = new Map<number, BlockState>();
-    let stopReason: string | null = null;
-    let finished = false;
-
     const events = sseRequest(
       url, { headers, body: JSON.stringify(buildAnthropicBody(req)) }, req.signal, req.limits?.hardLimitMs ?? this.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, req.limits?.idleTimeoutMs,
     );
-    for await (const sse of events) {
-      const data = safeJson(sse.data);
-      if (!data) continue;
-      const type: string = data.type ?? sse.event;
-      if (type === "error") throw streamError(data);
-      if (type === "message_start") {
-        const u = data.message?.usage ?? {};
-        usage.inputTokens = u.input_tokens ?? 0;
-        usage.outputTokens = u.output_tokens ?? 0;
-        usage.cacheCreationTokens = u.cache_creation_input_tokens ?? 0;
-        usage.cacheReadTokens = u.cache_read_input_tokens ?? 0;
-      } else if (type === "content_block_start") {
-        const idx: number = data.index;
-        const cb = data.content_block ?? {};
-        const st: BlockState = { kind: "ignore", text: "", signature: "", id: "", name: "", json: "" };
-        if (cb.type === "text") {
-          st.kind = "text";
-          if (cb.text) { st.text = cb.text; yield { type: "text_delta", index: idx, text: cb.text }; }
-        } else if (cb.type === "thinking") {
-          st.kind = "thinking";
-          if (cb.thinking) { st.text = cb.thinking; yield { type: "thinking_delta", index: idx, text: cb.thinking }; }
-          if (cb.signature) st.signature = cb.signature;
-        } else if (cb.type === "tool_use") {
-          st.kind = "tool_use"; st.id = cb.id; st.name = cb.name;
-          yield { type: "tool_use_start", index: idx, id: cb.id, name: cb.name };
-        }
-        blocks.set(idx, st);
-      } else if (type === "content_block_delta") {
-        const idx: number = data.index;
-        const st = blocks.get(idx);
-        const d = data.delta ?? {};
-        if (!st) continue;
-        if (d.type === "text_delta" && st.kind === "text") {
-          st.text += d.text; yield { type: "text_delta", index: idx, text: d.text };
-        } else if (d.type === "thinking_delta" && st.kind === "thinking") {
-          st.text += d.thinking; yield { type: "thinking_delta", index: idx, text: d.thinking };
-        } else if (d.type === "signature_delta" && st.kind === "thinking") {
-          st.signature += d.signature;
-        } else if (d.type === "input_json_delta" && st.kind === "tool_use") {
-          st.json += d.partial_json; yield { type: "tool_input_delta", index: idx, partialJson: d.partial_json };
-        }
-      } else if (type === "content_block_stop") {
-        const st = blocks.get(data.index);
-        if (st && st.kind !== "ignore") yield { type: "block_stop", index: data.index };
-      } else if (type === "message_delta") {
-        if (data.delta?.stop_reason) stopReason = data.delta.stop_reason;
-        const u = data.usage ?? {};
-        if (u.output_tokens !== undefined) usage.outputTokens = u.output_tokens;
-        if (u.input_tokens !== undefined) usage.inputTokens = u.input_tokens;
-        if (u.cache_creation_input_tokens !== undefined) usage.cacheCreationTokens = u.cache_creation_input_tokens;
-        if (u.cache_read_input_tokens !== undefined) usage.cacheReadTokens = u.cache_read_input_tokens;
-      } else if (type === "message_stop") {
-        finished = true;
-        break;
+    const parsed = (async function* () {
+      for await (const sse of events) {
+        const data = safeJson(sse.data);
+        if (data) yield { ...data, type: data.type ?? sse.event };
       }
-    }
-    if (!finished) throw midStreamBreak();
-
-    const content: ContentBlock[] = [];
-    for (const idx of [...blocks.keys()].sort((a, b) => a - b)) {
-      const st = blocks.get(idx)!;
-      if (st.kind === "text") {
-        if (st.text !== "") content.push({ type: "text", text: st.text });
-      } else if (st.kind === "thinking") {
-        content.push({ type: "thinking", thinking: st.text, ...(st.signature ? { signature: st.signature, signatureProvider: "anthropic" } : {}) });
-      } else if (st.kind === "tool_use") {
-        const parsed = st.json.trim() === "" ? {} : safeJson(st.json);
-        content.push({ type: "tool_use", id: st.id, name: st.name, input: parsed && typeof parsed === "object" ? parsed : {} });
-      }
-    }
-    yield { type: "message_done", content, stopReason: mapStop(stopReason), usage };
+    })();
+    yield* anthropicEvents(parsed);
   }
 }

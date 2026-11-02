@@ -1,7 +1,8 @@
 // Automation service: manager + webhook server + session crons, and the protocol methods that expose them.
 // Methods (prefix rigwell.): list_automations, create_automation, update_automation, rename_automation, delete_automation,
 // pause_automation, resume_automation, run_automation, get_automation_history, rotate_automation_secret,
-// list_crons, create_cron, update_cron, delete_cron, register_automation_project. Notifications (rigwell. prefix):
+// list_crons, create_cron, update_cron, delete_cron, register_automation_project, list_automation_templates,
+// get_automation_visual (and start_automation_setup, answered by the connection; see setup.ts). Notifications (rigwell. prefix):
 // cron.state_changed {cron} and automation.auto_paused {id, name, reason}.
 // Agent tools (CreateAutomation, ListAutomations, ReadAutomation, EditAutomation, DeleteAutomation, RunAutomation, Loop)
 // come from automationTools(service) in tools.ts; the daemon passes them to every session through extraTools.
@@ -11,8 +12,12 @@ import { createHeadlessRunner, type HeadlessRunner } from "./runner.ts";
 import { startWebhookServer, type WebhookServer } from "./webhook.ts";
 import { CronRunner, CronStore, loopIntervalToCron, type CronHost, type CronRecord, type CronStatus } from "./crons.ts";
 import { readSecrets, type Automation, type Frontmatter } from "./store.ts";
+import { instantiateTemplate, listTemplates, TemplateError } from "./templates.ts";
 
 export { automationTools } from "./tools.ts";
+export { AUTOMATION_TEMPLATES, instantiateTemplate, listTemplates } from "./templates.ts";
+export { AUTOMATION_SETUP_OVERLAY, automationSetupParams } from "./setup.ts";
+export { renderVisual } from "./visual.ts";
 export { AutomationManager, CronRunner, CronStore, createHeadlessRunner, startWebhookServer };
 
 export interface ServiceOptions {
@@ -81,6 +86,7 @@ export function createAutomationService(opts: ServiceOptions = {}) {
   const guard = <T>(f: () => T): T => {
     try { return f(); } catch (e) {
       if (e instanceof RpcError) throw e;
+      if (e instanceof TemplateError) throw bad(e.message);
       throw /not found/i.test((e as Error).message) ? notFound(e) : bad((e as Error).message);
     }
   };
@@ -88,11 +94,19 @@ export function createAutomationService(opts: ServiceOptions = {}) {
   const methods: Record<string, (p: Params) => unknown> = {
     list_automations: () => ({ automations: mgr.list().map(view) }),
     create_automation: (p) => guard(() => {
-      const fm = fmFrom(p) as Frontmatter;
-      const a = mgr.create(fm, str(p, "instructions") ?? "", str(p, "projectDir"));
+      let fm = fmFrom(p) as Frontmatter;
+      let instructions = str(p, "instructions") ?? "";
+      if (str(p, "templateId")) { // fields the caller sends win over the template's
+        const t = instantiateTemplate(str(p, "templateId")!, (p.parameters ?? {}) as Params);
+        fm = { name: t.name, description: t.description, schedule: t.schedule, autonomy: t.autonomy, tags: t.tags, ...(fm as Partial<Frontmatter>) } as Frontmatter;
+        instructions ||= t.instructions;
+      }
+      const a = mgr.create(fm, instructions, str(p, "projectDir"));
       const secret = fm.trigger === "webhook" ? readSecrets(a).webhookSecret : undefined;
       return { automation: view(a), ...(secret ? { webhookSecret: secret } : {}) };
     }),
+    list_automation_templates: () => ({ templates: listTemplates() }),
+    get_automation_visual: (p) => guard(() => mgr.visual(need(p, "id"))),
     update_automation: (p) => guard(() => ({ automation: view(mgr.update(need(p, "id"), fmFrom(p), typeof p.instructions === "string" ? p.instructions : undefined)) })),
     rename_automation: (p) => guard(() => ({ automation: view(mgr.update(need(p, "id"), { name: need(p, "name") })) })),
     pause_automation: (p) => guard(() => ({ automation: view(mgr.update(need(p, "id"), { paused: true })) })),

@@ -5,6 +5,7 @@ import {
 } from "../core/types.ts";
 import { midStreamBreak } from "./errors.ts";
 import { DEFAULT_TIMEOUT_MS, apiUrl, safeJson, sseRequest } from "./sse.ts";
+import { oauthHeaders } from "../auth/headers.ts";
 
 type ReasoningField = "reasoning" | "reasoning_content";
 type Obj = Record<string, unknown>;
@@ -126,7 +127,7 @@ export function buildChatBody(req: ModelRequest): Obj {
     stream: true,
     stream_options: { include_usage: true },
     max_tokens: req.maxOutputTokens,
-    prompt_cache_key: req.sessionId,
+    prompt_cache_key: req.cacheKey ?? req.sessionId,
   };
   if (req.tools.length) {
     body.tools = req.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.inputSchema } }));
@@ -157,6 +158,7 @@ export class ChatCompletionsAdapter implements ModelAdapter {
     const headers: Record<string, string> = {
       "content-type": "application/json",
       ...(m.apiKey ? { authorization: `Bearer ${m.apiKey}` } : {}),
+      ...(m.oauth ? await oauthHeaders(m) : {}),
       ...(m.extraHeaders ?? {}),
     };
     const url = apiUrl(m.baseUrl, "chat/completions");

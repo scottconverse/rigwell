@@ -6,6 +6,7 @@ import { readSessionSettings } from "./session-settings.ts";
 import { indexDbPath, openSessionIndex, queryPicker, refreshIndex } from "./session-index.ts";
 import { projectSlug } from "./paths.ts";
 import type { Database } from "bun:sqlite";
+import { type SearchHit, searchSessionIndex } from "./session-search.ts";
 
 export interface SessionListEntry {
   sessionId: string;
@@ -99,6 +100,7 @@ export function scanSessionEntries(o: { cwd?: string; includeArchived?: boolean;
     const { value: visible, first } = firstVisibleUserMessage(s.transcriptPath, mtimeMs);
     if (isSubagent || !visible) continue;
     if (!o.includeBtwForks && tags.some((t) => t?.name === "btw-fork")) continue;
+    if (!o.includeBtwForks && tags.some((t) => t?.name === "btw-fork")) continue;
     if (archivedAt && !o.includeArchived) continue;
     rows.push({
       sessionId: s.id, title: displayTitle(typeof settings.title === "string" && settings.title ? settings.title : s.title, first), cwd: s.cwd ?? "",
@@ -107,4 +109,12 @@ export function scanSessionEntries(o: { cwd?: string; includeArchived?: boolean;
   }
   rows.sort((a, b) => Number(b.pinned) - Number(a.pinned) || (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
   return o.limit && o.limit > 0 ? rows.slice(0, o.limit) : rows;
+}
+
+/** Searches transcripts through the SQLite index (spec 12.1). Unlike the picker there is no file-scan fallback: it throws when the index is unusable. */
+export async function searchSessions(query: string, mode: "lexical" | "semantic", o: { cwd?: string; includeArchived?: boolean; limit?: number } = {}): Promise<SearchHit[]> {
+  const file = indexDbPath();
+  let db = indexes.get(file);
+  if (!db) { db = openSessionIndex(file); indexes.set(file, db); }
+  return searchSessionIndex(db, query, mode, o);
 }
