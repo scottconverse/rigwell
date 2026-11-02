@@ -99,7 +99,7 @@ maybe("desktop app: final gaps", () => {
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
       const dt = new DataTransfer();
       dt.items.add(new File([bytes], "pasted.png", { type: "image/png" }));
-      document.querySelector("textarea")!.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      document.querySelector(".composer [contenteditable=true]")!.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
     }, PNG_B64);
     await page.locator(".attachment", { hasText: "pasted.png" }).waitFor();
 

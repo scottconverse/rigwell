@@ -96,7 +96,9 @@ kbd { font: 11px var(--font-code); background: var(--bg-sunken); border: 1px sol
 
 .composer { border: 1px solid var(--border); background: var(--bg-panel); border-radius: 12px; padding: 8px; margin: 8px 12px 12px; }
 .home .composer { margin: 0; }
-.composer textarea { width: 100%; border: none; background: transparent; resize: none; outline: none; padding: 4px; font-family: var(--font-content); font-size: var(--size-content); }
+.composer .composer-editor { width: 100%; min-height: 2.8em; max-height: 220px; overflow-y: auto; outline: none; padding: 4px; font-family: var(--font-content); font-size: var(--size-content); white-space: pre-wrap; word-break: break-word; }
+.composer .composer-editor p { margin: 0; }
+.composer .composer-editor p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: var(--fg-muted); float: left; height: 0; pointer-events: none; }
 .composer .chips { padding-top: 4px; }
 .send { background: var(--accent); color: var(--accent-fg); border: none; border-radius: 8px; padding: 4px 14px; }
 .send.stop { background: var(--danger); color: #fff; }
@@ -223,3 +225,13 @@ kbd { font: 11px var(--font-code); background: var(--bg-sunken); border: 1px sol
 .sc-promote { margin-top: 4px; font-size: 12px; }
 .side-group-head .menu { top: calc(100% + 4px); bottom: auto; font-weight: 400; }
 .side-group-head .menu-item { color: var(--fg); padding: 5px 8px; }
+
+/* Rich markdown (shiki, KaTeX, mermaid). shiki emits both theme colors as custom properties; the active theme picks one. */
+.shiki, .shiki span { color: var(--shiki-light); background-color: transparent; }
+:root[data-theme="dark"] .shiki, :root[data-theme="dark"] .shiki span { color: var(--shiki-dark); }
+.md pre.shiki, .shiki-wrap pre.shiki { background: var(--code-bg); padding: 10px; border-radius: 8px; overflow: auto; font: var(--size-code) var(--font-code); margin: 6px 0; }
+.shiki-wrap { padding: 4px 8px; overflow: auto; }
+.math-block { margin: 8px 0; overflow-x: auto; text-align: center; }
+.mermaid-diagram { margin: 8px 0; overflow-x: auto; background: var(--code-bg); border-radius: 8px; padding: 10px; text-align: center; }
+.mermaid-diagram svg { max-width: 100%; height: auto; }
+.diagram-error { border: 1px solid var(--danger, #c0392b); }

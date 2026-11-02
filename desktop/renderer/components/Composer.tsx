@@ -1,4 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { Document } from "@tiptap/extension-document";
+import { HardBreak } from "@tiptap/extension-hard-break";
+import { Paragraph } from "@tiptap/extension-paragraph";
+import { Text } from "@tiptap/extension-text";
+import { Placeholder, UndoRedo } from "@tiptap/extensions";
+import { EditorContent, useEditor } from "@tiptap/react";
 import type { SessionController } from "../lib/session.ts";
 import { ConnectorsDialog, SkillsDialog } from "./Dialogs.tsx";
 import { ModelPicker } from "./ModelPicker.tsx";
@@ -52,19 +58,31 @@ export function Composer(props: {
   const [dragging, setDragging] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
   const lastEsc = useRef(0);
-  const ta = useRef<HTMLTextAreaElement>(null);
+  const keyRef = useRef<(e: KeyboardEvent) => boolean>(() => false);
+  const pasteRef = useRef<(files: FileList) => boolean>(() => false);
   const off = (id: string) => props.disabledShortcuts?.includes(id);
   const s = props.settings;
 
-  useEffect(() => { if (props.autoFocus) ta.current?.focus(); }, [props.autoFocus]);
-  useEffect(() => { const el = ta.current; if (el) { el.style.height = "auto"; el.style.height = Math.min(220, el.scrollHeight) + "px"; } }, [text]);
+  // The composer is a tiptap editor kept to plain text (paragraphs, soft line breaks, undo): rich pasted content collapses to text.
+  const editor = useEditor({
+    extensions: [Document, Paragraph, Text, HardBreak, UndoRedo, Placeholder.configure({ placeholder: props.placeholder ?? "What would you like to work on?" })],
+    editorProps: {
+      attributes: { "aria-label": "Message", role: "textbox", "aria-multiline": "true", class: "composer-editor" },
+      handleKeyDown: (_v, e) => keyRef.current(e),
+      handlePaste: (_v, e) => { const f = e.clipboardData?.files; return !!f && f.length > 0 && pasteRef.current(f); },
+    },
+    onUpdate: ({ editor: ed }) => setText(ed.getText({ blockSeparator: "\n" })),
+    autofocus: !!props.autoFocus,
+  });
+  useEffect(() => { if (props.autoFocus) editor?.commands.focus(); }, [props.autoFocus, editor]);
+  const clearText = () => { editor?.commands.clearContent(true); setText(""); };
 
   const cycle = (list: string[], cur: string | undefined) => list[(Math.max(0, list.indexOf(cur ?? "")) + 1) % list.length];
   const send = () => {
-    const t = text.trim();
+    const t = (editor ? editor.getText({ blockSeparator: "\n" }) : text).trim();
     if ((!t && !atts.length) || props.disabled) return;
     props.onSend(t || defaultText(atts), atts.length ? atts : undefined);
-    setText(""); setAtts([]); setAttachError("");
+    clearText(); setAtts([]); setAttachError("");
   };
 
   /** Picked, pasted or dropped files (spec 14.3). Unsupported or oversized ones are reported, the rest are kept. */
@@ -80,30 +98,29 @@ export function Composer(props: {
     setAttachError(errors.join(". "));
   };
 
-  const onPaste = (e: React.ClipboardEvent) => {
-    const files = e.clipboardData?.files;
-    if (files && files.length) { e.preventDefault(); void attach(files); }
-  };
+  pasteRef.current = (files) => { void attach(files); return true; };
   const onDrop = (e: React.DragEvent) => {
     setDragging(false);
     if (e.dataTransfer?.files?.length) { e.preventDefault(); void attach(e.dataTransfer.files); }
   };
 
-  const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); return; }
+  const onKey = (e: KeyboardEvent): boolean => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); return true; }
     if (e.key === "Escape") {
       e.preventDefault();
       const now = Date.now();
       if (props.busy) props.onStop();
-      else if (now - lastEsc.current < 600) setText("");
+      else if (now - lastEsc.current < 600) clearText();
       lastEsc.current = now;
-      return;
+      return true;
     }
-    if (e.key === "Tab" && e.shiftKey && !off("spec")) { e.preventDefault(); props.onChange({ interactionMode: s.interactionMode === "spec" ? "auto" : "spec" }); return; }
-    if (e.key === "Tab" && !e.shiftKey && !off("reasoning")) { e.preventDefault(); props.onChange({ reasoningEffort: cycle(REASONING, s.reasoningEffort) }); return; }
-    if (e.key === "l" && e.ctrlKey && !off("autonomy")) { e.preventDefault(); props.onChange({ autonomyLevel: cycle(AUTONOMY, s.autonomyLevel === "off" ? "high" : s.autonomyLevel) }); return; }
-    if (e.key === "?" && !text) { e.preventDefault(); setHelp(true); }
+    if (e.key === "Tab" && e.shiftKey && !off("spec")) { e.preventDefault(); props.onChange({ interactionMode: s.interactionMode === "spec" ? "auto" : "spec" }); return true; }
+    if (e.key === "Tab" && !e.shiftKey && !off("reasoning")) { e.preventDefault(); props.onChange({ reasoningEffort: cycle(REASONING, s.reasoningEffort) }); return true; }
+    if (e.key === "l" && e.ctrlKey && !off("autonomy")) { e.preventDefault(); props.onChange({ autonomyLevel: cycle(AUTONOMY, s.autonomyLevel === "off" ? "high" : s.autonomyLevel) }); return true; }
+    if (e.key === "?" && !(editor?.getText() ?? text)) { e.preventDefault(); setHelp(true); return true; }
+    return false;
   };
+  keyRef.current = onKey;
 
 
   return (
@@ -121,7 +138,7 @@ export function Composer(props: {
           {attachError && <span className="attach-error" role="alert">{attachError}</span>}
         </div>
       )}
-      <textarea ref={ta} value={text} rows={2} placeholder={props.placeholder ?? "What would you like to work on?"} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} onPaste={onPaste} aria-label="Message" />
+      <EditorContent editor={editor} className="composer-input" />
       <input ref={picker} type="file" multiple hidden data-testid="attach-input" aria-label="Choose files to attach" accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/*,.md,.ts,.tsx,.js,.json,.py,.go,.rs,.txt,.csv,.yml,.yaml,.toml"
         onChange={(e) => { if (e.target.files?.length) void attach(e.target.files); e.target.value = ""; }} />
       <div className="chips">
