@@ -22,6 +22,7 @@ import { deleteLocalProfile, gitRoot, listProfileViews, readUserSettings, saveLo
 import { listSkillViews } from "./skills.ts";
 import { synthWav } from "./sounds.ts";
 import { freeSlot, saveZoom, stepZoom, zoomFor } from "./window-zoom.ts";
+import { showWhenReady } from "./window-show.ts";
 
 // The bundle lives in <app>/dist next to preload.cjs and renderer/. app.getAppPath() is the folder with package.json
 // (also correct inside an asar), which is more reliable than __dirname because bundlers may inline that.
@@ -177,7 +178,7 @@ function createWindow(route = "/"): BrowserWindow {
   windows.add(win);
   slots.set(win, freeSlot(slots.values()));
   const id = win.webContents.id;
-  win.once("ready-to-show", () => { if (b?.maximized) win.maximize(); win.show(); updateTray(); });
+  showWhenReady(win, () => { if (b?.maximized) win.maximize(); win.show(); updateTray(); });
   win.on("show", () => updateTray()); win.on("hide", () => updateTray());
   win.webContents.setWindowOpenHandler(({ url }) => { if (isAllowedExternal(url)) void shell.openExternal(url); return { action: "deny" }; });
   win.webContents.on("will-navigate", (e, url) => { if (!isTrustedSender(url, [APP_PAGE])) { e.preventDefault(); if (isAllowedExternal(url)) void shell.openExternal(url); } });
