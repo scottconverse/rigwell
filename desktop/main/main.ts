@@ -7,6 +7,8 @@ import { join, resolve } from "node:path";
 import { badgeCount, notificationFor, soundFor, type SoundAction, type WindowState } from "./alerts.ts";
 import { initialWindowOptions, overlayFor } from "./appearance.ts";
 import { DaemonBroker } from "./broker.ts";
+import { daemonCommand as buildDaemonCommand } from "./daemon-cmd.ts";
+import { checkForUpdate, describeCheck, type UpdateCheck } from "./update-feed.ts";
 import { startCdpProxy, type CdpProxy, type PaneHost, type PaneTarget } from "./cdp-proxy.ts";
 import { browserPermission, buildCsp, isAllowedExternal, isTrustedSender, parseDeepLink } from "./security.ts";
 import { loadDesktopSettings, updateDesktopSettings, type DesktopSettings } from "./settings.ts";
@@ -296,6 +298,40 @@ function applyKeepAwake() {
   else if (!settings.keepAwakeEnabled && blockerId !== undefined) { powerSaveBlocker.stop(blockerId); blockerId = undefined; }
 }
 
+// ------------------------------------------------------------------ updates (spec 14.5)
+
+const feedUrl = () => process.env.RIGWELL_UPDATE_URL || settings.updateFeedUrl;
+let lastOffered: string | undefined;
+
+/** Checks the configured feed. `manual` shows every outcome; the automatic check only speaks up for a new version. */
+async function runUpdateCheck(manual: boolean): Promise<UpdateCheck> {
+  const r = await checkForUpdate({ feedUrl: feedUrl(), currentVersion: app.getVersion() });
+  log(`update check: ${r.status}${r.status === "available" ? " " + r.version : ""}`);
+  if (r.status !== "available") {
+    if (manual) void dialog.showMessageBox({ message: "Updates", detail: describeCheck(r) });
+    return r;
+  }
+  if (!manual && lastOffered === r.version) return r;
+  lastOffered = r.version;
+  const canInstall = app.isPackaged && (process.platform !== "linux" || !!process.env.APPIMAGE);
+  const choice = await dialog.showMessageBox({
+    message: "Update available", detail: describeCheck(r),
+    buttons: canInstall ? ["Download and install", "Later"] : r.downloadUrl ? ["Open download", "Later"] : ["OK"], cancelId: 1,
+  });
+  if (choice.response !== 0) return r;
+  if (canInstall) {
+    try {
+      const { autoUpdater } = await import("electron-updater");
+      autoUpdater.setFeedURL({ provider: "generic", url: feedUrl() });
+      autoUpdater.autoDownload = false;
+      autoUpdater.on("update-downloaded", () => autoUpdater.quitAndInstall());
+      await autoUpdater.checkForUpdates();
+      await autoUpdater.downloadUpdate();
+    } catch (e) { void dialog.showMessageBox({ type: "error", message: "The update could not be installed", detail: String(e instanceof Error ? e.message : e) }); }
+  } else if (r.downloadUrl) void shell.openExternal(r.downloadUrl);
+  return r;
+}
+
 // ------------------------------------------------------------------ menu
 
 function buildMenu() {
@@ -308,7 +344,7 @@ function buildMenu() {
       { label: "New Window", accelerator: "CmdOrCtrl+Shift+N", click: () => createWindow() },
       { label: "Settings", accelerator: "CmdOrCtrl+,", click: send("/settings/general") },
       { label: "Copy CLI install command", click: () => { clipboard.writeText("bun install -g rigwell"); } },
-      { label: "Check for Updates", click: () => void dialog.showMessageBox({ message: "Updates", detail: "No update feed is configured for this build." }) },
+      { label: "Check for Updates", click: () => void runUpdateCheck(true) },
       mac ? { role: "close" as const } : { role: "quit" as const, label: "Exit" },
     ] },
     { role: "editMenu" as const },
@@ -349,10 +385,7 @@ function handleDeepLink(raw: string) {
 // ------------------------------------------------------------------ start
 
 function daemonCommand(): string[] {
-  if (process.env.RIGWELL_DAEMON_CMD) return JSON.parse(process.env.RIGWELL_DAEMON_CMD);
-  const bun = process.env.RIGWELL_BUN ?? "bun";
-  const cli = process.env.RIGWELL_CLI ?? resolve(appRoot, "..", "src", "cli", "main.ts");
-  return [bun, cli];
+  return buildDaemonCommand({ env: process.env, packaged: app.isPackaged, resourcesPath: process.resourcesPath, appRoot });
 }
 
 /** Chromium's own background network traffic (component updater, field trials, pings) is not wanted: this app keeps local logs only (spec §14.5). It also stalled startup behind a filtering proxy. */
@@ -409,6 +442,7 @@ async function boot() {
   registerIpc();
   buildMenu();
   applyKeepAwake();
+  if (settings.desktopAutoUpdateEnabled && feedUrl()) setTimeout(() => void runUpdateCheck(false), 15_000).unref();
   createWindow(process.argv.find((a) => a.startsWith("--route="))?.slice(8) ?? "/");
   try { await supervisor.start(); } catch (e) {
     status("failed", (e as Error).message);

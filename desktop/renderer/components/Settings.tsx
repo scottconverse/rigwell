@@ -44,6 +44,7 @@ function General({ s }: { s: DesktopSettings }) {
       <Row label="Open file previews automatically" hint="Show the project's README when the Files tab opens"><input type="checkbox" checked={s.autoOpenFilePreviews} onChange={(e) => void app.updateSettings({ autoOpenFilePreviews: e.target.checked })} /></Row>
       <Row label="Keep running with the screen off" hint="Stops the computer from sleeping while the app is open"><input type="checkbox" checked={s.keepAwakeEnabled} onChange={(e) => void app.updateSettings({ keepAwakeEnabled: e.target.checked })} /></Row>
       <Row label="Check for updates automatically"><input type="checkbox" checked={s.desktopAutoUpdateEnabled} onChange={(e) => void app.updateSettings({ desktopAutoUpdateEnabled: e.target.checked })} /></Row>
+      <Row label="Update feed URL" hint="Folder (or .yml / .json file) that lists the newest version. Empty means no update checks."><input type="url" aria-label="Update feed URL" placeholder="https://example.com/rigwell" defaultValue={s.updateFeedUrl} onBlur={(e) => { if (e.target.value !== s.updateFeedUrl) void app.updateSettings({ updateFeedUrl: e.target.value.trim() }); }} /></Row>
       <h3>Shortcuts</h3>
       {SHORTCUTS.map(([id, label]) => <Row key={id} label={label}><input type="checkbox" aria-label={label} checked={!s.disabledShortcuts.includes(id)} onChange={() => toggleShortcut(id)} /></Row>)}
     </>

@@ -6,19 +6,45 @@
   "main": "dist/main.cjs",
   "scripts": {
     "build": "bun run build.ts",
-    "start": "bun run build.ts && electron ."
+    "start": "bun run build.ts && electron .",
+    "stage": "bun run packaging/stage.ts",
+    "package": "bun run build.ts && bun run packaging/stage.ts && electron-builder --config electron-builder.yml",
+    "package:linux": "bun run build.ts && bun run packaging/stage.ts && electron-builder --config electron-builder.yml --linux",
+    "package:mac": "bun run build.ts && bun run packaging/stage.ts && electron-builder --config electron-builder.yml --mac",
+    "package:win": "RIGWELL_TARGET_PLATFORM=win32 bun run build.ts && bun run packaging/stage.ts && electron-builder --config electron-builder.yml --win",
+    "desktop": "bun run build.ts && bun run packaging/stage.ts && electron-builder --config electron-builder.yml"
   },
   "dependencies": {
+    "@tiptap/core": "3.32.2",
+    "@tiptap/extension-document": "3.32.2",
+    "@tiptap/extension-hard-break": "3.32.2",
+    "@tiptap/extension-paragraph": "3.32.2",
+    "@tiptap/extension-text": "3.32.2",
+    "@tiptap/extensions": "3.32.2",
+    "@tiptap/pm": "3.32.2",
+    "@tiptap/react": "3.32.2",
+    "@types/js-yaml": "^4.0.9",
     "@xterm/addon-fit": "0.10.0",
     "@xterm/xterm": "5.5.0",
+    "electron-updater": "6.6.2",
+    "js-yaml": "^4.1.0",
+    "katex": "0.19.1",
+    "mermaid": "12.2.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
+    "shiki": "4.5.0",
     "ws": "8.18.0"
   },
   "devDependencies": {
+    "@electron/fuses": "1.8.0",
     "@types/react": "19.1.2",
     "@types/react-dom": "19.1.2",
     "@types/ws": "8.5.12",
-    "electron": "42.3.3"
-  }
+    "electron": "42.3.3",
+    "electron-builder": "26.0.12",
+    "playwright": "1.63.0"
+  },
+  "author": "Rigwell contributors",
+  "description": "Rigwell desktop app",
+  "homepage": "https://rigwell.invalid"
 }
