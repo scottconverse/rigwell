@@ -74,6 +74,36 @@ describe("Script behavior", () => {
     expect(r.output).toContain("line199 ");
     expect(r.output).toContain("characters cut");
   });
+  test("the runner does not exit by itself after done, so no output can be lost to an exit race", async () => {
+    const { RUNNER_PATH } = await import("../../src/script/sandbox.ts");
+    const proc = Bun.spawn([process.execPath, RUNNER_PATH], { stdin: "pipe", stdout: "pipe", stderr: "ignore" });
+    (proc.stdin as any).write(JSON.stringify({
+      type: "run", code: "for (let i = 0; i < 300; i++) print('l' + i + ' ' + 'x'.repeat(2000));", inputs: {}, toolNames: [],
+      memoryBytes: 64 * 1024 * 1024, stackBytes: 1024 * 1024, sliceMs: 10_000,
+    }) + "\n");
+    (proc.stdin as any).flush?.();
+    let exited = false;
+    void proc.exited.then(() => { exited = true; });
+    // Deliberately slow reader: the pipe stays full while the child finishes.
+    const dec = new TextDecoder();
+    let buf = "", prints = 0, done = false;
+    for await (const chunk of proc.stdout as ReadableStream<Uint8Array>) {
+      await new Promise((r) => setTimeout(r, 5));
+      buf += dec.decode(chunk, { stream: true });
+      for (const line of buf.split("\n").slice(0, -1)) {
+        const m = JSON.parse(line);
+        if (m.type === "print") prints++;
+        if (m.type === "done") done = true;
+      }
+      buf = buf.slice(buf.lastIndexOf("\n") + 1);
+      if (done) break;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+    expect(exited).toBe(false);
+    proc.kill("SIGKILL");
+    expect(done).toBe(true);
+    expect(prints).toBe(300);
+  });
   test("event cap of 1,024", async () => {
     const r = await run("for (let i = 0; i < 1500; i++) print(i);");
     expect(r.output).toContain("events were dropped");
