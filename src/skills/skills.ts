@@ -1,6 +1,7 @@
 // Skill discovery, parsing, precedence, listing, and the Skill tool core (spec §5.8).
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { BUILTIN_SKILL_DATA } from "./builtin.generated.ts";
 import { PROMPT_TEXT } from "../agent/prompt-text.generated.ts";
 import { render } from "../agent/prompts.ts";
 import { findGitRoot, projectRoot } from "../config/levels.ts";
@@ -39,8 +40,8 @@ export interface Skill {
 }
 
 export interface BuiltinSkill { name: string; description: string; body: string }
-/** The mechanism ships with zero built-in skills (built-in content needs approval, spec §1). */
-export const BUILTIN_SKILLS: BuiltinSkill[] = [];
+/** Built-in skills bundled with the binary (sources: src/skills/builtin/<name>/SKILL.md, generated into builtin.generated.ts). */
+export const BUILTIN_SKILLS: BuiltinSkill[] = BUILTIN_SKILL_DATA;
 
 const NAME_RE = /^[a-z0-9-]+$/;
 const SEMVER = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
