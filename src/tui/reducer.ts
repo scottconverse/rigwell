@@ -581,7 +581,7 @@ function runCommand(s0: TuiState, line: string): Step {
     case "cwd":
       if (!args) return { state: { ...s, items: [...s.items, info(`Folder: ${s.cwd}. Usage: /cwd <dir>`)] }, effects: [] };
       return guard([{ type: "new_session", cwd: args }], `moves to ${args} in a new session`);
-    case "mcp": case "hooks": case "skills": case "commands": case "agents": case "diagnostics": case "statusline": case "automations": case "loop":
+    case "mcp": case "hooks": case "skills": case "commands": case "agents": case "diagnostics": case "statusline": case "automations": case "loop": case "login": case "logout":
       return view(cmd.name as any);
     case "vim": return { state: { ...s, vim: !s.vim, vimMode: "insert", hint: `Vim keys ${s.vim ? "off" : "on"}` }, effects: [] };
     case "themes": {
