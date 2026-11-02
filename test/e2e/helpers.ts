@@ -125,6 +125,7 @@ export class RpcChild {
     });
   }
 
+  /** Await this directly. On Windows, `expect(c.call(...)).rejects/resolves` hangs once a session is open (decision 319). */
   async call(method: string, params: Record<string, unknown>): Promise<any> {
     const id = `t-${++this.n}`;
     this.send({ jsonrpc: "2.0", type: "request", id, method: `rigwell.${method}`, params });

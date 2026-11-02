@@ -22,6 +22,7 @@ maybe("desktop app: trust dialog and ask-user panel", () => {
   let fake: FakeServer, xvfb: ChildProcess | undefined, app: any, page: any;
   let repo: string, home: string, display: string;
   const pageLog: string[] = [];
+  let electronErr = ""; // the Electron process's own stderr (GPU and display errors show here)
   // What the composer looks like when a wait fails: a sent message empties it, so a stuck one shows whether Enter reached the editor.
   const composerState = async () => ({
     editorText: await page.getByLabel("Message").first().innerText().catch(() => "?"),
@@ -29,6 +30,15 @@ maybe("desktop app: trust dialog and ask-user panel", () => {
     composerReady: await page.locator(".composer").first().getAttribute("data-ready").catch(() => "?"),
     documentHasFocus: await page.evaluate(() => document.hasFocus()).catch(() => "?"),
     keydowns: await page.evaluate(() => (window as any).__keys ?? []).catch(() => "?"),
+    // Whether the page draws frames at all: a click waits for two animation frames, and a page with no frames also gets no keys.
+    visibility: await page.evaluate(() => document.visibilityState).catch(() => "?"),
+    animationFrame: await page.evaluate(() => new Promise((r) => { requestAnimationFrame(() => r("ok")); setTimeout(() => r("none in 2 s"), 2_000); })).catch(() => "?"),
+    windows: await app.evaluate(({ BrowserWindow }: any) => BrowserWindow.getAllWindows().map((w: any) => ({
+      visible: w.isVisible(), minimized: w.isMinimized(), focused: w.isFocused(), contentsFocused: w.webContents.isFocused(),
+      bounds: w.getBounds(), url: w.webContents.getURL().slice(0, 80),
+    }))).catch((e: Error) => `? ${e.message}`),
+    gpu: await app.evaluate(({ app: a }: any) => a.getGPUFeatureStatus()).catch(() => "?"),
+    electronStderr: electronErr.slice(-1500),
     pageLog: pageLog.slice(-8),
   });
 
@@ -59,6 +69,7 @@ maybe("desktop app: trust dialog and ask-user panel", () => {
     };
     delete env.NODE_OPTIONS;
     app = await pw._electron.launch({ executablePath: electronBin, args: ["--no-sandbox", desktop, `--route=/?folder=${encodeURIComponent(repo)}`], env, timeout: 60_000 });
+    app.process().stderr?.on("data", (d: Buffer) => { electronErr = (electronErr + d.toString()).slice(-20_000); });
     page = await app.firstWindow();
     page.on("console", (m: any) => { if (["error", "warning"].includes(m.type())) pageLog.push(`${m.type()}: ${m.text().slice(0, 300)}`); });
     page.on("pageerror", (e: Error) => pageLog.push(`pageerror: ${e.message.slice(0, 300)}`));
