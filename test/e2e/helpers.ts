@@ -89,7 +89,10 @@ export class RpcChild {
     });
     this.proc = proc;
     void this.pump();
-    void (async () => { this.stderr = await new Response(proc.stderr as ReadableStream).text(); })();
+    void (async () => { // incremental, so a timeout message shows what the child printed so far
+      const dec = new TextDecoder();
+      for await (const chunk of proc.stderr as ReadableStream<Uint8Array>) this.stderr += dec.decode(chunk, { stream: true });
+    })();
   }
 
   private async pump() {
