@@ -45,6 +45,36 @@ The composer has a searchable model picker, a Normal / Spec / Mission mode menu,
 (defaults to the `runInWorktree` setting). The browser pane can reopen closed tabs, move tabs, step to the next or previous tab and take a screenshot.
 Main process helpers: `desktop/main/user-settings.ts` (masked settings file, trusted folders, setup profiles) and `desktop/main/skills.ts`.
 
+## Packaging, fuses and updates
+
+```
+cd desktop && npm install
+bun run package:linux     # AppImage + deb in desktop/release (also release/linux-unpacked)
+bun run package:mac       # dmg + zip   (config only; must run on macOS)
+bun run package:win       # NSIS        (config only; run on Windows or with wine; set RIGWELL_BUN_BIN to a Windows bun.exe)
+```
+`bun run desktop` is the same as `package` for the host platform. The packaged app carries the bun runtime and the daemon sources in
+`resources/`, and starts its daemon from them. Fuses are flipped in `packaging/fuses.cjs` (decision 285).
+
+Update feed: set `updateFeedUrl` in Settings > General, or `RIGWELL_UPDATE_URL`. The URL is a folder holding `latest-linux.yml`,
+`latest-mac.yml` and `latest.yml` as electron-builder writes them (or one .yml/.yaml/.json file):
+
+```yaml
+version: 1.4.0
+releaseDate: '2026-11-01T00:00:00.000Z'
+releaseNotes: Faster startup
+files:
+  - url: rigwell-1.4.0-x86_64.AppImage   # relative to the feed, or absolute
+    sha512: ...
+    size: 178823051
+```
+Help > Check for Updates compares `version` with the app version.
+
+## Renderer stack
+
+React 19, xterm.js, tiptap (composer), shiki (code), KaTeX (math) and mermaid (diagrams). Markdown: `$x$` and `$$...$$` are math, a
+```mermaid fence is a diagram. TanStack and Jotai are not used (decision 287).
+
 ## Tests
 
-`bun test test/desktop` (no Electron needed except `electron.test.ts`, which skips itself when Electron, Playwright or Xvfb is missing).
+`bun test test/desktop`. The Electron and Chromium tests skip (printing the cause) when Electron, Playwright, Chromium or Xvfb is missing. `packaging.test.ts` needs a built Linux package (`RIGWELL_BUILD_PACKAGE=1` builds one).
