@@ -38,6 +38,14 @@ jobs:
       - name: Install desktop dependencies
         working-directory: desktop
         run: npm ci
+      # npm ci does not always fetch the Electron binary; run its installer when the app bundle is missing.
+      - name: Install the Electron binary
+        working-directory: desktop
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then test -d node_modules/electron/dist/Electron.app/Contents/MacOS || node node_modules/electron/install.js; \
+          else test -f node_modules/electron/dist/electron.exe || node node_modules/electron/install.js; fi
+          ls node_modules/electron/dist | head
       - name: Typecheck
         run: bunx tsc --noEmit -p .
       - name: Tests
