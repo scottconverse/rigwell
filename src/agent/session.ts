@@ -39,7 +39,7 @@ import { schemaProblem, validate } from "./json-schema.ts";
 import {
   createAskUserTool, createStructuredOutputTool, createTaskOutputTool, createTaskStopTool, createTodoWriteTool, renderTodoList,
 } from "../tools/session-tools.ts";
-import { attachSandbox, sandboxStatus, sandboxStatusLabel } from "../sandbox/controller.ts";
+import { attachSandbox, detachSandbox, sandboxStatus, sandboxStatusLabel } from "../sandbox/controller.ts";
 import { autonomyAllowed, clampAutonomy } from "../storage/org.ts";
 import { contextSavingsPercent, handoffLevel, saveHandoff } from "./handoff.ts";
 import { reportFalsePositives, secretFindingsFor } from "../permissions/secretscan.ts";
@@ -747,6 +747,7 @@ export class Session {
       await this.hooks.sessionEnd(reason, Date.now() - this.startedAt, this.messages.length).catch(() => {});
     }
     await this.mcp?.shutdown().catch(() => {});
+    await detachSandbox(this.id).catch(() => {});
   }
 
   /** A note for the user only (hook system messages, notices): stored and sent as create_message, never shown to the model. */
