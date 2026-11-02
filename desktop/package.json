@@ -46,5 +46,6 @@
   },
   "author": "Rigwell contributors",
   "description": "Rigwell desktop app",
-  "homepage": "https://rigwell.invalid"
+  "homepage": "https://rigwell.invalid",
+  "license": "AGPL-3.0-only"
 }

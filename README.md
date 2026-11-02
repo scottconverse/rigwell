@@ -54,3 +54,8 @@ was silent are in [`docs/decisions.md`](docs/decisions.md).
 Rigwell's wire protocol shapes (the JSON-RPC message, notification and settings types) are adapted from the
 type definitions of the Apache-2.0 licensed `@factory/droid-sdk` 0.10.0. See [`NOTICE`](NOTICE). This is an
 attribution only: Rigwell is its own product and uses its own names everywhere else.
+
+## License
+
+Rigwell is licensed under the GNU Affero General Public License v3.0 only (AGPL-3.0-only); see [`LICENSE`](LICENSE).
+Third-party attributions are in [`NOTICE`](NOTICE).
