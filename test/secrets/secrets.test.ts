@@ -12,7 +12,7 @@ import { tmpEnv } from "../storage/helpers.ts";
 
 let env: ReturnType<typeof tmpEnv>;
 const servers: FakeServer[] = [];
-beforeEach(() => { env = tmpEnv(); setCredentialStore(new CredentialStore([new FileBackend()])); });
+beforeEach(() => { process.env.RIGWELL_TRUST_CWD = "1"; env = tmpEnv(); setCredentialStore(new CredentialStore([new FileBackend()])); });
 afterEach(() => { setCredentialStore(undefined); env.cleanup(); });
 afterAll(() => servers.forEach((s) => s.stop()));
 
