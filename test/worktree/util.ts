@@ -1,6 +1,6 @@
 // Helpers for worktree tests: temp git repos with a commit identity set through the environment.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,7 +9,7 @@ Object.assign(process.env, {
   GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null",
 });
 
-export const tmp = (prefix: string) => mkdtempSync(join(tmpdir(), `rigwell-wt-${prefix}-`));
+export const tmp = (prefix: string) => mkdtempSync(join(realpathSync(tmpdir()), `rigwell-wt-${prefix}-`));
 
 export function sh(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", env: process.env }).trim();

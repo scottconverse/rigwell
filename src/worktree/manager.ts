@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { rigwellHome } from "../storage/paths.ts";
-import { CHECKOUT_TIMEOUT_MS, git, gitDirOf, gitOk } from "./git.ts";
+import { CHECKOUT_TIMEOUT_MS, canonicalPath, git, gitDirOf, gitOk } from "./git.ts";
 import { copyWorktreeIncludes, type IncludeResult } from "./include.ts";
 import { CLEANUP_TIMEOUT_MS, SETUP_TIMEOUT_MS, runScript, type ScriptResult } from "./scripts.ts";
 import { findProfile, type SetupProfile } from "./profiles.ts";
@@ -347,7 +347,7 @@ export class WorktreeManager {
         if (!existsSync(path.join(p, ".git"))) continue;
         const meta = await this.readMetaFor(p);
         if (!meta) continue;
-        if (filter?.repoRoot && meta.repoRoot !== filter.repoRoot) continue;
+        if (filter?.repoRoot && canonicalPath(meta.repoRoot) !== canonicalPath(filter.repoRoot)) continue;
         out.push({ ...meta, path: p });
       }
     }

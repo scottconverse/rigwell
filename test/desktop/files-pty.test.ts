@@ -109,7 +109,8 @@ describe("Terminal (spec 17.2)", () => {
       expect(resolveShell("/bin/bash")).toMatch(/bash$/);
       expect(resolveShell("/tmp/evil/bash")).toMatch(/(bash|zsh)$/);
       expect(resolveShell("/tmp/evil/bash")).not.toContain("/tmp/evil");
-      expect(resolveShell("python3")).toMatch(/bash$/);
+      // Unknown shells fall back to the platform default: zsh on macOS, bash elsewhere.
+      expect(resolveShell("python3")).toMatch(process.platform === "darwin" ? /zsh$/ : /bash$/);
     }
     // Windows rules, simulated on any platform: the file name decides, the folder does not, the default is cmd.exe.
     expect(resolveShell("C:\\Tools\\evil\\pwsh.exe", "win32")).toBe("pwsh.exe");

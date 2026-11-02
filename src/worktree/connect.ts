@@ -7,7 +7,7 @@ import { ErrorCodes, RpcError } from "../protocol/rpc.ts";
 import type { RigwellSettings } from "../storage/settings.ts";
 import { WorktreeError, WorktreeManager, resolveRoot, type Lifecycle, type ManagedWorktree } from "./manager.ts";
 import { checkoutBranch, commit, listBranches, push } from "./actions.ts";
-import { repoTopLevel } from "./git.ts";
+import { canonicalPath, repoTopLevel } from "./git.ts";
 import { deleteLocalProfile, listProfiles, readProfileIndex, setLastUsedProfile, type SetupProfile } from "./profiles.ts";
 import { forgetTrusted, markTrusted } from "./trust.ts";
 import { HeadWatcher } from "./watch.ts";
@@ -39,11 +39,11 @@ const heads = new HeadWatcher({
 export const closeHeadWatchers = () => heads.close();
 
 export function managerFor(s: RigwellSettings, log?: (m: string) => void): WorktreeManager {
-  const trusted = new Set(Object.keys(s.trustedFolders ?? {}).map((p) => path.resolve(p)));
+  const trusted = new Set(Object.keys(s.trustedFolders ?? {}).flatMap((p) => [path.resolve(p), canonicalPath(p)]));
   const limit = typeof s.worktreeAutoDeleteLimit === "number" && s.worktreeAutoDeleteLimit >= 0 ? s.worktreeAutoDeleteLimit : 15;
   return new WorktreeManager({
     root: resolveRoot(s.worktreeDirectory, log), autoDeleteLimit: limit, log,
-    isTrusted: (repo) => trusted.has(path.resolve(repo)),
+    isTrusted: (repo) => trusted.has(path.resolve(repo)) || trusted.has(canonicalPath(repo)),
     inUse: (p) => active.has(p),
     trust: { mark: markTrusted, forget: forgetTrusted },
     onRemoved: (e) => { heads.remove(e.path); active.delete(e.path); emit("worktree.removed", { worktreePath: e.path, sessionId: e.sessionId, repoRoot: e.repoRoot, branch: e.branch }); },
@@ -146,7 +146,7 @@ export async function startSessionWorktree(raw: unknown, cwd: string, sessionId:
     active.set(info.path, sessionId);
     void heads.add(info.path).catch(() => {});
     if (req.setupProfile) { try { setLastUsedProfile(top, req.setupProfile); } catch { /* the index is a convenience */ } }
-    const rel = path.relative(top, cwd);
+    const rel = path.relative(top, canonicalPath(cwd));
     const out: SessionWorktree = { manager, info, cwd: rel ? path.join(info.path, rel) : info.path, adopted: false };
     if (req.setupProfile) {
       const r = manager.resolveProfile(info.repoRoot, req.setupProfile);
