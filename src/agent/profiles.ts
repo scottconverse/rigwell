@@ -11,6 +11,7 @@
 //   textVerbosity              low | medium | high      Responses text.verbosity
 //   serviceTier                string                   Responses service_tier (auto, default, flex, priority)
 //   safetyIdentifier           string | true            Responses safety_identifier (true: the session id)
+//   acceptsNone                boolean                  the model accepts reasoning {effort:"none"}, which is then sent as is (spec 4.6.2)
 //   extendedCache              boolean                  Responses prompt_cache_retention "24h", only against OpenAI's own base URL
 import type { ModelConfig, ToolExecutionMode } from "../core/types.ts";
 
@@ -29,6 +30,7 @@ export interface ModelProfile {
   serviceTier?: string;
   safetyIdentifier?: string | true;
   extendedCache?: boolean;
+  acceptsNone?: boolean;
 }
 
 export interface ProfileSettings {
@@ -66,6 +68,7 @@ function overlay(base: ModelProfile, over: unknown): ModelProfile {
   if (typeof over.serviceTier === "string" && over.serviceTier) out.serviceTier = over.serviceTier;
   if (over.safetyIdentifier === true || (typeof over.safetyIdentifier === "string" && over.safetyIdentifier)) out.safetyIdentifier = over.safetyIdentifier as string | true;
   if (typeof over.extendedCache === "boolean") out.extendedCache = over.extendedCache;
+  if (typeof over.acceptsNone === "boolean") out.acceptsNone = over.acceptsNone;
   return out;
 }
 

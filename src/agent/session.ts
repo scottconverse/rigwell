@@ -253,7 +253,7 @@ export function capForModel(content: string, limit: number): string | undefined 
 
 /** Responses API fields a model profile asks for. */
 function openaiFields(p: ModelProfile): ModelRequest["openai"] {
-  const o = { ...(p.textVerbosity ? { textVerbosity: p.textVerbosity } : {}), ...(p.serviceTier ? { serviceTier: p.serviceTier } : {}), ...(p.safetyIdentifier ? { safetyIdentifier: p.safetyIdentifier } : {}), ...(p.extendedCache ? { extendedCache: true } : {}) };
+  const o = { ...(p.textVerbosity ? { textVerbosity: p.textVerbosity } : {}), ...(p.serviceTier ? { serviceTier: p.serviceTier } : {}), ...(p.safetyIdentifier ? { safetyIdentifier: p.safetyIdentifier } : {}), ...(p.extendedCache ? { extendedCache: true } : {}), ...(p.acceptsNone ? { acceptsNone: true } : {}) };
   return Object.keys(o).length ? o : undefined;
 }
 
