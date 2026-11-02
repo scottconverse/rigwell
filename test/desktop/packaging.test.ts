@@ -72,7 +72,7 @@ maybe("Linux package", () => {
       xvfb = spawn("Xvfb", [display, "-screen", "0", "1280x900x24"], { stdio: "ignore" });
       for (let i = 0; i < 50 && !existsSync(`/tmp/.X11-unix/X${display.slice(1)}`); i++) await sleep(100);
     }
-    const env = { ...(process.env as Record<string, string>), RIGWELL_HOME: home, DISPLAY: display };
+    const env: Record<string, string> = { ...(process.env as Record<string, string>), RIGWELL_HOME: home, DISPLAY: display };
     delete env.RIGWELL_DAEMON_CMD; delete env.NODE_OPTIONS;
     app = spawn(exe, ["--no-sandbox"], { env, stdio: ["ignore", "pipe", "pipe"] });
     let log = "";
