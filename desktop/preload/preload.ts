@@ -61,6 +61,17 @@ const api = {
   audio: { onPlay: (cb: Cb<{ kind: string; url?: string; volume: number }>) => on("audio:play", cb) },
   nav: { onGo: (cb: Cb<string>) => on("nav:go", cb) },
   deeplink: { claim: (state: string): Promise<void> => ipcRenderer.invoke("deeplink:claim", state), onMcpCallback: (cb: Cb<{ code: string; state: string }>) => on("deeplink:mcp-callback", cb) },
+  org: { managed: (): Promise<{ managed: boolean; keys: string[]; maxAutonomyLevel?: string }> => ipcRenderer.invoke("org:managed") },
+  dictation: {
+    status: (): Promise<{ ready: boolean; remote: boolean; detected: string[]; message: string }> => ipcRenderer.invoke("dictation:status"),
+    /** WAV bytes (16 kHz mono) in; the transcript, or an error message, out. */
+    transcribe: (audio: Uint8Array): Promise<{ text?: string; error?: string; code?: string }> => ipcRenderer.invoke("dictation:transcribe", audio),
+  },
+  cookies: {
+    profiles: (): Promise<{ key: string; browser: string; name: string; dir: string }[]> => ipcRenderer.invoke("cookies:profiles"),
+    domains: (key: string): Promise<{ domain: string; count: number }[]> => ipcRenderer.invoke("cookies:domains", key),
+    import: (key: string, domains: string[]): Promise<{ imported: number; skipped: number; keySource: string }> => ipcRenderer.invoke("cookies:import", key, domains),
+  },
   zoom: { get: () => webFrame.getZoomLevel(), set: (l: number) => webFrame.setZoomLevel(l) },
   browser: {
     cdpUrl: (): Promise<string | null> => ipcRenderer.invoke("browser:cdpUrl"),

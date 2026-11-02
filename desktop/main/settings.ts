@@ -2,6 +2,7 @@
 // Read synchronously, before the first window exists, so appearance can be applied before first paint (§19.4).
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { DEFAULT_DICTATION, type DictationSettings } from "./dictation.ts";
 
 export type ThemePref = "system" | "light" | "dark";
 export type SoundValue = "off" | "bell" | "ok" | "ack" | { file: string };
@@ -37,6 +38,12 @@ export interface DesktopSettings {
   desktopAutoUpdateEnabled: boolean;
   /** Base URL of the update feed (see update-feed.ts). Empty means no feed. */
   updateFeedUrl: string;
+  /** Ed25519 public key (PEM, or base64 of the raw 32 bytes) that signed Linux updates must verify against. Empty: updates are refused. */
+  updatePublicKey: string;
+  /** Tray / menu-bar item (spec 14.2). */
+  menuBarEnabled: boolean;
+  /** Voice dictation backend (offline first, see dictation.ts). */
+  dictation: DictationSettings;
   locale: string;
   windowZoomLevel: number;
   automationQuitWarningDismissed: boolean;
@@ -56,6 +63,9 @@ export const DEFAULT_SETTINGS: DesktopSettings = {
   keepAwakeEnabled: false,
   desktopAutoUpdateEnabled: true,
   updateFeedUrl: "",
+  updatePublicKey: "",
+  menuBarEnabled: true,
+  dictation: { ...DEFAULT_DICTATION },
   locale: "en",
   windowZoomLevel: 0,
   automationQuitWarningDismissed: false,
@@ -96,6 +106,8 @@ export function sanitize(s: DesktopSettings): DesktopSettings {
   s.sounds.soundVolume = Math.min(100, Math.max(0, Math.round(Number(s.sounds.soundVolume) || 0)));
   if (!["always", "focused", "unfocused"].includes(s.sounds.soundFocusMode)) s.sounds.soundFocusMode = "always";
   if (!["off", "quiet"].includes(s.sounds.subagentSounds)) s.sounds.subagentSounds = "off";
+  if (!["off", "command", "remote"].includes(s.dictation.backend)) s.dictation.backend = "off";
+  for (const k of ["command", "model", "language", "remoteEndpoint", "remoteApiKeyEnv"] as const) if (typeof s.dictation[k] !== "string") s.dictation[k] = "";
   return s;
 }
 

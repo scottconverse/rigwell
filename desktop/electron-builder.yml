@@ -16,6 +16,8 @@ buildDependenciesFromSource: false
 # Everything is bundled into dist/ by build.ts, so no node_modules ship inside the asar.
 files:
   - dist/**
+  - assets/icon.png
+  - assets/tray/**
   - package.json
   - "!node_modules/**"
 # Outside the asar: the bun runtime and the daemon sources (resources/bun, resources/daemon).
@@ -32,12 +34,14 @@ publish:
   provider: generic
   url: https://updates.invalid/rigwell   # replaced at run time by the updateFeedUrl setting; no hosted feed exists
 linux:
+  icon: assets/icons
   target: [AppImage, deb]
   category: Development
   maintainer: Rigwell contributors <rigwell@users.noreply.invalid>
   synopsis: Local coding agent
   artifactName: rigwell-${version}-${arch}.${ext}
 mac:
+  icon: assets/icon.icns
   target: [dmg, zip]
   category: public.app-category.developer-tools
   artifactName: rigwell-${version}-${arch}.${ext}
@@ -45,6 +49,7 @@ mac:
 dmg:
   title: Rigwell ${version}
 win:
+  icon: assets/icon.ico
   target: [nsis]
   artifactName: rigwell-setup-${version}-${arch}.${ext}
 nsis:

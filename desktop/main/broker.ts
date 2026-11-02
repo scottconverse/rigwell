@@ -11,6 +11,8 @@ export interface BrokerHost {
   deliver(windowId: number, channel: string, payload: unknown): void;
   /** An attention event worth acting on (notification, sound, badge). `open` is the set of unanswered requests. */
   onAttention(ev: AttentionEvent, open: AttentionEvent[]): void;
+  /** The set of connections whose agent is working changed (tray icon and tooltip). */
+  onActivity?(active: number): void;
   log?(m: string): void;
 }
 
@@ -19,6 +21,8 @@ interface Conn {
   windowId: number;
   ws: WebSocket;
   sessionId?: string;
+  /** The agent is working on a turn (anything but idle). */
+  working?: boolean;
   /** Requests from the daemon that the window has not answered yet: request id -> method. */
   asked: Map<string, string>;
   ready: Promise<void>;
@@ -35,6 +39,11 @@ export class DaemonBroker {
 
   get connectionCount() { return this.conns.size; }
   get lastStatus() { return this.status; }
+  /** Sessions whose agent is working right now (one per connection). */
+  get activeCount() { let n = 0; for (const c of this.conns.values()) if (c.working) n++; return n; }
+  /** Unanswered requests that need the user. */
+  get attentionCount() { return this.open.size; }
+  private activity() { this.host.onActivity?.(this.activeCount); }
 
   /** Sets and broadcasts the daemon's status ("running", "restarting"...). Late windows ask for the cached value. */
   setStatus(s: { state: string; error?: string }, windows: number[]) {
@@ -59,6 +68,7 @@ export class DaemonBroker {
     ws.addEventListener("close", () => {
       if (this.conns.delete(id)) this.host.deliver(windowId, "daemon:closed", { connId: id });
       this.dropOpen(conn);
+      if (conn.working) this.activity();
     });
     try { await conn.ready; } catch (e) { this.conns.delete(id); throw e; }
     return id;
@@ -85,6 +95,7 @@ export class DaemonBroker {
     if (!c || c.windowId !== windowId) return;
     this.conns.delete(connId);
     this.dropOpen(c);
+    if (c.working) this.activity();
     try { c.ws.close(); } catch {}
   }
 
@@ -118,6 +129,8 @@ export class DaemonBroker {
       if (typeof m.params?.sessionId === "string") c.sessionId = m.params.sessionId;
       if (m.method === "rigwell.session_notification" && c.sessionId) {
         const nested = typeof m.params?.notification?.agentId === "string"; // subagent traffic carries an agent id
+        const n = m.params.notification ?? {};
+        if (!nested && n.type === "agent_working_state_changed") { const w = n.newState !== "idle"; if (w !== !!c.working) { c.working = w; this.activity(); } }
         for (const ev of this.tracker.onNotification(c.sessionId, m.params.notification ?? {})) this.attention(ev, nested);
       }
     } else if (m?.type === "request" && typeof m.method === "string" && typeof m.id === "string") {

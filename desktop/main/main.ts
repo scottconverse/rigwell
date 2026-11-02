@@ -1,6 +1,6 @@
 // Electron main process (spec §14): windows, menu, deep links, the daemon supervisor, the connection broker, the
 // browser pane's CDP proxy, notifications and sounds. All agent work stays in the daemon.
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, Notification, powerSaveBlocker, session, shell, webContents, type IpcMainInvokeEvent, type WebContents } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerSaveBlocker, session, shell, Tray, webContents, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,6 +9,11 @@ import { initialWindowOptions, overlayFor } from "./appearance.ts";
 import { DaemonBroker } from "./broker.ts";
 import { daemonCommand as buildDaemonCommand } from "./daemon-cmd.ts";
 import { checkForUpdate, describeCheck, type UpdateCheck } from "./update-feed.ts";
+import { downloadAndVerify, installAppImage, UpdateRefused } from "./update-verify.ts";
+import { dictationStatus, DictationError, transcribe as transcribeSpeech } from "./dictation.ts";
+import { readOrgManaged } from "./org-managed.ts";
+import { trayModel, type TrayModel } from "./tray.ts";
+import { importFromProfile, listChromeProfiles, listCookieDomains, toElectronCookie, userDataDirs, type ChromeProfile } from "../../src/sidepane/chrome-cookies.ts";
 import { startCdpProxy, type CdpProxy, type PaneHost, type PaneTarget } from "./cdp-proxy.ts";
 import { browserPermission, buildCsp, isAllowedExternal, isTrustedSender, parseDeepLink } from "./security.ts";
 import { loadDesktopSettings, updateDesktopSettings, type DesktopSettings } from "./settings.ts";
@@ -63,6 +68,7 @@ function windowState(): WindowState {
 const toasts = new Map<string, Notification>();
 function onAttention(ev: import("../../src/sidepane/attention.ts").AttentionEvent, open: import("../../src/sidepane/attention.ts").AttentionEvent[]) {
   app.setBadgeCount(badgeCount(open));
+  updateTray();
   if (ev.kind === "attention_resolved") { toasts.get(`session-${ev.sessionId}`)?.close(); return; }
   const w = windowState();
   const n = notificationFor(ev, settings, w);
@@ -94,6 +100,59 @@ async function playSound(a: SoundAction) {
   target?.webContents.send("audio:play", { kind: a.kind, url, volume: a.volume });
 }
 
+// ------------------------------------------------------------------ tray (spec 14.2)
+
+let tray: Tray | undefined;
+let lastTray: TrayModel | undefined;
+const testHooks = process.env.RIGWELL_TEST_HOOKS === "1";
+const openedExternal: string[] = [];
+const trayIcons = new Map<string, Electron.NativeImage>();
+function trayIcon(kind: string) {
+  let img = trayIcons.get(kind);
+  if (!img) {
+    img = nativeImage.createFromPath(join(appRoot, "assets", "tray", `${kind}.png`));
+    const big = join(appRoot, "assets", "tray", `${kind}@2x.png`);
+    try { img.addRepresentation({ scaleFactor: 2, buffer: readFileSync(big) }); } catch { /* the 1x image is enough */ }
+    trayIcons.set(kind, img);
+  }
+  return img;
+}
+const anyVisible = () => [...windows].some((w) => !w.isDestroyed() && w.isVisible() && !w.isMinimized());
+function toggleWindows() {
+  if (anyVisible()) { for (const w of windows) w.hide(); }
+  else if (windows.size) { for (const w of windows) { if (w.isMinimized()) w.restore(); w.show(); } [...windows][0].focus(); }
+  else createWindow();
+  updateTray();
+}
+function trayAction(id: string) {
+  if (id === "toggle") toggleWindows();
+  else if (id === "quit") app.quit();
+}
+function updateTray() {
+  if (!settings.menuBarEnabled) { tray?.destroy(); tray = undefined; lastTray = undefined; return; }
+  const m = trayModel({ visible: anyVisible(), active: broker?.activeCount ?? 0, attention: broker?.attentionCount ?? 0 });
+  lastTray = m;
+  try {
+    if (!tray) {
+      tray = new Tray(trayIcon(m.icon));
+      tray.on("click", () => toggleWindows());
+    }
+    tray.setImage(trayIcon(m.icon));
+    tray.setToolTip(m.tooltip);
+    tray.setContextMenu(Menu.buildFromTemplate(m.items.map((i): Electron.MenuItemConstructorOptions => ("id" in i ? { id: i.id, label: i.label, enabled: i.enabled !== false, click: () => trayAction(i.id) } : { type: "separator" }))));
+  } catch (e) { log(`[tray] unavailable: ${(e as Error).message}`); }
+}
+
+if (testHooks) {
+  // Playwright reads these through electronApp.evaluate. Only present when the test runner asks for them.
+  (globalThis as any).__rigwellTest = {
+    tray: () => ({ ...lastTray, created: !!tray, destroyed: tray?.isDestroyed() ?? true }),
+    trayClick: (id: string) => trayAction(id),
+    opened: () => openedExternal.slice(),
+    visibleWindows: () => [...windows].filter((w) => w.isVisible()).length,
+  };
+}
+
 // ------------------------------------------------------------------ windows
 
 function createWindow(route = "/"): BrowserWindow {
@@ -113,11 +172,13 @@ function createWindow(route = "/"): BrowserWindow {
       additionalArguments: [`--rigwell-boot=${Buffer.from(JSON.stringify(initial.boot)).toString("base64")}`],
       spellcheck: true,
     },
+    ...(process.platform === "linux" ? { icon: join(appRoot, "assets", "icon.png") } : {}),
   });
   windows.add(win);
   slots.set(win, freeSlot(slots.values()));
   const id = win.webContents.id;
-  win.once("ready-to-show", () => { if (b?.maximized) win.maximize(); win.show(); });
+  win.once("ready-to-show", () => { if (b?.maximized) win.maximize(); win.show(); updateTray(); });
+  win.on("show", () => updateTray()); win.on("hide", () => updateTray());
   win.webContents.setWindowOpenHandler(({ url }) => { if (isAllowedExternal(url)) void shell.openExternal(url); return { action: "deny" }; });
   win.webContents.on("will-navigate", (e, url) => { if (!isTrustedSender(url, [APP_PAGE])) { e.preventDefault(); if (isAllowedExternal(url)) void shell.openExternal(url); } });
   // A reload or navigation drops this window's daemon connections; its terminals live on in the daemon (spec 17.2).
@@ -262,7 +323,11 @@ function registerIpc() {
     const r = await dialog.showOpenDialog(w!, { properties: ["openFile"], filters });
     return r.canceled ? null : r.filePaths[0];
   }));
-  ipcMain.handle("shell:openExternal", guard((_e, url: string) => { if (!isAllowedExternal(url)) throw new Error("Link not allowed"); return shell.openExternal(url); }));
+  ipcMain.handle("shell:openExternal", guard((_e, url: string) => {
+    if (!isAllowedExternal(url)) throw new Error("Link not allowed");
+    if (testHooks) { openedExternal.push(url); return; } // the test runner follows the link itself
+    return shell.openExternal(url);
+  }));
   ipcMain.handle("shell:openPath", guard((_e, p: string) => shell.openPath(resolve(p))));
   ipcMain.handle("alerts:test", guard((_e, kind: "awaiting" | "completion") => {
     const a = soundFor({ kind: "attention_requested", requestKind: kind === "awaiting" ? "permission" : "session_completion", sessionId: "test", summary: "", detail: "", at: Date.now() }, { ...settings, sounds: { ...settings.sounds, soundFocusMode: "always" } }, { focused: true });
@@ -273,6 +338,39 @@ function registerIpc() {
     version: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node,
     platform: process.platform, home: HOME, daemon: { state: supervisor.state, pid: supervisor.pid ?? null },
   })));
+
+  // Org-managed settings labels, tray setting, dictation and Chrome cookie import
+  ipcMain.handle("org:managed", guard(() => readOrgManaged()));
+  ipcMain.handle("tray:refresh", guard(() => { updateTray(); }));
+  ipcMain.handle("dictation:status", guard(() => dictationStatus(settings.dictation)));
+  ipcMain.handle("dictation:transcribe", guard(async (_e, audio: unknown) => {
+    if (!(audio instanceof Uint8Array) && !(audio instanceof ArrayBuffer)) throw new Error("audio must be bytes");
+    const bytes = audio instanceof Uint8Array ? audio : new Uint8Array(audio);
+    if (bytes.length > 64 * 1024 * 1024) throw new Error("The recording is too long");
+    try { return { text: await transcribeSpeech(bytes, settings.dictation) }; } catch (e) {
+      if (e instanceof DictationError) return { error: e.message, code: e.code };
+      throw e;
+    }
+  }));
+
+  const chromeRoots = () => process.env.RIGWELL_CHROME_USER_DATA_DIR ? [{ browser: "chrome" as const, dir: process.env.RIGWELL_CHROME_USER_DATA_DIR }] : userDataDirs();
+  const chromeProfile = (key: unknown): ChromeProfile => {
+    const p = listChromeProfiles(chromeRoots()).find((x) => `${x.browser}:${x.dir}` === key);
+    if (!p) throw new Error("That browser profile was not found");
+    return p;
+  };
+  ipcMain.handle("cookies:profiles", guard(() => listChromeProfiles(chromeRoots()).map((p) => ({ key: `${p.browser}:${p.dir}`, browser: p.browser, name: p.name, dir: p.dir }))));
+  ipcMain.handle("cookies:domains", guard((_e, key: unknown) => listCookieDomains(chromeProfile(key).cookiesFile)));
+  // Explicit user action only: the page calls this from the Import button. Only the chosen domains are read, values are never logged.
+  ipcMain.handle("cookies:import", guard(async (_e, key: unknown, domains: unknown) => {
+    if (!Array.isArray(domains) || !domains.length || !domains.every((d) => typeof d === "string" && d.length < 256)) throw new Error("Choose at least one domain");
+    const r = importFromProfile(chromeProfile(key), domains as string[]);
+    const ses = session.fromPartition(BROWSER_PARTITION);
+    let imported = 0, failed = 0;
+    for (const c of r.cookies) { try { await ses.cookies.set(toElectronCookie(c)); imported++; } catch { failed++; } }
+    log(`[cookies] imported ${imported} cookies for ${domains.length} domain(s); ${r.skipped + failed} skipped`);
+    return { imported, skipped: r.skipped + failed, keySource: r.keySource };
+  }));
 
   // Browser pane
   ipcMain.handle("browser:cdpUrl", guard(() => proxy?.url ?? null));
@@ -313,13 +411,30 @@ async function runUpdateCheck(manual: boolean): Promise<UpdateCheck> {
   }
   if (!manual && lastOffered === r.version) return r;
   lastOffered = r.version;
-  const canInstall = app.isPackaged && (process.platform !== "linux" || !!process.env.APPIMAGE);
+  const linux = process.platform === "linux";
+  const canInstall = app.isPackaged && !linux;
   const choice = await dialog.showMessageBox({
     message: "Update available", detail: describeCheck(r),
-    buttons: canInstall ? ["Download and install", "Later"] : r.downloadUrl ? ["Open download", "Later"] : ["OK"], cancelId: 1,
+    buttons: linux ? (r.downloadUrl ? ["Download and verify", "Later"] : ["OK"]) : canInstall ? ["Download and install", "Later"] : r.downloadUrl ? ["Open download", "Later"] : ["OK"], cancelId: 1,
   });
   if (choice.response !== 0) return r;
-  if (canInstall) {
+  if (linux && r.downloadUrl) {
+    // Linux: the artifact is installed only when its Ed25519 signature verifies against the configured public key (update-verify.ts).
+    try {
+      const v = await downloadAndVerify({ url: r.downloadUrl, publicKey: process.env.RIGWELL_UPDATE_PUBLIC_KEY || settings.updatePublicKey, signature: r.signature, sha512: r.sha512, size: r.size, destDir: join(HOME, "updates") });
+      if (process.env.APPIMAGE) {
+        installAppImage(v.path, process.env.APPIMAGE);
+        const again = await dialog.showMessageBox({ message: "Update installed", detail: `Rigwell ${r.version} was verified and installed. Restart to use it.`, buttons: ["Restart now", "Later"], cancelId: 1 });
+        if (again.response === 0) { app.relaunch(); app.quit(); }
+      } else {
+        void dialog.showMessageBox({ message: "Update verified", detail: `The signature of Rigwell ${r.version} verified. It was saved to ${v.path}; install it from there.` });
+        shell.showItemInFolder(v.path);
+      }
+    } catch (e) {
+      log(`update refused: ${(e as Error).message}`);
+      void dialog.showMessageBox({ type: "error", message: e instanceof UpdateRefused ? "The update was not installed" : "The update could not be downloaded", detail: String(e instanceof Error ? e.message : e) });
+    }
+  } else if (canInstall) {
     try {
       const { autoUpdater } = await import("electron-updater");
       autoUpdater.setFeedURL({ provider: "generic", url: feedUrl() });
@@ -390,6 +505,7 @@ function daemonCommand(): string[] {
 
 /** Chromium's own background network traffic (component updater, field trials, pings) is not wanted: this app keeps local logs only (spec §14.5). It also stalled startup behind a filtering proxy. */
 function quietChromium() {
+  if (process.env.RIGWELL_FAKE_AUDIO === "1") for (const sw of ["use-fake-device-for-media-stream", "use-fake-ui-for-media-stream"]) app.commandLine.appendSwitch(sw); // tests: no real microphone
   for (const sw of ["disable-background-networking", "disable-component-update", "disable-sync", "no-pings", "no-default-browser-check"]) app.commandLine.appendSwitch(sw);
   app.commandLine.appendSwitch("disable-features", "OptimizationHints,Translate,MediaRouter,CertificateTransparencyComponentUpdater,AutofillServerCommunication");
 }
@@ -406,6 +522,9 @@ async function boot() {
 
   await app.whenReady();
   setupBrowserSession();
+  // The microphone (voice dictation) is offered to the app's own page only; the browser pane's partition has its own handlers.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb, details) => cb(permission === "media" && isTrustedSender(details.requestingUrl, [APP_PAGE])));
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, origin) => permission === "media" && isTrustedSender(origin, [APP_PAGE]));
 
   // Security: CSP as a response header for dev-server pages (file:// pages carry it in a meta tag), webview limits.
   session.defaultSession.webRequest.onHeadersReceived((d, cb) => {
@@ -428,7 +547,7 @@ async function boot() {
     home: HOME, command: daemonCommand(), log,
     env: { RIGWELL_BROWSER_CDP_PORT: String(proxy.port), NODE_OPTIONS: "" },
   });
-  broker = new DaemonBroker(() => (supervisor.info ? { wsUrl: supervisor.info.wsUrl, token: supervisor.info.token } : undefined), { deliver: sendTo, onAttention, log });
+  broker = new DaemonBroker(() => (supervisor.info ? { wsUrl: supervisor.info.wsUrl, token: supervisor.info.token } : undefined), { deliver: sendTo, onAttention, onActivity: () => updateTray(), log });
   const status = (state: string, error?: string) => broker.setStatus({ state, error }, winIds());
   supervisor.on("state", (s) => status(s));
   supervisor.on("restarting", () => status("restarting"));
@@ -441,6 +560,7 @@ async function boot() {
 
   registerIpc();
   buildMenu();
+  updateTray();
   applyKeepAwake();
   if (settings.desktopAutoUpdateEnabled && feedUrl()) setTimeout(() => void runUpdateCheck(false), 15_000).unref();
   createWindow(process.argv.find((a) => a.startsWith("--route="))?.slice(8) ?? "/");
