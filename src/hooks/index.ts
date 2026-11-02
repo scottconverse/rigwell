@@ -45,6 +45,8 @@ export interface HookRunnerOptions {
   cwd: string;
   permissionMode: () => PermissionModeName;
   notify?: (n: HookNotification) => void;
+  /** Extra variables for every hook command (a session environment). */
+  env?: Record<string, string>;
 }
 
 export class HookRunner {
@@ -59,7 +61,7 @@ export class HookRunner {
   private base() {
     return { session_id: this.o.sessionId, transcript_path: this.o.transcriptPath, cwd: this.o.cwd, permission_mode: this.o.permissionMode() };
   }
-  private opts(extra: object = {}) { return { notify: this.o.notify, ...extra }; }
+  private opts(extra: object = {}) { return { notify: this.o.notify, ...(this.o.env ? { env: this.o.env } : {}), ...extra }; }
 
   async preToolUse(toolName: string, toolInput: Record<string, unknown>, toolCallId?: string, signal?: AbortSignal) {
     const r = await runHooks(this.o.config, "PreToolUse", this.base(), { tool_name: toolName, tool_input: toolInput },

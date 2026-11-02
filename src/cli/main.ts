@@ -18,6 +18,7 @@ const USAGE = `Usage:
   rigwell [tui] [options]        interactive terminal UI (default when no subcommand is given)
   rigwell eval <run|report|tasks> [options]   (see rigwell eval --help)
 
+Sign in with an account plan (OAuth, see docs/auth.md): rigwell auth login <name> [--device] | logout <name> | status
 Credentials: rigwell credential set <name> (value on stdin) | delete <name>; use apiKey "keychain:<name>" in customModels.
 
 Options for exec:
@@ -248,6 +249,7 @@ async function main() {
     log(`stored ${name} in ${storeCredential(name, value)}`);
     process.exit(0);
   }
+  if (cmd === "auth") process.exit(await (await import("../auth/cli.ts")).authMain(argv));
   if (cmd === "eval") return (await import("../eval/cli.ts")).evalMain(argv);
   if (cmd === "daemon") {
     const i = argv.indexOf("--socket");

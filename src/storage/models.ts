@@ -2,6 +2,7 @@
 import type { ModelConfig, ProviderKind, ReasoningEffort } from "../core/types.ts";
 import type { RigwellSettings } from "./settings.ts";
 import { KEYCHAIN_PREFIX, lookupCredential } from "./credentials.ts";
+import { parseOAuthProviders, type OAuthProviderConfig } from "../auth/config.ts";
 
 export interface ModelProblem {
   index: number;
@@ -45,6 +46,7 @@ export function validateCustomModels(
   const problems: ModelProblem[] = [];
   const list = Array.isArray(settings.customModels) ? settings.customModels : [];
   const envs = [env, settings.env ?? {}]; // process env wins over settings.env
+  const oauth = parseOAuthProviders(settings.oauthProviders, env);
   list.forEach((raw, index) => {
     const bad = (message: string) => problems.push({ index, model: typeof raw?.model === "string" ? raw.model : undefined, message });
     if (!raw || typeof raw !== "object") return bad("entry is not an object");
@@ -54,7 +56,16 @@ export function validateCustomModels(
     if (raw.apiProvider !== undefined && (typeof raw.apiProvider !== "string" || !raw.apiProvider.trim())) return bad("apiProvider must be a non-empty string");
     for (const k of ["chatCompletionRequest", "chatCompletionRequestByProvider"] as const)
       if (raw[k] !== undefined && (typeof raw[k] !== "object" || raw[k] === null || Array.isArray(raw[k]))) return bad(`${k} must be an object`);
-    if (typeof raw.baseUrl !== "string" || !/^https?:\/\/\S+$/.test(raw.baseUrl)) return bad("baseUrl must be an http(s) URL");
+    // credentialSource (spec 12.2): a connected account plan instead of a key. Not combinable with apiKey or apiKeyHelper.
+    let provider: OAuthProviderConfig | undefined;
+    if (raw.credentialSource !== undefined) {
+      if (typeof raw.credentialSource !== "string" || !raw.credentialSource.trim()) return bad("credentialSource must be a non-empty string");
+      if (raw.apiKey !== undefined || raw.apiKeyHelper !== undefined) return bad("credentialSource cannot be combined with apiKey or apiKeyHelper");
+      provider = oauth.providers.get(raw.credentialSource);
+      if (!provider) return bad(`credentialSource ${JSON.stringify(raw.credentialSource)} is not a valid entry of oauthProviders${oauth.problems.length ? ` (${oauth.problems.join("; ")})` : ""}`);
+    }
+    const baseUrl = raw.baseUrl === undefined && provider?.apiBaseUrl ? provider.apiBaseUrl : raw.baseUrl;
+    if (typeof baseUrl !== "string" || !/^https?:\/\/\S+$/.test(baseUrl)) return bad("baseUrl must be an http(s) URL");
     if (raw.reasoningEffort !== undefined && !EFFORTS.includes(raw.reasoningEffort)) return bad(`invalid reasoningEffort ${JSON.stringify(raw.reasoningEffort)}`);
     for (const k of ["maxOutputTokens", "maxContextLimit"] as const)
       if (raw[k] !== undefined && !posInt(raw[k])) return bad(`${k} must be a positive integer`);
@@ -100,7 +111,8 @@ export function validateCustomModels(
       model: raw.model,
       displayName,
       provider: raw.provider,
-      baseUrl: raw.baseUrl,
+      baseUrl,
+      ...(provider ? { oauth: provider } : {}),
       ...(apiKey !== undefined ? { apiKey } : {}),
       ...(extraHeaders ? { extraHeaders } : {}),
       ...(raw.extraArgs ? { extraArgs: raw.extraArgs } : {}),

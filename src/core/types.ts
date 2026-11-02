@@ -82,6 +82,8 @@ export interface ModelConfig {
   provider: ProviderKind;
   baseUrl: string;       // e.g. "http://127.0.0.1:4010" (adapter appends /v1/messages or /v1/responses)
   apiKey?: string;       // already env-expanded
+  /** Spec 12.2 credentialSource: the OAuth provider whose token authenticates requests (never together with apiKey). */
+  oauth?: import("../auth/config.ts").OAuthProviderConfig;
   extraHeaders?: Record<string, string>;
   extraArgs?: Record<string, unknown>;
   maxOutputTokens?: number;
