@@ -26,6 +26,9 @@ maybe("desktop app: trust dialog and ask-user panel", () => {
   const composerState = async () => ({
     editorText: await page.getByLabel("Message").first().innerText().catch(() => "?"),
     sendDisabled: await page.locator('button[aria-label="Send"]').first().isDisabled().catch(() => "?"),
+    composerReady: await page.locator(".composer").first().getAttribute("data-ready").catch(() => "?"),
+    documentHasFocus: await page.evaluate(() => document.hasFocus()).catch(() => "?"),
+    keydowns: await page.evaluate(() => (window as any).__keys ?? []).catch(() => "?"),
     pageLog: pageLog.slice(-8),
   });
 
@@ -71,10 +74,24 @@ maybe("desktop app: trust dialog and ask-user panel", () => {
   const composerSend = async (text: string) => {
     await page.locator(".composer[data-ready=true]").first().waitFor({ timeout: 30_000 });
     const ta = page.getByLabel("Message").first();
+    // Records every keydown the page sees, so a failure shows whether Enter arrived and whether the editor handled it.
+    await page.evaluate(() => {
+      const w = window as any;
+      if (w.__keys) return;
+      w.__keys = [];
+      document.addEventListener("keydown", (e) => w.__keys.push(`${e.key} prevented=${e.defaultPrevented} composing=${e.isComposing}`), false);
+    });
     await ta.fill(text);
     // Enter before the editor's state has caught up with the typed text would send nothing; the Send button turns on when it has.
     await page.locator('button[aria-label="Send"]:not([disabled])').first().waitFor({ timeout: 10_000 });
     await ta.press("Enter");
+    // A sent message empties the composer. If the key did not do that (the CI runner has shown Enter being ignored although
+    // the Send button was on), the Send button is the same action, so use it and say so in the log.
+    const cleared = await page.waitForFunction(() => !(document.querySelector('[aria-label="Message"]') as HTMLElement | null)?.innerText.trim(), undefined, { timeout: 5_000 }).then(() => true, () => false);
+    if (!cleared) {
+      console.log(`[Enter did not send; clicking Send]\n${JSON.stringify(await composerState())}`);
+      await page.locator('button[aria-label="Send"]:not([disabled])').first().click();
+    }
   };
 
   test("starting a session in an untrusted folder asks; Trust folder remembers it and the session goes on", async () => {
