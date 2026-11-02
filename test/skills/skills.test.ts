@@ -15,7 +15,7 @@ function skill(root: string, folder: string, fm: string, body = BODY, sub = ".ri
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, "SKILL.md"), `---\n${fm}\n---\n${body}\n`);
 }
-const load = (extra: object = {}) => new SkillRegistry({ cwd: proj, homeDir: env.home, ...extra }).load();
+const load = (extra: object = {}) => new SkillRegistry({ cwd: proj, homeDir: env.home, builtins: [], ...extra }).load();
 
 test("parse: valid, invalid name, empty body, bad schema, kv fallback, tools alias", () => {
   const ok = parseSkillFile("/x/SKILL.md", `---\nname: do-it\ndescription: Does it\nallowed-tools: Read, Grep\nversion: 1.2.3\n---\n${BODY}`, "project-dir");
@@ -113,7 +113,7 @@ test("dynamic discovery walks from the git root to the touched path, once", () =
   expect(runSkill(r, { name: "deepskill" }).name).toBe("deepskill");
 });
 
-test("built-in mechanism: injected builtins appear and lose to project skills; zero shipped", () => {
+test("built-in mechanism: injected builtins appear and lose to project skills", () => {
   expect(load().all).toEqual([]);
   skill(proj, "dup", "name: dup\ndescription: project dup");
   const r = load({ builtins: [{ name: "dup", description: "builtin dup", body: BODY }, { name: "bi", description: "builtin", body: BODY }] });

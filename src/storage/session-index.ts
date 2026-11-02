@@ -1,13 +1,14 @@
 // Local session index (spec 12.1 "Local search index"): a rebuildable SQLite cache of the transcripts that feeds the picker.
 // The .jsonl and .settings.json files stay the source of truth. Migrations are .sql files with a checksum ledger.
-// Spans, bloom filters and vectors (search) are not built.
+// Search data (spans, bloom filters) is written by the same ingest; vectors by session-search.ts.
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { projectSlug, rigwellHome, sessionsDir } from "./paths.ts";
+import { buildBloom, chunkText, proseOf, sha256, tokenize } from "./search-text.ts";
 
-export const INGEST_SCHEMA_VERSION = 1;
+export const INGEST_SCHEMA_VERSION = 2;
 
 export class SessionIndexError extends Error {}
 
@@ -133,8 +134,11 @@ export function ingestTranscript(db: Database, projectKey: string, file: string)
   const current = prev && row0 && prev.schema_version === INGEST_SCHEMA_VERSION;
   if (current && prev.transcript_size === st.size && prev.transcript_mtime_ms === st.mtimeMs && settingsSame && row0!.project_key === projectKey) return false;
 
-  const restart = !current || st.size < prev.transcript_offset;
+  const restart = !current || st.size < prev.transcript_offset || prev.span_tail_offset !== prev.transcript_offset;
   let offset = restart ? 0 : prev.transcript_offset;
+  let tailLine = restart ? 0 : prev.span_tail_line;
+  let spanIndex = restart ? 0 : prev.span_tail_index;
+  const newSpans: { index: number; lineStart: number; lineEnd: number; text: string; eventId: string | null }[] = [];
   let skipped = restart ? 0 : prev.transcript_skipped_lines;
   let messages = restart ? 0 : prev.transcript_messages_count;
   const row: Row = restart || !row0
@@ -156,6 +160,7 @@ export function ingestTranscript(db: Database, projectKey: string, file: string)
       const line = chunk.toString("utf8", start, nl);
       start = nl + 1;
       sawLine = true;
+      tailLine++;
       if (!line.trim()) continue;
       let o: any;
       try { o = JSON.parse(line); } catch { skipped++; continue; }
@@ -174,6 +179,8 @@ export function ingestTranscript(db: Database, projectKey: string, file: string)
         row.title = o.title;
       } else if (o.type === "message") {
         messages++;
+        const prose = proseOf(o);
+        if (prose) for (const text of chunkText(prose)) newSpans.push({ index: spanIndex++, lineStart: tailLine, lineEnd: tailLine, text, eventId: typeof o.id === "string" ? o.id : null });
         if (!visible && visibleUser(o)) {
           visible = true;
           const text = Array.isArray(o.message.content) ? o.message.content.find((b: any) => b?.type === "text")?.text : "";
@@ -201,6 +208,7 @@ export function ingestTranscript(db: Database, projectKey: string, file: string)
   if (row.last_event_at === null) row.last_event_at = Math.floor(st.mtimeMs);
 
   db.transaction(() => {
+    if (restart) db.query("DELETE FROM session_spans WHERE session_id = ?").run(id);
     db.query(
       `INSERT INTO sessions (session_id, project_key, cwd, title, owner, parent, calling_session_id, calling_tool_use_id, mission, tags, has_user_visible_messages,
          archived_at, first_event_at, last_event_at, messages_count, host_id, worktree, pinned, preview, transcript_path)
@@ -214,18 +222,32 @@ export function ingestTranscript(db: Database, projectKey: string, file: string)
     ).run(Object.fromEntries(Object.entries(row).map(([k, v]) => ["$" + k, v])) as any);
     db.query(
       `INSERT INTO session_ingest (session_id, transcript_mtime_ms, transcript_size, transcript_offset, transcript_skipped_lines, transcript_messages_count,
-         settings_mtime_ms, settings_size, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         settings_mtime_ms, settings_size, schema_version,
+         span_tail_offset, span_tail_line, span_tail_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(session_id) DO UPDATE SET transcript_mtime_ms=excluded.transcript_mtime_ms, transcript_size=excluded.transcript_size,
          transcript_offset=excluded.transcript_offset, transcript_skipped_lines=excluded.transcript_skipped_lines,
          transcript_messages_count=excluded.transcript_messages_count, settings_mtime_ms=excluded.settings_mtime_ms,
-         settings_size=excluded.settings_size, schema_version=excluded.schema_version`,
-    ).run(id, st.mtimeMs, st.size, offset, skipped, messages, sst ? sst.mtimeMs : -1, sst ? sst.size : -1, INGEST_SCHEMA_VERSION);
+         settings_size=excluded.settings_size, schema_version=excluded.schema_version, span_tail_offset=excluded.span_tail_offset,
+         span_tail_line=excluded.span_tail_line, span_tail_index=excluded.span_tail_index`,
+    ).run(id, st.mtimeMs, st.size, offset, skipped, messages, sst ? sst.mtimeMs : -1, sst ? sst.size : -1, INGEST_SCHEMA_VERSION, offset, tailLine, spanIndex);
+    if (newSpans.length || restart) {
+      const ins = db.query("INSERT INTO session_spans (session_id, span_index, line_start, line_end, text, first_event_id, last_event_id, text_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+      for (const sp of newSpans) ins.run(id, sp.index, sp.lineStart, sp.lineEnd, sp.text, sp.eventId, sp.eventId, sha256(sp.text));
+      const words = new Set<string>();
+      for (const r of db.query("SELECT text FROM session_spans WHERE session_id = ?").all(id) as { text: string }[]) for (const w of tokenize(r.text)) words.add(w);
+      db.query("INSERT INTO session_term_filters (session_id, filter) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET filter = excluded.filter").run(id, buildBloom(words));
+    }
   })();
   return true;
 }
 
 /** Ingests every transcript in the project folder(s) and drops rows whose file is gone. `projectKey` limits the scan to one folder. */
 export function refreshIndex(db: Database, projectKey?: string): void {
+  if (projectKey === undefined) {
+    const set = db.query("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+    set.run("last_full_refresh_at", String(Date.now()));
+    set.run("last_full_refresh_schema_version", String(INGEST_SCHEMA_VERSION));
+  }
   const root = sessionsDir();
   const keys: string[] = [];
   if (projectKey !== undefined) keys.push(projectKey);

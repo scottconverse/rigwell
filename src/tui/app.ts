@@ -15,7 +15,7 @@ import { parseKeys, PASTE_OFF, PASTE_ON } from "./keys.ts";
 import { readClipboardImage } from "./clipboard.ts";
 import { render, stripAnsi } from "./render.ts";
 import { initialState, reduce } from "./reducer.ts";
-import type { Effect, TuiEvent, TuiState } from "./types.ts";
+import type { DisplaySettings, Effect, TuiEvent, TuiState } from "./types.ts";
 
 export interface TuiOptions {
   cwd: string;
@@ -68,6 +68,23 @@ export async function runTui(opts: TuiOptions): Promise<number> {
   let focused: boolean | undefined;
   let progress: "working" | "waiting" | "idle" = "idle";
   const settingsNow = () => loadSettings({ cwd, runtimeSettingsPath: opts.settingsPath }).settings as Record<string, any>;
+  /** Display settings (diffMode, todoDisplayMode, toolResultDisplay, outputStyle, showThinkingInMainView, streamAssistantResponses) and the org-managed keys. */
+  function pushDisplay() {
+    const l = loadSettings({ cwd, runtimeSettingsPath: opts.settingsPath });
+    const s = l.settings;
+    const display: Partial<DisplaySettings> = {};
+    if (s.diffMode === "github" || s.diffMode === "unified") display.diffMode = s.diffMode;
+    if (s.todoDisplayMode === "pinned" || s.todoDisplayMode === "inline") display.todoDisplayMode = s.todoDisplayMode;
+    if (s.toolResultDisplay === "expanded" || s.toolResultDisplay === "compact") display.toolResultDisplay = s.toolResultDisplay;
+    if (typeof s.outputStyle === "string" && s.outputStyle) display.outputStyle = s.outputStyle;
+    if (typeof s.streamAssistantResponses === "boolean") display.streamAssistantResponses = s.streamAssistantResponses;
+    const max = s.maxAutonomyLevel;
+    dispatch({
+      type: "display", display, managed: l.managedKeys,
+      ...(typeof s.showThinkingInMainView === "boolean" ? { showThinking: s.showThinkingInMainView } : {}),
+      ...(max === "off" || max === "low" || max === "medium" || max === "high" ? { maxAutonomy: max } : {}),
+    });
+  }
   const setProgress = () => {
     const next = state.panels.some((p) => p.action.type === "request") ? "waiting" : state.running ? "working" : "idle";
     if (next !== progress) { progress = next; if (tty) stdout.write(progressSequence(next)); }
@@ -112,6 +129,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
       if (typeof rid === "string") waiting.set(rid, (answer) => { void c.request("answer_request", { requestId: rid, answer }).catch(() => {}); });
     }
     dispatch({ type: "session_ready", result, fresh: true });
+    pushDisplay();
     void refreshExtras();
   }
 
@@ -151,6 +169,14 @@ export async function runTui(opts: TuiOptions): Promise<number> {
           return;
         }
         case "resume": await switchTo({}, eff.sessionId); return;
+        case "handoff": await switchTo({ ...(opts.sessionParams ?? {}), specHandoffId: eff.specHandoffId, autonomyLevel: undefined }); return;
+        case "btw": {
+          // Side chat (spec 17.4): a hidden fork answers; the main session is not touched. Needs the side pane methods
+          // (in-process TUI and the daemon both have them).
+          try { await client!.request("daemon.side_chat_ask", { question: eff.question }); }
+          catch (e) { info(/not found|unknown method/i.test(errText(e)) ? "/btw is not available on this connection." : `/btw: ${errText(e)}`, "error"); }
+          return;
+        }
         case "list_sessions": {
           // rigwell.list_sessions hides subagent and empty sessions (spec §12.1); fall back to a local scan when it is missing.
           let list: { id: string; title?: string; updatedAt?: string; pinned?: boolean }[];

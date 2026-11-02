@@ -98,7 +98,7 @@ test("spec mode: ExitSpecMode only while on and interactive; approval saves the 
   expect(requests[0]!.tools.map((t) => t.name)).toContain("Create"); // plan files can be written even at autonomy off
   expect(asked[0].toolUses[0].confirmationType).toBe("exit_spec_mode");
   expect(asked[0].toolUses[0].details).toMatchObject({ plan: "# Plan\n1. fix it", title: "Fix greet" });
-  expect(asked[0].options.map((o: any) => o.value)).toEqual(["proceed_once", "proceed_auto_run_low", "proceed_auto_run_medium", "proceed_auto_run_high", "proceed_edit", "cancel"]);
+  expect(asked[0].options.map((o: any) => o.value)).toEqual(["proceed_once", "proceed_auto_run_low", "proceed_auto_run_medium", "proceed_auto_run_high", "proceed_edit", "proceed_new_session", "proceed_new_session_low", "proceed_new_session_medium", "proceed_new_session_high", "cancel"]);
   expect(session.settings).toMatchObject({ interactionMode: "auto", autonomyLevel: "medium" });
   expect(flat(requests[1]!)).toContain("Spec mode has ended");
   const docs = path.join(cwd, ".rigwell", "docs");

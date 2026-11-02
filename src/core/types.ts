@@ -56,6 +56,8 @@ export interface Message {
   /** Set on turns the router picked the model for ("auto"). */
   routerId?: string;
   openaiReasoning?: OpenAIReasoning[];
+  /** OpenAI Responses `phase` of the assistant message (e.g. "commentary", "final_answer"); stored as `openaiPhase` (spec 12.1). */
+  openaiPhase?: string;
 }
 
 export interface TokenUsage {
@@ -72,7 +74,23 @@ export const zeroUsage = (): TokenUsage => ({
 
 // ---------- Models ----------
 
-export type ProviderKind = "anthropic" | "openai" | "generic-chat-completion-api";
+export type ProviderKind = "anthropic" | "openai" | "generic-chat-completion-api" | "google" | "bedrock-converse";
+
+/** AWS settings of a Bedrock model (spec 12.2 `bedrock`). Secret fields: awsBearerToken, awsSecretAccessKey, awsSessionToken, awsAuthRefresh, awsCredentialExport. */
+export interface BedrockConfig {
+  awsRegion: string;
+  /** Absent: bearer when a token (awsBearerToken or the model apiKey) is set, else access keys, else profile. */
+  awsAuthMethod?: "bearer-token" | "access-keys" | "profile" | "credentials-command";
+  awsProfile?: string;
+  awsBearerToken?: string;
+  awsAccessKeyId?: string;
+  awsSecretAccessKey?: string;
+  awsSessionToken?: string;
+  /** Shell command that prints credentials (JSON with AccessKeyId/SecretAccessKey/SessionToken, or `export AWS_...=` lines). */
+  awsCredentialExport?: string;
+  /** Shell command run once (for example an SSO login) when the credential export fails, then the export is tried again. */
+  awsAuthRefresh?: string;
+}
 
 /** One resolved model (from settings `customModels`, spec §12.2). */
 export interface ModelConfig {
@@ -82,6 +100,8 @@ export interface ModelConfig {
   provider: ProviderKind;
   baseUrl: string;       // e.g. "http://127.0.0.1:4010" (adapter appends /v1/messages or /v1/responses)
   apiKey?: string;       // already env-expanded
+  /** Spec 12.2 credentialSource: the OAuth provider whose token authenticates requests (never together with apiKey). */
+  oauth?: import("../auth/config.ts").OAuthProviderConfig;
   extraHeaders?: Record<string, string>;
   extraArgs?: Record<string, unknown>;
   maxOutputTokens?: number;
@@ -99,6 +119,8 @@ export interface ModelConfig {
   /** Chat Completions body overrides: model level, and per api-provider (applied last). */
   chatCompletionRequest?: Record<string, unknown>;
   chatCompletionRequestByProvider?: Record<string, Record<string, unknown>>;
+  /** AWS settings: required for bedrock-converse; on an `openai` or `anthropic` model they select the Bedrock variants (spec 4.6.10). */
+  bedrock?: BedrockConfig;
 }
 
 /** A tool as sent to the model. */
@@ -111,6 +133,11 @@ export interface ToolSpec {
 export interface ModelRequest {
   model: ModelConfig;
   sessionId: string;
+  /**
+   * Explicit prompt cache key (spec 4.6.5); the Responses and Chat adapters send `cacheKey ?? sessionId` as prompt_cache_key.
+   * A side-chat fork sets it to its parent session id so both share the cached prefix without sharing any session state (spec 17.4).
+   */
+  cacheKey?: string;
   /** System blocks in order (identity line, base prompt, ...). */
   system: string[];
   tools: ToolSpec[];
@@ -124,7 +151,7 @@ export interface ModelRequest {
   /** Stream guards (spec §4.2). Absent: the adapter defaults (no idle limit, 10 minute hard limit). */
   limits?: { idleTimeoutMs?: number; hardLimitMs?: number };
   /** Responses API request fields from the model profile (spec 4.6.2). */
-  openai?: { textVerbosity?: string; serviceTier?: string; safetyIdentifier?: string | boolean; extendedCache?: boolean };
+  openai?: { textVerbosity?: string; serviceTier?: string; safetyIdentifier?: string | boolean; extendedCache?: boolean; acceptsNone?: boolean };
 }
 
 /**
@@ -144,6 +171,8 @@ export type StreamEvent =
       stopReason: "end_turn" | "tool_use" | "max_tokens" | "other";
       usage: TokenUsage;
       openaiReasoning?: OpenAIReasoning[];
+      /** The adapter sets this from the Responses output item `phase`, when the provider sent one. */
+      openaiPhase?: string;
     };
 
 export type ModelErrorKind =
@@ -260,7 +289,7 @@ export interface PermissionContext {
   cwd: string;
 }
 
-export type ConfirmationType = "edit" | "create" | "exec" | "mcp_tool" | "exit_spec_mode" | "apply_patch" | "fetch_url" | "recommend_mission" | "upgrade_model";
+export type ConfirmationType = "edit" | "create" | "exec" | "mcp_tool" | "exit_spec_mode" | "apply_patch" | "fetch_url" | "recommend_mission" | "upgrade_model" | "secret_scan_violation";
 
 export type ToolExecutionMode = "direct_only" | "script_only";
 

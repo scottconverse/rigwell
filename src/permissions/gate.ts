@@ -71,6 +71,8 @@ export function decide(tool: string, input: Record<string, unknown>, ctx: Permis
     // always asks, so an unattended run (which cannot prompt) cannot make or change automations.
     case "ListAutomations":
     case "ReadAutomation":
+    case "ListAutomationTemplates":
+    case "PreviewSchedule":
       return { decision: "allow" };
     case "Loop":
       if (input.action === "list") return { decision: "allow" };

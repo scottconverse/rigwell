@@ -1,9 +1,11 @@
 // Pure TUI reducer: (state, event) -> {state, effects}. No I/O, no clock, no randomness (spec §13).
 import { AUTONOMY_HELP, COMMANDS, KEY_HELP, findCommand, matchCommands } from "./commands.ts";
 import { expandEntry, parseLoop } from "./customcmd.ts";
-import { plainStyler, transcriptLines } from "./transcript.ts";
+import { plainStyler, transcriptLines, transcriptOpts } from "./transcript.ts";
+import { diffBody } from "./diff.ts";
+import { managedLabel } from "../storage/org.ts";
 import { formatContext, type ContextStats } from "./context.ts";
-import { OTHER_LABEL, OTHER_VALUE, type Effect, type Item, type Key, type Panel, type Step, type TuiEvent, type TuiState } from "./types.ts";
+import { DEFAULT_DISPLAY, OTHER_LABEL, OTHER_VALUE, type DisplaySettings, type Effect, type Item, type Key, type Panel, type Step, type TuiEvent, type TuiState } from "./types.ts";
 
 export interface InitOptions {
   version?: string; cwd: string; homeDir?: string; idPrefix?: string; agentsMd?: boolean;
@@ -22,7 +24,7 @@ export function initialState(o: InitOptions): TuiState {
     working: "idle", running: false, now: 0, contextUsed: 0, contextLimit: 0, tokenUsage: zeroUsage(), turns: 0,
     items: [], detailed: false, showThinking: false, input: { text: "", cursor: 0 }, history: [], historyIndex: null, draft: "",
     shellMode: false, vim: false, vimMode: "insert", theme: o.theme ?? "dark", autoCompress: true, menuIndex: 0, menuDismissed: false,
-    atMenu: null, panels: [], sandbox: false, images: [], overlay: null, pending: { steer: [], queue: [] }, lastEscAt: -1e9, lastCtrlCAt: -1e9, quit: false,
+    atMenu: null, panels: [], sandbox: false, images: [], display: { ...DEFAULT_DISPLAY }, managed: [], todos: [], overlay: null, pending: { steer: [], queue: [] }, lastEscAt: -1e9, lastCtrlCAt: -1e9, quit: false,
   };
 }
 
@@ -88,38 +90,27 @@ function moveLine(i: Input, dir: -1 | 1): Input | null {
 
 // ---------------------------------------------------------------- panels
 
-function diffLines(oldC: string | undefined, newC: string | undefined): string[] {
-  const a = (oldC ?? "").split("\n"), b = (newC ?? "").split("\n");
-  if (oldC === undefined) return b.map((l) => "+ " + l);
-  let p = 0;
-  while (p < a.length && p < b.length && a[p] === b[p]) p++;
-  let e = 0;
-  while (e < a.length - p && e < b.length - p && a[a.length - 1 - e] === b[b.length - 1 - e]) e++;
-  return [
-    ...a.slice(Math.max(0, p - 2), p).map((l) => "  " + l),
-    ...a.slice(p, a.length - e).map((l) => "- " + l),
-    ...b.slice(p, b.length - e).map((l) => "+ " + l),
-    ...a.slice(a.length - e, a.length - e + 2).map((l) => "  " + l),
-  ];
+function diffLines(oldC: string | undefined, newC: string | undefined, display: DisplaySettings = DEFAULT_DISPLAY, path = ""): string[] {
+  return diffBody(oldC, newC, display.diffMode, path);
 }
 
-function describeUse(u: any): { group: string; line: string; detail: string[] } {
+function describeUse(u: any, display: DisplaySettings): { group: string; line: string; detail: string[] } {
   const d = u.details ?? {};
   const t = u.confirmationType;
   if (t === "exec") return { group: "Commands", line: String(d.fullCommand ?? d.command ?? ""), detail: [] };
-  if (t === "edit" || t === "apply_patch") return { group: "File Edits", line: String(d.filePath ?? d.fileName ?? u.toolUse?.name), detail: diffLines(d.oldContent, d.newContent) };
-  if (t === "create") return { group: "File Creations", line: String(d.filePath ?? d.fileName), detail: diffLines(undefined, d.content) };
+  if (t === "edit" || t === "apply_patch") return { group: "File Edits", line: String(d.filePath ?? d.fileName ?? u.toolUse?.name), detail: diffLines(d.oldContent, d.newContent, display, String(d.fileName ?? "")) };
+  if (t === "create") return { group: "File Creations", line: String(d.filePath ?? d.fileName), detail: diffLines(undefined, d.content, display, String(d.fileName ?? "")) };
   return { group: "Other", line: `${t}: ${u.toolUse?.name ?? ""}`, detail: [] };
 }
 
-export function permissionPanel(id: string, params: any): Panel {
+export function permissionPanel(id: string, params: any, display: DisplaySettings = DEFAULT_DISPLAY): Panel {
   const uses: any[] = params.toolUses ?? [];
   const opts: { label: string; value: string }[] = (params.options ?? []).map((o: any) => ({ label: String(o.label), value: String(o.value) }));
   const base = { id, action: { type: "request" as const, requestId: id, method: "request_permission" as const }, selected: 0, checked: [] as number[] };
   if (uses.length > 1) {
     const groups = new Map<string, string[]>();
     for (const u of uses) {
-      const x = describeUse(u);
+      const x = describeUse(u, display);
       groups.set(x.group, [...(groups.get(x.group) ?? []), "  " + x.line, ...x.detail.map((l) => "    " + l)]);
     }
     const body: string[] = [];
@@ -139,7 +130,7 @@ export function permissionPanel(id: string, params: any): Panel {
     }
     case "edit": case "apply_patch": case "create": {
       const verb = u.confirmationType === "create" ? "Create" : u.confirmationType === "edit" ? "Edit" : "Patch";
-      const body = u.confirmationType === "create" ? diffLines(undefined, d.content) : diffLines(d.oldContent, d.newContent);
+      const body = u.confirmationType === "create" ? diffLines(undefined, d.content, display, String(d.fileName ?? "")) : diffLines(d.oldContent, d.newContent, display, String(d.fileName ?? ""));
       if (d.riskLevelReason) body.unshift(`Why this needs approval: ${d.riskLevelReason}`, "");
       return { ...base, kind: "permission", title: `${verb} ${d.fileName ?? d.filePath ?? ""}`.trim(), body, options: opts };
     }
@@ -150,7 +141,17 @@ export function permissionPanel(id: string, params: any): Panel {
     }
     case "exit_spec_mode": {
       const plan = String(d.plan ?? d.specContent ?? d.content ?? "");
-      return { ...base, kind: "exit_spec", title: d.title ? `Specification for approval: ${d.title}` : "Specification for approval", body: plan.split("\n"), savePath: d.filePath ?? d.path, options: opts };
+      // Handoff options show how much of the context a new session saves (spec 5.5.7).
+      const saved = typeof d.contextSavingsPercent === "number" ? ` (${d.contextSavingsPercent}% context saved)` : "";
+      const options = opts.map((o) => (o.value.startsWith("proceed_new_session") ? { ...o, label: o.label + saved } : o));
+      return { ...base, kind: "exit_spec", title: d.title ? `Specification for approval: ${d.title}` : "Specification for approval", body: plan.split("\n"), savePath: d.filePath ?? d.path, options };
+    }
+    case "secret_scan_violation": {
+      // Secret-scan prompt (spec 13.4): the command, then what was found where. The secret itself is never shown.
+      const found: any[] = Array.isArray(d.findings) ? d.findings : [];
+      const body = [String(d.fullCommand ?? d.command ?? ""), "", `${d.count ?? found.length} possible secret${(d.count ?? found.length) === 1 ? "" : "s"} in the changes to commit:`,
+        ...found.map((f) => `  ${f.description ?? f.rule}  ${f.file || "(unnamed)"}:${f.line}  ${f.preview ?? ""}`)];
+      return { ...base, kind: "permission", title: String(d.title ?? "Possible secrets in the changes to commit"), body, options: opts };
     }
     case "script": {
       const body = (d.calls ?? []).map((c: any) => `line ${c.line}: ${c.toolName} ${JSON.stringify(c.toolInput ?? {})}`);
@@ -245,7 +246,9 @@ function finishPanel(s: TuiState, panel: Panel, picked: number[]): Step {
     }
     const comment = panel.comment?.trim();
     const edited = panel.kind === "exit_spec" && value[0] === "proceed_edit" ? panel.editedSpec : undefined;
-    return { state, effects: [{ type: "answer", requestId: a.requestId, method: a.method, result: { selectedOption: value[0], ...(comment ? { comment } : {}), ...(edited !== undefined ? { editedSpecContent: edited } : {}) } }] };
+    // This client starts the new session itself when a handoff is chosen (spec 3.1.8 clientStartsHandoffSession).
+    const handoff = panel.kind === "exit_spec" && String(value[0]).startsWith("proceed_new_session");
+    return { state, effects: [{ type: "answer", requestId: a.requestId, method: a.method, result: { selectedOption: value[0], ...(comment ? { comment } : {}), ...(edited !== undefined ? { editedSpecContent: edited } : {}), ...(handoff ? { clientStartsHandoffSession: true } : {}) } }] };
   }
   if (a.method === "request_trust") return { state, effects: [{ type: "answer", requestId: a.requestId, method: a.method, result: { trust: value[0] === "trust" } }] };
   if (a.method === "pick_options") return { state, effects: [{ type: "answer", requestId: a.requestId, method: a.method, result: { selectedIds: value } }] };
@@ -402,6 +405,23 @@ function notification(s: TuiState, n: { type: string; [k: string]: any }): Step 
       const l = n.lastCallTokenUsage;
       return { state: { ...s, tokenUsage: { ...s.tokenUsage, ...(n.tokenUsage ?? {}) }, contextUsed: l ? (l.inputTokens ?? 0) + (l.cacheReadTokens ?? 0) : s.contextUsed }, effects: [] };
     }
+    case "todo_state_changed": {
+      const todos = (Array.isArray(n.todos) ? n.todos : []).filter((t: any) => t && typeof t.content === "string").map((t: any) => ({ id: t.id, content: t.content, status: t.status }));
+      if (s.display.todoDisplayMode !== "inline") return { state: { ...s, todos }, effects: [] };
+      // inline: the list appears in the transcript; a list that follows another one replaces it
+      const last = s.items.at(-1);
+      const items = last?.kind === "todos" ? s.items.slice(0, -1) : s.items;
+      return { state: { ...s, todos, items: todos.length ? [...items, { kind: "todos", todos }] : items }, effects: [] };
+    }
+    case "daemon.side_chat_entry": {
+      const e = n.entry ?? {};
+      if (typeof e.id !== "string") return { state: s, effects: [] };
+      const item: Item = { kind: "btw", id: e.id, question: String(e.question ?? ""), answer: String(e.answer ?? ""), status: e.status ?? "pending" };
+      const at = s.items.findIndex((x) => x.kind === "btw" && x.id === e.id);
+      return { state: { ...s, items: at < 0 ? [...s.items, item] : s.items.map((x, k) => (k === at ? item : x)) }, effects: [] };
+    }
+    case "spec_handoff":
+      return { state: { ...s, handoff: { specHandoffId: String(n.specHandoffId) }, items: [...s.items, info(`Plan approved. Continuing in a new session${typeof n.contextSavingsPercent === "number" ? ` (${n.contextSavingsPercent}% less context)` : ""}.`)] }, effects: [] };
     case "permission_resolved":
       return { state: { ...s, panels: s.panels.filter((p) => p.action.type !== "request" || p.action.requestId !== n.requestId) }, effects: [] };
     case "llm_retry":
@@ -418,12 +438,17 @@ function notification(s: TuiState, n: { type: string; [k: string]: any }): Step 
       const flushed: Item[] = n.reason === "cancelled" ? [] : s.pending.steer.map((text): Item => ({ kind: "user", text }));
       let state: TuiState = {
         ...s, running: false, working: "idle", runStartedAt: undefined, turns: s.turns + 1, panels: s.panels.filter((p) => p.action.type !== "request"),
-        items: [...s.items, ...flushed, ...(n.reason === "completed" ? [] : [info(`Turn ended: ${n.reason}`, n.reason === "cancelled" ? "info" : "error")])],
+        items: [...s.items, ...flushed, ...(n.reason === "completed" || n.reason === "spec_handoff" ? [] : [info(`Turn ended: ${n.reason}`, n.reason === "cancelled" ? "info" : "error")])],
         pending: n.reason === "cancelled" ? s.pending : { ...s.pending, steer: [] },
       };
       if (flushed.length) state = { ...state, running: true, working: "thinking", runStartedAt: s.now };
       effects.push({ type: "fetch_context", show: false }, { type: "status_line" });
       if (n.reason === "completed") effects.push({ type: "attention", kind: "completion" });
+      // An approved spec handoff: the old session is done; open the new one with the spec as its brief.
+      if (n.reason === "spec_handoff" && s.handoff) {
+        effects.push({ type: "handoff", specHandoffId: s.handoff.specHandoffId });
+        state = { ...state, handoff: undefined };
+      }
       // Queued messages (Ctrl+Enter) go out when the agent has finished.
       if (n.reason !== "cancelled" && !flushed.length) {
         const next = state.pending.queue[0];
@@ -512,11 +537,20 @@ function runCommand(s0: TuiState, line: string): Step {
       };
       return { state: { ...s, panels: [...s.panels, panel] }, effects: [] };
     }
-    case "settings": return overlay(s, "Settings", [
-      `Model:            ${modelName(s)} (${s.modelId})`, `Reasoning:        ${s.reasoning}  (Tab cycles)`, `Autonomy:         ${s.autonomy}  (Ctrl+L cycles)`,
-      `Interaction mode: ${s.mode}  (Shift+Tab toggles)`, `Auto-compress:    ${s.autoCompress ? "on" : "off"}  (Alt+X toggles)`, `Vim keys:         ${s.vim ? "on" : "off"}  (/vim)`,
-      `Theme:            ${s.theme}  (/themes)`, `Show thinking:    ${s.showThinking ? "on" : "off"}`, "", "Settings files: ~/.rigwell/settings.json and <project>/.rigwell/settings.json",
-    ]);
+    case "settings": {
+      const lab = (key: string) => { const m = managedLabel(s.managed, key); return m ? "  " + m : ""; };
+      const d = s.display;
+      return overlay(s, "Settings", [
+        `Model:            ${modelName(s)} (${s.modelId})${lab("sessionDefaultSettings")}`, `Reasoning:        ${s.reasoning}  (Tab cycles)`, `Autonomy:         ${s.autonomy}  (Ctrl+L cycles)${s.maxAutonomy ? `  max ${s.maxAutonomy}` : ""}${lab("maxAutonomyLevel")}`,
+        `Interaction mode: ${s.mode}  (Shift+Tab toggles)`, `Auto-compress:    ${s.autoCompress ? "on" : "off"}  (Alt+X toggles)`, `Vim keys:         ${s.vim ? "on" : "off"}  (/vim)`,
+        `Theme:            ${s.theme}  (/themes)`, `Show thinking:    ${s.showThinking ? "on" : "off"}${lab("showThinkingInMainView")}`, "",
+        "Display", `  diffMode:                 ${d.diffMode}${lab("diffMode")}`, `  todoDisplayMode:          ${d.todoDisplayMode}${lab("todoDisplayMode")}`,
+        `  toolResultDisplay:        ${d.toolResultDisplay}${lab("toolResultDisplay")}`, `  outputStyle:              ${d.outputStyle}${lab("outputStyle")}`,
+        `  streamAssistantResponses: ${d.streamAssistantResponses ? "on" : "off"}${lab("streamAssistantResponses")}`,
+        ...(s.managed.length ? ["", `Set by your organization ${managedLabel(s.managed, s.managed[0]!)}: ${s.managed.join(", ")}`] : []),
+        "", "Settings files: ~/.rigwell/settings.json and <project>/.rigwell/settings.json",
+      ]);
+    }
     case "context": return { state: s, effects: [{ type: "fetch_context", show: true }] };
     case "cost": {
       const u = s.tokenUsage;
@@ -536,6 +570,9 @@ function runCommand(s0: TuiState, line: string): Step {
     case "rename":
       if (!args) return { state: { ...s, items: [...s.items, info("Usage: /rename <title>", "error")] }, effects: [] };
       return { state: s, effects: [{ type: "rpc", method: "rename_session", params: { title: args }, label: "rename" }] };
+    case "btw":
+      if (!args) return { state: { ...s, items: [...s.items, info("Usage: /btw <question>", "error")] }, effects: [] };
+      return { state: s, effects: [{ type: "btw", question: args }] };
     case "copy": {
       const last = [...s.items].reverse().find((i) => i.kind === "assistant") as Extract<Item, { kind: "assistant" }> | undefined;
       if (!last) return { state: { ...s, items: [...s.items, info("No assistant message to copy yet.", "error")] }, effects: [] };
@@ -566,7 +603,7 @@ function scrollBy(s: TuiState, delta: number): Step {
 /** Scroll so that the previous (dir -1) or next (dir 1) user message is at the top of the viewport. */
 function scrollTurn(s: TuiState, dir: -1 | 1): Step {
   const header = 7;
-  const { lines, userStarts } = transcriptLines(s.items, { width: s.cols, detailed: s.detailed, showThinking: s.showThinking }, plainStyler());
+  const { lines, userStarts } = transcriptLines(s.items, transcriptOpts(s), plainStyler());
   const total = header + lines.length, vh = viewHeight(s);
   const top = Math.max(0, total - s.scroll - vh);
   const starts = userStarts.map((u) => u + header);
@@ -751,8 +788,11 @@ function key(s: TuiState, k: Key, now: number): Step {
       return { state: { ...s, mode }, effects: [{ type: "settings", patch: { interactionMode: mode } }] };
     }
     case "ctrl+l": {
-      const autonomy = cycle(AUTONOMY_ORDER, s.autonomy);
-      return { state: { ...s, autonomy }, effects: [{ type: "settings", patch: { autonomyLevel: autonomy } }] };
+      // An org ceiling skips the levels above it (they would be refused anyway).
+      const allowed = AUTONOMY_ORDER.filter((l) => !s.maxAutonomy || AUTONOMY_ORDER.indexOf(l) <= AUTONOMY_ORDER.indexOf(s.maxAutonomy));
+      const autonomy = cycle(allowed, allowed.includes(s.autonomy) ? s.autonomy : allowed[allowed.length - 1]!);
+      const capped = s.maxAutonomy && autonomy !== cycle(AUTONOMY_ORDER, s.autonomy) ? `Autonomy is capped at ${s.maxAutonomy} ${managedLabel(s.managed, "maxAutonomyLevel")}`.trim() : s.hint;
+      return { state: { ...s, autonomy, hint: capped }, effects: [{ type: "settings", patch: { autonomyLevel: autonomy } }] };
     }
     case "ctrl+n": {
       if (!s.models.length) return { state: s, effects: [] };
@@ -787,7 +827,7 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
     case "tick": return { state: { ...s, now: e.now }, effects: [] };
     case "notification": return notification({ ...s, now: e.now }, e.n);
     case "request": {
-      const panel = e.method === "request_permission" ? permissionPanel(e.id, e.params) : e.method === "ask_user" ? askPanel(e.id, e.params)
+      const panel = e.method === "request_permission" ? permissionPanel(e.id, e.params, s.display) : e.method === "ask_user" ? askPanel(e.id, e.params)
         : e.method === "request_trust" ? trustPanel(e.id, e.params) : pickPanel(e.id, e.params);
       return { state: { ...s, panels: [...s.panels, panel], working: "waiting_for_tool_confirmation" }, effects: [{ type: "attention", kind: "awaiting" }] };
     }
@@ -822,6 +862,8 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
       return { state: { ...state, overlay: { title: "Context", lines: formatContext(st as ContextStats, modelName(s)) } }, effects: [] };
     }
     case "overlay": return { state: { ...s, overlay: { title: e.title, lines: e.lines } }, effects: [] };
+    case "display":
+      return { state: { ...s, display: { ...DEFAULT_DISPLAY, ...e.display }, managed: e.managed, maxAutonomy: e.maxAutonomy, ...(e.showThinking !== undefined ? { showThinking: e.showThinking } : {}) }, effects: [] };
     case "extras": return { state: { ...s, custom: e.custom, header: { ...s.header, skills: e.skills, mcps: e.mcps ?? s.header.mcps, issues: e.issues ?? s.header.issues } }, effects: [] };
     case "status_line": return { state: { ...s, statusLine: e.text || undefined, statusLineHint: e.hint, statusLinePadding: e.padding }, effects: [] };
     case "resize": return { state: { ...s, rows: e.rows, cols: e.cols }, effects: [] };

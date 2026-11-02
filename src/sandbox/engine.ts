@@ -70,6 +70,10 @@ export interface BwrapOptions {
   proxySocket?: string;
   socat?: string;
   env?: Record<string, string>;
+  /** File descriptor number bubblewrap reads a compiled seccomp program from (the caller must open it: see bwrapExec). */
+  seccompFd?: number;
+  /** Path of the compiled seccomp program; bwrapCommand opens it as fd 9 (a sh redirect) and adds --seccomp 9. */
+  seccompFile?: string;
 }
 
 const isDir = (p: string) => {
@@ -101,21 +105,35 @@ export function buildBwrapArgs(o: BwrapOptions): string[] {
   if (policy.network.rule !== "all") a.push("--unshare-net");
   if (o.proxySocket) a.push("--bind", o.proxySocket, o.proxySocket);
   for (const [k, v] of Object.entries(o.env ?? {})) a.push("--setenv", k, v);
+  if (o.seccompFd !== undefined) a.push("--seccomp", String(o.seccompFd));
   return a;
 }
 
-/** Wraps the shell invocation: inside a proxy sandbox a socat bridge runs from loopback to the host proxy socket. */
-export function bwrapCommand(bwrap: string, o: BwrapOptions, shell: string, command: string): { file: string; args: string[] } {
-  const base = buildBwrapArgs(o);
+/** The seccomp program is handed to bubblewrap as fd 9, opened by a one-line sh wrapper (no change to how callers spawn). */
+export const SECCOMP_FD = 9;
+
+/** Runs `cmd` under bubblewrap with `base` arguments (from buildBwrapArgs; include seccompFd: SECCOMP_FD when seccompFile is given). */
+export function bwrapExec(
+  bwrap: string, base: string[], cmd: string[], o: { proxySocket?: string; socat?: string; seccompFile?: string } = {},
+): { file: string; args: string[] } {
+  let inner: string[];
   if (o.proxySocket && o.socat) {
     const port = PROXY_INNER_PORT;
     const script =
       `${o.socat} TCP-LISTEN:${port},bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:${o.proxySocket} >/dev/null 2>&1 & ` +
       `i=0; while [ $i -lt 100 ] && ! ${o.socat} -u /dev/null TCP:127.0.0.1:${port} 2>/dev/null; do sleep 0.02; i=$((i+1)); done; ` +
       `exec "$@"`;
-    return { file: bwrap, args: [...base, "--", "/bin/sh", "-c", script, "sh", shell, "-c", command] };
-  }
-  return { file: bwrap, args: [...base, "--", shell, "-c", command] };
+    inner = ["/bin/sh", "-c", script, "sh", ...cmd];
+  } else inner = cmd;
+  const line = [bwrap, ...base, "--", ...inner];
+  if (!o.seccompFile) return { file: line[0]!, args: line.slice(1) };
+  return { file: "/bin/sh", args: ["-c", `exec ${SECCOMP_FD}<"$1" || exit 126; shift; exec "$@"`, "sh", o.seccompFile, ...line] };
+}
+
+/** Wraps the shell invocation: inside a proxy sandbox a socat bridge runs from loopback to the host proxy socket. */
+export function bwrapCommand(bwrap: string, o: BwrapOptions, shell: string, command: string): { file: string; args: string[] } {
+  const base = buildBwrapArgs({ ...o, seccompFd: o.seccompFile ? SECCOMP_FD : o.seccompFd });
+  return bwrapExec(bwrap, base, [shell, "-c", command], { proxySocket: o.proxySocket, socat: o.socat, seccompFile: o.seccompFile });
 }
 
 /** Environment that points proxy-aware programs at the in-sandbox proxy listener. */

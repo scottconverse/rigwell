@@ -7,6 +7,7 @@ import { readProjectRegistry, writeProjectRegistry } from "./projects.ts";
 import type { AutonomyLevel } from "../core/types.ts";
 import type { HeadlessRunner } from "./runner.ts";
 import { machineTimeZone, nextRun, slotsBetween } from "./schedule.ts";
+import { VISUAL_FILE, VISUAL_MARKER, writeVisual } from "./visual.ts";
 import {
   automationsRoot, createAutomationFolder, deleteAutomationFolder, newSecret, projectAutomationsRoot, readRuns, readSecrets, saveRun,
   scanRoot, updateAutomationFolder, writeSecrets, writeState, atomicWrite,
@@ -109,8 +110,10 @@ export class AutomationManager {
     if (projectDir) this.addProject(projectDir);
     const a = createAutomationFolder(projectDir ? projectAutomationsRoot(projectDir) : automationsRoot(), full, body, projectDir ? "project" : "home");
     writeState(a, { createdAt: this.clock.now() }); // creating never starts a run
+    const made = this.find(a.id);
+    this.refreshVisual(made);
     this.onChange?.();
-    return this.find(a.id);
+    return made;
   }
 
   update(id: string, patch: Partial<Frontmatter>, body?: string): Automation {
@@ -118,8 +121,27 @@ export class AutomationManager {
     updateAutomationFolder(a, patch, body);
     // A resume (by the user) clears an automatic pause and starts the missed-run clock again.
     if (patch.paused === false && a.fm.paused) writeState(a, { pausedReason: undefined, pausedAt: undefined, consecutiveFailures: undefined, resumedAt: this.clock.now() });
+    const fresh = this.find(id);
+    this.refreshVisual(fresh);
     this.onChange?.();
-    return this.find(id);
+    return fresh;
+  }
+
+  /** Rebuilds VISUAL.html (spec 16.8). A page the user or agent wrote themselves is kept. Never throws. */
+  refreshVisual(a: Automation): boolean {
+    try {
+      const fresh = this.list().find((x) => x.id === a.id) ?? a;
+      return writeVisual({ automation: fresh, runs: readRuns(fresh), nextRunAt: this.nextRunAt(fresh), now: this.clock.now() });
+    } catch (e) { this.log(`VISUAL.html for "${a.fm.name}" failed: ${(e as Error).message}`); return false; }
+  }
+
+  /** The visual page: path and content. Created on first ask when the folder has none yet (older automations). */
+  visual(id: string): { path: string; html: string; generated: boolean } {
+    const a = this.find(id);
+    const path = join(a.dir, VISUAL_FILE);
+    if (!existsSync(path)) this.refreshVisual(a);
+    const html = readFileSync(path, "utf8");
+    return { path, html, generated: html.includes(VISUAL_MARKER) };
   }
 
   delete(id: string) { deleteAutomationFolder(this.find(id)); this.onChange?.(); }
@@ -265,6 +287,7 @@ export class AutomationManager {
     writeState(a, patch);
     if (pauseFor) this.autoPause(a, pauseFor);
     rmSync(join(this.runStateDir(), `${a.id}.json`), { force: true });
+    this.refreshVisual(a);
     this.log(`run ${rec.runId} of "${a.fm.name}" ${out.status}${out.failureReason ? ` (${out.failureReason})` : ""}`);
     this.onChange?.();
     return out;

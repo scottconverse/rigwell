@@ -4,6 +4,7 @@
 // (highest priority first, so config order = priority order). hooksDisabled / showHookOutput: first level that sets them.
 import path from "node:path";
 import { configDirs, readJsonObject } from "../config/levels.ts";
+import { loadOrgSettings } from "../storage/org.ts";
 
 export const HOOK_EVENTS = [
   "PreToolUse", "PostToolUse", "Notification", "UserPromptSubmit", "Stop",
@@ -78,14 +79,15 @@ export interface LoadHooksOptions {
   trustProject?: boolean;
   /** Extra hooks injected at the top priority (e.g. runtime settings file). Same shape as hooks.json. */
   extra?: Record<string, unknown>;
-  /** Org flag: drop every non-org hook. The org slot is a no-op in this build, so this yields no hooks. */
+  /** Drop every non-org hook (the org file's allowManagedHooksOnly sets this too). */
   allowManagedHooksOnly?: boolean;
+  /** Environment holding RIGWELL_ORG_MANAGED_SETTINGS_LOCAL_PATH; defaults to process.env. */
+  env?: Record<string, string | undefined>;
 }
 
 export function loadHooksConfig(opts: LoadHooksOptions): HooksConfig {
   const warnings: string[] = [];
   const cfg: HooksConfig = { hooksDisabled: false, showHookOutput: true, events: {}, warnings };
-  if (opts.allowManagedHooksOnly) return cfg;
   let setDisabled = false, setShow = false;
   const take = (r: RawHooks) => {
     if (!setDisabled && r.hooksDisabled !== undefined) { cfg.hooksDisabled = r.hooksDisabled; setDisabled = true; }
@@ -98,6 +100,18 @@ export function loadHooksConfig(opts: LoadHooksOptions): HooksConfig {
       (cfg.events[ev as HookEventName] ??= []).push(...groups);
     }
   };
+  // Org hooks (spec 12.2) come first and always run; allowManagedHooksOnly then drops every other hook.
+  const org = loadOrgSettings(opts.env ?? process.env);
+  if (org) {
+    warnings.push(...org.warnings);
+    const h = org.settings.hooks;
+    if (h && typeof h === "object" && !Array.isArray(h)) {
+      const r = pick({ ...(h as Record<string, unknown>), ...pickFlags(org.settings) });
+      take(r);
+      add(r, "org");
+    }
+  }
+  if (opts.allowManagedHooksOnly === true || org?.settings.allowManagedHooksOnly === true) return cfg;
   if (opts.extra) { const r = pick(opts.extra); take(r); add(r, "runtime"); }
 
   for (const { level, dir } of configDirs(opts.cwd, opts.homeDir)) {

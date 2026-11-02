@@ -8,6 +8,8 @@ import type { Tool, ToolOutput } from "../core/types.ts";
 import { rigwellHome } from "../storage/paths.ts";
 import { loopIntervalToCron, type CronRecord } from "./crons.ts";
 import { hasProjectAutomations } from "./projects.ts";
+import { instantiateTemplate, listTemplates } from "./templates.ts";
+import { machineTimeZone, nextRun, parseSchedule, normalizeSchedule, validTimeZone } from "./schedule.ts";
 import type { createAutomationService } from "./index.ts";
 
 type Service = ReturnType<typeof createAutomationService>;
@@ -31,9 +33,10 @@ const FIELDS = {
   timezone: { type: "string", description: "IANA zone the schedule is read in. Defaults to the machine zone." },
   autonomy: { type: "string", enum: ["off", "low", "medium", "high"], description: "Autonomy for runs (default high). Anything needing approval is denied." },
   trigger: { type: "string", enum: ["schedule", "webhook"] },
+  targetSessionId: { type: "string", description: "Add each run's prompt to this existing session instead of starting a new one." },
 } as const;
 
-const FM_KEYS = ["name", "schedule", "description", "model", "reasoningEffort", "workingDirectory", "timezone", "autonomy", "trigger"] as const;
+const FM_KEYS = ["name", "schedule", "description", "model", "reasoningEffort", "workingDirectory", "timezone", "autonomy", "trigger", "targetSessionId"] as const;
 
 function pick(input: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -64,13 +67,20 @@ export function automationTools(svc: Service): Tool[] {
       "Save a prompt as an automation: a folder the daemon runs on a schedule in its own unattended session. Creating one does not start a run. " +
       "Automations only run while the Rigwell daemon is running. Use scope \"project\" to keep it in this project's .rigwell/automations folder " +
       "(default is the user's home folder). Returns the saved automation with its next run time.",
-    inputSchema: { type: "object", properties: { ...FIELDS, scope: { type: "string", enum: ["user", "project"] } }, required: ["name", "schedule", "instructions"] },
+    inputSchema: { type: "object", properties: {
+      ...FIELDS, scope: { type: "string", enum: ["user", "project"] },
+      templateId: { type: "string", description: "Start from a template (see ListAutomationTemplates). Its name, schedule and prompt are used unless you give your own." },
+      parameters: { type: "object", description: "Values for the template's parameters, by key." },
+    }, required: [] },
     async run(input, ctx) {
       return await guard(() => {
-        const instructions = str(input.instructions);
+        const tid = str(input.templateId);
+        const tpl = tid ? instantiateTemplate(tid, (input.parameters ?? {}) as Record<string, unknown>) : undefined;
+        const instructions = str(input.instructions) ?? tpl?.instructions;
         if (!instructions) return fail("instructions is required");
         const projectDir = input.scope === "project" ? ctx.cwd : undefined;
-        const a = m.create(pick(input) as never, instructions, projectDir);
+        const fm = { ...(tpl ? { name: tpl.name, description: tpl.description, schedule: tpl.schedule, autonomy: tpl.autonomy, tags: tpl.tags } : {}), ...pick(input) };
+        const a = m.create(fm as never, instructions, projectDir);
         return ok(svc.view(a));
       })();
     },
@@ -208,5 +218,44 @@ export function automationTools(svc: Service): Tool[] {
     },
   };
 
-  return [create, list, read, edit, del, run, loop];
+  const templates: Tool = {
+    name: "ListAutomationTemplates",
+    category: "read",
+    description: "List the ready-made automation templates: id, name, what it does, default schedule and the parameters to fill in. Use an id with CreateAutomation `templateId`.",
+    inputSchema: { type: "object", properties: {} },
+    async run() {
+      return ok({ templates: listTemplates().map((t) => ({ id: t.id, name: t.name, description: t.description, category: t.category, schedule: t.schedule, autonomy: t.autonomy, parameters: t.parameters })) });
+    },
+  };
+
+  const preview: Tool = {
+    name: "PreviewSchedule",
+    category: "read",
+    description:
+      "Check a schedule without saving anything. Accepts what CreateAutomation accepts (preset, cron, \"every 2h\", or a phrase such as \"every weekday at 9am\"). " +
+      "Returns the schedule as it would be stored and the next run times in the given time zone (default: the machine's), or says why it cannot be understood.",
+    inputSchema: { type: "object", properties: { schedule: { type: "string" }, timezone: { type: "string" }, count: { type: "number", description: "How many run times to return (1 to 10, default 3)." } }, required: ["schedule"] },
+    async run(input) {
+      return await guard(() => {
+        const text = str(input.schedule);
+        if (!text) return fail("schedule is required");
+        const tz = str(input.timezone) ?? machineTimeZone();
+        if (!validTimeZone(tz)) return fail(`unknown time zone: ${tz}`);
+        const stored = normalizeSchedule(text);
+        const parsed = parseSchedule(stored);
+        const count = Math.min(10, Math.max(1, Math.floor(Number(input.count)) || 3));
+        const now = svc.clock.now();
+        const runs: string[] = [];
+        for (let t = now; runs.length < count; ) {
+          const n = nextRun(parsed, t, tz, now);
+          if (n === undefined) break;
+          runs.push(new Date(n).toISOString());
+          t = n;
+        }
+        return ok({ stored, kind: parsed.kind, timezone: tz, nextRunsUtc: runs });
+      })();
+    },
+  };
+
+  return [create, list, read, edit, del, run, loop, templates, preview];
 }

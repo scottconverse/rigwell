@@ -2,12 +2,30 @@
 
 export interface Key { name: string; text?: string }
 
+/** Display settings the TUI honors (spec 12.2): diffMode, todoDisplayMode, toolResultDisplay, outputStyle, streamAssistantResponses. */
+export interface DisplaySettings {
+  diffMode: "github" | "unified";
+  todoDisplayMode: "pinned" | "inline";
+  toolResultDisplay: "expanded" | "compact";
+  /** "default", "compact" (no blank lines between items) or "plain" (no bullets or symbols). Others behave like default. */
+  outputStyle: string;
+  /** false: assistant text appears when the message is finished, not as it streams. */
+  streamAssistantResponses: boolean;
+}
+export const DEFAULT_DISPLAY: DisplaySettings = {
+  diffMode: "github", todoDisplayMode: "pinned", toolResultDisplay: "compact", outputStyle: "default", streamAssistantResponses: true,
+};
+export interface TodoView { id?: string; content: string; status: "pending" | "in_progress" | "completed" }
+
 export type Item =
   | { kind: "user"; text: string; id?: string }
   | { kind: "assistant"; id: string; text: string }
   | { kind: "thinking"; id: string; text: string }
   | { kind: "tool"; id: string; name: string; input: Record<string, any>; status: "running" | "ok" | "error"; phase?: string; output?: string; live?: string }
-  | { kind: "info"; text: string; level: "info" | "error" };
+  | { kind: "info"; text: string; level: "info" | "error" }
+  | { kind: "todos"; todos: TodoView[] }
+  /** A side-chat exchange (/btw): shown apart from the main conversation. */
+  | { kind: "btw"; id: string; question: string; answer: string; status: "pending" | "streaming" | "complete" | "error" };
 
 export interface PanelOption { label: string; value: string }
 
@@ -125,6 +143,14 @@ export interface TuiState {
   sandbox: boolean;
   /** Images pasted with Ctrl+V, sent with the next message. */
   images: PastedImage[];
+  display: DisplaySettings;
+  /** Top-level settings keys the org level set (shown as "[managed by org]"). */
+  managed: string[];
+  /** Org autonomy ceiling, when one is set. */
+  maxAutonomy?: "off" | "low" | "medium" | "high";
+  todos: TodoView[];
+  /** Set by a spec_handoff notification; the new session starts when the turn ends with reason spec_handoff. */
+  handoff?: { specHandoffId: string };
   overlay: { title: string; lines: string[] } | null;
   pending: { steer: string[]; queue: string[] };
   lastEscAt: number;
@@ -153,7 +179,11 @@ export type Effect =
   | { type: "attention"; kind: "completion" | "awaiting" }
   | { type: "status_line" }
   | { type: "open_rewind" }
-  | { type: "rpc"; method: string; params: Record<string, unknown>; label: string; after?: "resume_new" };
+  | { type: "rpc"; method: string; params: Record<string, unknown>; label: string; after?: "resume_new" }
+  /** /btw: ask the side chat (daemon.side_chat_ask). */
+  | { type: "btw"; question: string }
+  /** Start the new session of an approved spec handoff (initialize_session specHandoffId). */
+  | { type: "handoff"; specHandoffId: string };
 
 export type TuiEvent =
   | { type: "key"; key: Key; now: number }
@@ -174,6 +204,7 @@ export type TuiEvent =
   | { type: "editor_result"; text: string }
   | { type: "spec_edited"; text: string }
   | { type: "image_pasted"; image: PastedImage }
+  | { type: "display"; display: Partial<DisplaySettings>; showThinking?: boolean; managed: string[]; maxAutonomy?: TuiState["maxAutonomy"] }
   | { type: "disconnected"; message: string };
 
 export interface Step { state: TuiState; effects: Effect[] }

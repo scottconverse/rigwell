@@ -206,6 +206,32 @@ function writesViaRedirect(seg: string): boolean {
   return stripped.includes(">");
 }
 
+export type PowerShellParse = { kind: "body"; body: string } | { kind: "encoded" } | { kind: "other" } | null;
+
+/**
+ * Recognizes a PowerShell invocation (powershell / pwsh, optionally .exe or a path) and extracts the script body of
+ * `-Command "<body>"` (spec 5.5.3). `-EncodedCommand` (and its short forms) is unparseable: the caller must never
+ * auto-allow it. Returns null when the segment is not a PowerShell call.
+ */
+export function parsePowershell(raw: string): PowerShellParse {
+  const w = words(unwrap(raw));
+  if (!w || w.length === 0) return null;
+  const exe = (w[0] ?? "").replace(/^.*[\\/]/, "").toLowerCase().replace(/\.exe$/, "");
+  if (exe !== "powershell" && exe !== "pwsh") return null;
+  for (let i = 1; i < w.length; i++) {
+    const a = w[i]!.toLowerCase();
+    if (!a.startsWith("-") && !a.startsWith("/")) continue;
+    const name = a.replace(/^[-/]+/, "");
+    if (name === "e" || name === "ec" || (name.length >= 2 && "encodedcommand".startsWith(name))) return { kind: "encoded" };
+    if (name === "c" || (name.length >= 1 && "command".startsWith(name))) {
+      const rest = w.slice(i + 1).join(" ").trim();
+      if (rest === "" || rest === "-") return { kind: "other" };
+      return { kind: "body", body: rest };
+    }
+  }
+  return { kind: "other" };
+}
+
 function normalize(seg: string): string {
   const w = words(seg);
   return unwrap(w ? w.join(" ") : seg);
@@ -244,9 +270,18 @@ export function classifyCommand(command: string, lists: CommandLists): Classific
   }
   const { segments, parseable } = splitSegments(command);
   const checked: string[] = [];
-  for (const raw of segments) {
+  let unparseablePs = false;
+  const collect = (raw: string, depth: number) => {
     checked.push(normalize(raw), ...innerSegments(raw).map(normalize));
-  }
+    const ps = depth < 3 ? parsePowershell(raw) : null;
+    if (ps?.kind === "encoded") unparseablePs = true;
+    if (ps?.kind === "body") {
+      const inner = splitSegments(ps.body);
+      if (!inner.parseable) unparseablePs = true;
+      for (const r of inner.segments) collect(r, depth + 1);
+    }
+  };
+  for (const raw of segments) collect(raw, 0);
   for (const seg of checked) {
     for (const e of lists.block) {
       if (matchesEntryAnywhere(seg, e)) return { kind: "block", match: { reason: `Blocklist: ${e}`, segment: seg } };
@@ -259,16 +294,24 @@ export function classifyCommand(command: string, lists: CommandLists): Classific
       if (matchesEntryAnywhere(seg, e)) return { kind: "ask", match: { reason: `Denylist: ${e}`, segment: seg } };
     }
   }
-  if (!parseable || segments.length === 0) return { kind: "none" };
+  if (!parseable || unparseablePs || segments.length === 0) return { kind: "none" };
   let first: Match | null = null;
-  for (const raw of segments) {
+  const checkAllow = (raw: string, depth: number): boolean => {
+    const ps = depth < 3 ? parsePowershell(raw) : null;
+    if (ps?.kind === "body") {
+      const inner = splitSegments(ps.body).segments;
+      if (inner.length === 0) return false;
+      return inner.every((r) => checkAllow(r, depth + 1));
+    }
     const seg = normalize(raw);
     const firstWord = words(seg)?.[0]?.toLowerCase();
     const ignorable = firstWord !== undefined && IGNORED_FOR_ALLOW.includes(firstWord);
-    if (ignorable && !writesViaRedirect(raw) && !hasSubstitution(raw)) continue;
+    if (ignorable && !writesViaRedirect(raw) && !hasSubstitution(raw)) return true;
     const m = allowMatch(seg, lists);
-    if (!m) return { kind: "none" };
+    if (!m) return false;
     first ??= m;
-  }
+    return true;
+  };
+  for (const raw of segments) if (!checkAllow(raw, 0)) return { kind: "none" };
   return first ? { kind: "allow", match: first } : { kind: "none" };
 }
