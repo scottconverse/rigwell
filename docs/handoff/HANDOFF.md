@@ -1,6 +1,8 @@
 # Handoff: Rigwell build state
 
 Branch `phase-1-core-loop`, draft PR scottconverse/rigwell#1 (base `main`). Do not merge without the owner.
+The repo is public (Nov 2 2026, decision 337). `evidence/` is not in it; it is in the private repo `scottconverse/rigwell-private`,
+with the old history and the old PR #1. Commit IDs in this file are from that old history.
 
 ## First: set up the session
 - Repo: `https://github.com/scottconverse/rigwell`. Work on branch `phase-1-core-loop` (this file does not exist on `main`):
