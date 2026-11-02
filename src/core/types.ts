@@ -56,6 +56,8 @@ export interface Message {
   /** Set on turns the router picked the model for ("auto"). */
   routerId?: string;
   openaiReasoning?: OpenAIReasoning[];
+  /** OpenAI Responses `phase` of the assistant message (e.g. "commentary", "final_answer"); stored as `openaiPhase` (spec 12.1). */
+  openaiPhase?: string;
 }
 
 export interface TokenUsage {
@@ -119,6 +121,11 @@ export interface ModelRequest {
   maxOutputTokens: number;
   reasoningEffort?: ReasoningEffort;
   signal?: AbortSignal;
+  /**
+   * Prompt-cache key for providers that take one (OpenAI `prompt_cache_key`). Absent: `sessionId`. A side-chat fork sets
+   * it to its parent session id so both share the cached prefix without sharing any session state (spec 17.4).
+   */
+  cacheKey?: string;
   /** Cache strategy from the model profile; "none" sends no cache markers. Absent: the provider's own. */
   cacheStrategy?: "anthropic-breakpoints" | "openai-auto" | "none";
   /** Stream guards (spec §4.2). Absent: the adapter defaults (no idle limit, 10 minute hard limit). */
@@ -144,6 +151,8 @@ export type StreamEvent =
       stopReason: "end_turn" | "tool_use" | "max_tokens" | "other";
       usage: TokenUsage;
       openaiReasoning?: OpenAIReasoning[];
+      /** The adapter sets this from the Responses output item `phase`, when the provider sent one. */
+      openaiPhase?: string;
     };
 
 export type ModelErrorKind =
@@ -260,7 +269,7 @@ export interface PermissionContext {
   cwd: string;
 }
 
-export type ConfirmationType = "edit" | "create" | "exec" | "mcp_tool" | "exit_spec_mode" | "apply_patch" | "fetch_url" | "recommend_mission" | "upgrade_model";
+export type ConfirmationType = "edit" | "create" | "exec" | "mcp_tool" | "exit_spec_mode" | "apply_patch" | "fetch_url" | "recommend_mission" | "upgrade_model" | "secret_scan_violation";
 
 export type ToolExecutionMode = "direct_only" | "script_only";
 

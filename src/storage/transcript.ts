@@ -189,6 +189,7 @@ function encodeMessage(m: Message): Record<string, unknown> {
   if (m.routerId) out.routerId = m.routerId;
   if (m.apiProvider) out.apiProvider = m.apiProvider;
   if (m.reasoningEffort) out.reasoningEffort = m.reasoningEffort;
+  if (m.openaiPhase) out.openaiPhase = m.openaiPhase;
   const r = m.openaiReasoning;
   if (r && r.length > 0) {
     out.openaiReasoningId = r[0]!.id;
@@ -275,6 +276,7 @@ function decodeMessage(rec: any): Message | null {
   if (typeof m.routerId === "string") msg.routerId = m.routerId;
   if (typeof m.apiProvider === "string") msg.apiProvider = m.apiProvider;
   if (typeof m.reasoningEffort === "string") msg.reasoningEffort = m.reasoningEffort as ReasoningEffort;
+  if (typeof m.openaiPhase === "string") msg.openaiPhase = m.openaiPhase;
   if (typeof m.openaiReasoningId === "string") {
     const items: OpenAIReasoning[] = [
       {
