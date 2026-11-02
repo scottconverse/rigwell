@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import path, { basename, join } from "node:path";
 import { WorktreeError, WorktreeManager, branchSlug, resolveRoot, worktreePathFor } from "../../src/worktree/manager.ts";
 import { parseWorktreeInclude, copyWorktreeIncludes } from "../../src/worktree/include.ts";
 import { checkoutBranch, commit, listBranches } from "../../src/worktree/actions.ts";
@@ -17,13 +17,13 @@ describe("names and paths", () => {
     expect(branchSlug("a very long prompt about refactoring everything")!.length).toBeLessThanOrEqual(32);
   });
   test("worktree path uses last 8 chars of the session id and sanitises", () => {
-    expect(worktreePathFor("/r", "0123456789abcdef", "/x/my repo")).toBe("/r/89abcdef/my-repo");
+    expect(worktreePathFor("/r", "0123456789abcdef", "/x/my repo")).toBe(path.join("/r", "89abcdef", "my-repo"));
   });
   test("a relative worktreeDirectory is ignored with a warning", () => {
     const warns: string[] = [];
     expect(resolveRoot("rel/dir", (m) => warns.push(m))).not.toBe("rel/dir");
     expect(warns.length).toBe(1);
-    expect(resolveRoot("/abs/dir")).toBe("/abs/dir");
+    expect(resolveRoot("/abs/dir")).toBe(path.resolve("/abs/dir")); // Windows adds the drive
   });
 });
 
@@ -39,7 +39,11 @@ describe("secret stripping", () => {
     process.env.FAKE_API_KEY = "sk-nope";
     process.env.NORMAL_VAR = "visible";
     const dir = tmp("s");
-    const r = await runScript({ script: 'echo "key=[${FAKE_API_KEY-unset}] normal=[$NORMAL_VAR] repo=[$REPO_ROOT_PATH]"', cwd: dir, repoRoot: "/the/repo", timeoutMs: 10000 });
+    // Windows runs setup scripts with PowerShell (spec 18.3); POSIX hosts use bash.
+    const script = process.platform === "win32"
+      ? 'Write-Output "key=[$(if ($env:FAKE_API_KEY) { $env:FAKE_API_KEY } else { \'unset\' })] normal=[$env:NORMAL_VAR] repo=[$env:REPO_ROOT_PATH]"'
+      : 'echo "key=[${FAKE_API_KEY-unset}] normal=[$NORMAL_VAR] repo=[$REPO_ROOT_PATH]"';
+    const r = await runScript({ script, cwd: dir, repoRoot: "/the/repo", timeoutMs: 10000 });
     expect(r.output).toContain("key=[unset] normal=[visible] repo=[/the/repo]");
   });
   test("output is capped at 4 KB and control chars removed", async () => {
@@ -88,7 +92,7 @@ describe("create, status, remove", () => {
     sh(repo, "commit", "-qm", "inc");
     const m = mk();
     const wt = await m.create({ repoRoot: repo, sessionId: "sess-12345678", prompt: "Fix the parser bug" });
-    expect(wt.path).toBe(join(m.root, "12345678", repo.split("/").pop()!));
+    expect(wt.path).toBe(join(m.root, "12345678", basename(repo)));
     expect(wt.branch).toBe("rigwell/fix-the-parser-bug");
     expect(sh(wt.path, "rev-parse", "--abbrev-ref", "HEAD")).toBe(wt.branch);
     expect(readFileSync(join(wt.path, ".env"), "utf8")).toBe("K=1\n");
