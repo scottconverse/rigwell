@@ -73,6 +73,14 @@ function Loaded({ ctl }: { ctl: SessionController }) {
   const sid = state.sessionId;
   useEffect(() => { if (state.phase === "ready" && sid && pendingMission.delete(sid)) void enterMission(); }, [state.phase, sid, enterMission]);
 
+  // The sidebar hides a session until its transcript has a user message. Home refreshes the list before the first
+  // message is written, so refresh again each time a turn ends: a new session then shows up, and its time updates.
+  const lastWorking = useRef(state.working);
+  useEffect(() => {
+    if (lastWorking.current !== "idle" && state.working === "idle") void app.refresh();
+    lastWorking.current = state.working;
+  }, [state.working]);
+
   // Approved spec handoff (spec 5.5.7): the old turn ended with reason spec_handoff; this client opens the new session.
   useEffect(() => ctl.onHandoff((specHandoffId) => {
     void (async () => {

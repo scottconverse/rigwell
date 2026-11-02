@@ -59,7 +59,7 @@ maybe("desktop app end to end", () => {
       if (all.includes("This is a side conversation")) { sideBodies.push(body); return { text: "side answer: the agent is waiting on a gate file" }; }
       if (lastUser.includes("RICH")) return { text: "Rich reply\n\n```ts\nconst answer: number = 42;\n```\n\nEuler: $e^{i\\pi}+1=0$ and\n\n$$\\frac{a}{b}$$\n\n```mermaid\ngraph TD\n  A[Start] --> B[End]\n```\n" };
       if (lastUser.includes("browse")) return toolResult ? { text: "browser done" } : { toolCalls: [{ name: "Browser", input: { action: "navigate", url: `http://127.0.0.1:${web.port}/` } }] };
-      if (lastUser.includes("LONG")) return toolResult ? { text: "long finished" } : { toolCalls: [{ name: "Execute", input: { command: `while [ ! -f ${gate} ]; do sleep 0.05; done; echo released`, riskLevel: "low", riskReason: "waits for a file" } }] };
+      if (lastUser.includes("LONG")) return toolResult ? { text: "long finished" } : { toolCalls: [{ name: "Execute", input: { command: `while [ ! -f ${gate.replaceAll("\\", "/")} ]; do sleep 0.05; done; echo released`, riskLevel: "low", riskReason: "waits for a file" } }] };
       return { text: "hi there" };
     };
     fake = await startFakeAnthropic(Array.from({ length: 200 }, () => route));
@@ -67,7 +67,7 @@ maybe("desktop app end to end", () => {
     mkdirSync(home, { recursive: true });
     // Start with the dark theme saved, to check the very first frame later.
     display = process.env.DISPLAY || `:${90 + Math.floor(Math.random() * 9)}`;
-    if (!process.env.DISPLAY) {
+    if (process.platform === "linux" && !process.env.DISPLAY) {
       xvfb = spawn("Xvfb", [display, "-screen", "0", "1280x900x24"], { stdio: "ignore" });
       for (let i = 0; i < 50 && !existsSync(`/tmp/.X11-unix/X${display.slice(1)}`); i++) await sleep(100);
     }
@@ -86,6 +86,8 @@ maybe("desktop app end to end", () => {
     await page.locator(".assistant", { hasText: "hi there" }).first().waitFor({ timeout: 30_000 });
     expect(page.url()).toContain("#/sessions/");
     firstSession = page.url().split("#/sessions/")[1].split(/[?#]/)[0];
+    // A new session shows in the sidebar once its first turn ends (no manual reload).
+    await page.locator(".side-row", { hasText: "hello" }).first().waitFor({ timeout: 10_000 });
 
     await page.keyboard.press("Control+p");
     await page.locator(".tree-row", { hasText: "greet.js" }).click();
@@ -110,7 +112,9 @@ maybe("desktop app end to end", () => {
     const term = page.locator(".terminal .xterm").first();
     await term.waitFor();
     await term.click();
-    await page.keyboard.type("echo persisted-$((40+2))\n");
+    // The Windows terminal is cmd.exe (decision 310). "^" is its escape, so there too the output differs from the typed text.
+    const win = process.platform === "win32";
+    await page.keyboard.type(win ? "echo persisted-4^2\n" : "echo persisted-$((40+2))\n");
     await page.locator(".xterm-rows", { hasText: "persisted-42" }).first().waitFor({ timeout: 15_000 });
 
     await page.reload();
@@ -120,7 +124,7 @@ maybe("desktop app end to end", () => {
     // The old output comes back from the daemon's scrollback, and it is the same live shell.
     await page.locator(".xterm-rows", { hasText: "persisted-42" }).first().waitFor({ timeout: 15_000 });
     await page.locator(".terminal .xterm").first().click();
-    await page.keyboard.type("echo alive-$((1+1))\n");
+    await page.keyboard.type(win ? "echo alive-^2\n" : "echo alive-$((1+1))\n");
     await page.locator(".xterm-rows", { hasText: "alive-2" }).first().waitFor({ timeout: 15_000 });
   }, 90_000);
 

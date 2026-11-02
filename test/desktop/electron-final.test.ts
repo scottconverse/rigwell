@@ -66,7 +66,7 @@ maybe("desktop app: final gaps", () => {
     home = makeHome([{ provider: "anthropic", url: fake.url, displayName: "Fake Anthropic" }]);
     mkdirSync(home, { recursive: true });
     display = process.env.DISPLAY || `:${70 + Math.floor(Math.random() * 9)}`;
-    if (!process.env.DISPLAY) {
+    if (process.platform === "linux" && !process.env.DISPLAY) {
       xvfb = spawn("Xvfb", [display, "-screen", "0", "1280x900x24"], { stdio: "ignore" });
       for (let i = 0; i < 50 && !existsSync(`/tmp/.X11-unix/X${display.slice(1)}`); i++) await sleep(100);
     }

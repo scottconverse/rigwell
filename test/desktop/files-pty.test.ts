@@ -7,7 +7,7 @@ import { isWin } from "../platform.ts";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer } from "../fakes/types.ts";
 import { makeRepo } from "../e2e/helpers.ts";
-import { buildEnv, resolveShell, stripAnsi } from "../../src/sidepane/pty.ts";
+import { buildEnv, pipeLineEnds, resolveShell, stripAnsi } from "../../src/sidepane/pty.ts";
 import { connect, sleep, startTestDaemon, type TestClient } from "./helpers.ts";
 
 let fake: FakeServer;
@@ -144,6 +144,19 @@ describe("Terminal (spec 17.2)", () => {
     const exit = await c.waitFor((n) => n.type === "daemon.terminal_exit");
     expect(exit.exitCode).toBe(3);
     expect((await c.call("daemon.list_terminals", {})).terminals).toEqual([]);
+    await c.close();
+  });
+
+  test("the Enter key (a lone CR, what xterm.js sends) runs the typed line", async () => {
+    // On Windows the shell reads a pipe and waits for a LF; a PTY turns CR into a line end by itself.
+    expect(pipeLineEnds("dir\r")).toBe("dir\r\n");
+    expect(pipeLineEnds("a\r\nb\rc")).toBe("a\r\nb\r\nc");
+    expect(pipeLineEnds("plain")).toBe("plain");
+    const { c } = await session();
+    await c.call("daemon.create_terminal", { terminalId: "cr" });
+    await c.call("daemon.write_terminal_data", { terminalId: "cr", data: isWin ? "echo enter-4^2\r" : "echo enter-$((40+2))\r" });
+    await c.waitFor((n) => n.type === "daemon.terminal_data" && n.terminalId === "cr" && n.data.includes("enter-42"));
+    await c.call("daemon.close_terminal", { terminalId: "cr" });
     await c.close();
   });
 

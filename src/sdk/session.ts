@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { RpcClient } from "./client.ts";
 import { SocketTransport, SpawnTransport, WebSocketTransport, type SpawnOptions, type Transport } from "./transport.ts";
 import { rigwellHome } from "../storage/paths.ts";
+import { daemonSocketPath } from "../daemon/socket-path.ts";
 
 export type Notification = { type: string; [k: string]: any };
 
@@ -340,7 +341,7 @@ export async function connectToDaemon(opts: DaemonOptions = {}): Promise<Rigwell
     const info = opts.token ? undefined : readDaemonInfo();
     transport = await WebSocketTransport.connect(opts.url, opts.token ?? info?.token);
   } else {
-    transport = await SocketTransport.connect(opts.socketPath ?? join(rigwellHome(), "daemon.sock"));
+    transport = await SocketTransport.connect(opts.socketPath ?? daemonSocketPath(rigwellHome()));
   }
   return openSession(transport, opts);
 }

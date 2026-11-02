@@ -24,7 +24,7 @@ const SECRET_VALUE = "sk-test-0123456789abcdef";
 
 maybe("desktop app: wave 4 features", () => {
   let fake: FakeServer, idp: FakeOAuth, xvfb: ChildProcess | undefined, app: any, page: any;
-  let repo: string, home: string, display: string, chromeDir: string, sttDir: string;
+  let repo: string, home: string, display: string, chromeDir: string, sttDir: string, sttProgram: string;
   let stderr = "";
 
   const hook = <T>(fn: string, ...args: unknown[]): Promise<T> => app.evaluate((_e: unknown, a: { fn: string; args: unknown[] }) => (globalThis as any).__rigwellTest[a.fn](...a.args), { fn, args });
@@ -66,9 +66,12 @@ maybe("desktop app: wave 4 features", () => {
     // A fake speech-to-text program and a synthetic Chrome profile.
     sttDir = join(home, "stt");
     mkdirSync(sttDir, { recursive: true });
-    const stt = join(sttDir, "fake-stt");
-    writeFileSync(stt, '#!/bin/sh\nif [ -s "$1" ]; then echo "dictated words from the fake backend"; fi\n');
-    chmodSync(stt, 0o755);
+    // Windows cannot run a #!/bin/sh script, so there the fake is a .cmd file with the same rule: text only for a non-empty file.
+    sttProgram = join(sttDir, process.platform === "win32" ? "fake-stt.cmd" : "fake-stt");
+    writeFileSync(sttProgram, process.platform === "win32"
+      ? '@echo off\r\nfor %%A in ("%~1") do if %%~zA gtr 0 echo dictated words from the fake backend\r\n'
+      : '#!/bin/sh\nif [ -s "$1" ]; then echo "dictated words from the fake backend"; fi\n');
+    chmodSync(sttProgram, 0o755);
     chromeDir = join(home, "chrome");
     mkdirSync(join(chromeDir, "Default", "Network"), { recursive: true });
     writeFileSync(join(chromeDir, "Local State"), JSON.stringify({ profile: { info_cache: { Default: { name: "Work" } } } }));
@@ -79,7 +82,7 @@ maybe("desktop app: wave 4 features", () => {
     writeFileSync(orgFile, JSON.stringify({ managedSettings: { missions: { skipScrutiny: false }, maxAutonomyLevel: "high" } }));
 
     display = process.env.DISPLAY || `:${60 + Math.floor(Math.random() * 9)}`;
-    if (!process.env.DISPLAY) {
+    if (process.platform === "linux" && !process.env.DISPLAY) {
       xvfb = spawn("Xvfb", [display, "-screen", "0", "1280x900x24"], { stdio: "ignore" });
       for (let i = 0; i < 50 && !existsSync(`/tmp/.X11-unix/X${display.slice(1)}`); i++) await sleep(100);
     }
@@ -109,7 +112,7 @@ maybe("desktop app: wave 4 features", () => {
     await note.getByRole("button", { name: "Close" }).click();
 
     // Configure the fake backend the way the settings page would (the desktop settings file).
-    await page.evaluate((cmd: string) => (window as any).rigwell.settings.update({ dictation: { backend: "command", command: cmd } }), `${join(sttDir, "fake-stt")} {file}`);
+    await page.evaluate((cmd: string) => (window as any).rigwell.settings.update({ dictation: { backend: "command", command: cmd } }), `${sttProgram} {file}`);
     await page.getByRole("button", { name: "Dictate", exact: true }).click();
     await page.getByRole("button", { name: "Stop dictation" }).waitFor({ timeout: 15_000 });
     await sleep(1200); // a moment of (fake) microphone audio
@@ -275,6 +278,13 @@ maybe("desktop app: wave 4 features", () => {
     expect(await dlg.getByRole("group", { name: "Sites" }).getByText("other.org").count()).toBe(0);
     for (const d of ["example.com", "app.example.com", "plain.example.com"]) await dlg.getByRole("group", { name: "Sites" }).getByLabel(new RegExp(`^${d.replace(/\./g, "\\.")}`)).check();
     await dlg.getByRole("button", { name: /^Import 3 sites/ }).click();
+    if (process.platform === "win32") {
+      // Windows Chrome protects cookies with DPAPI, which is not supported (decision 294): the import is refused and nothing is copied.
+      await why("windows refusal", () => dlg.getByRole("alert").getByText(/not supported on Windows/).waitFor({ timeout: 30_000 }));
+      const winJar = await app.evaluate(async ({ session }: any) => (await session.fromPartition("persist:browserpanel").cookies.get({})).map((c: any) => c.name));
+      expect(winJar).not.toContain("sid");
+      return;
+    }
     await why("import summary", () => dlg.getByText(/Imported 3 cookies/).waitFor({ timeout: 30_000 }));
     expect(await dlg.textContent()).toContain("1 could not be decrypted");
 

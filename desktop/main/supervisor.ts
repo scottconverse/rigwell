@@ -11,6 +11,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { daemonSocketPath } from "../../src/daemon/socket-path.ts";
 
 export type SupervisorState = "stopped" | "starting" | "running" | "stopping";
 
@@ -107,7 +108,7 @@ export class DaemonSupervisor extends EventEmitter {
     this.setState("starting");
     mkdirSync(this.logDir, { recursive: true });
     this.rotateLog();
-    const socketPath = join(this.opts.home, "daemon.sock");
+    const socketPath = daemonSocketPath(this.opts.home);
     const [cmd, ...rest] = this.opts.command;
     const child = spawn(cmd, [...rest, "daemon", "--socket", socketPath, "--ws-port", "0"], {
       env: { ...process.env, ...this.opts.env, RIGWELL_HOME: this.opts.home } as NodeJS.ProcessEnv,
@@ -137,7 +138,7 @@ export class DaemonSupervisor extends EventEmitter {
         this.emit("ready", this._info);
         return this._info;
       }
-      if (child.exitCode !== null || child.signalCode !== null) throw new Error(`Daemon exited during start (${stderrTail.trim().split("\n").pop() ?? "no output"})`);
+      if (child.exitCode !== null || child.signalCode !== null) throw new Error(`Daemon exited during start (${startErrorLine(stderrTail)})`);
       if (Date.now() > deadline) { child.kill("SIGKILL"); throw new Error("Daemon was not ready within the time limit"); }
       await new Promise((r) => setTimeout(r, 50));
     }
@@ -175,4 +176,13 @@ export class DaemonSupervisor extends EventEmitter {
       if (existsSync(f) && statSync(f).size > (this.opts.logMaxBytes ?? 1024 * 1024)) renameSync(f, f + ".old");
     } catch {}
   }
+}
+
+/**
+ * The stderr line that says why a start failed. Bun prints the error line first and its own version line last
+ * ("Bun v1.4.4 (Windows x64)"), so the last line alone hides the cause: prefer the last line that says "error".
+ */
+export function startErrorLine(stderr: string): string {
+  const lines = stderr.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  return [...lines].reverse().find((l) => /error/i.test(l)) ?? lines.at(-1) ?? "no output";
 }

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createConnection } from "./connection.ts";
 import { rigwellHome } from "../storage/paths.ts";
+import { daemonSocketPath } from "./socket-path.ts";
 import { automationTools, createAutomationService, type ServiceOptions } from "../automations/index.ts";
 import { onWorktreeNotification, startWorktreeHousekeeping } from "../worktree/connect.ts";
 import { loadSettings } from "../storage/settings.ts";
@@ -11,7 +12,7 @@ import { createMissionService } from "../missions/index.ts";
 import { createSidePane, type ConnCtx, type SidePaneOptions } from "../sidepane/index.ts";
 import { DEFAULT_WS_PORT, removeDaemonInfo, startWsServer, writeDaemonInfo } from "./ws.ts";
 
-export const defaultSocketPath = () => join(rigwellHome(), "daemon.sock");
+export const defaultSocketPath = () => daemonSocketPath(rigwellHome());
 
 export async function startDaemon(opts: { socketPath: string; log?: (m: string) => void; retryBaseDelayMs?: number; automations?: false | ServiceOptions; ws?: false | { port?: number; token?: string }; sidepane?: false | SidePaneOptions }) {
   mkdirSync(dirname(opts.socketPath), { recursive: true });
