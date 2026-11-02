@@ -14,6 +14,12 @@ export interface ViewCtx {
   state: TuiState;
   connection: string;
   settingsPath?: string;
+  /** Opens a URL in the user's browser (best effort); /login also prints it. */
+  openUrl?: (url: string) => void;
+  /** A message that arrives after the view was shown (the sign-in finished). */
+  notify?: (text: string, level?: "info" | "error") => void;
+  /** Poll interval of /login in ms (tests shorten it). */
+  loginPollMs?: number;
 }
 export interface View { title: string; lines: string[] }
 
@@ -221,8 +227,65 @@ async function automationsView(args: string, c: ViewCtx): Promise<View> {
   }
 }
 
+// ---------------------------------------------------------------- /login and /logout (OAuth sign-in, docs/auth.md)
+
+const providerLine = (p: any) => `${String(p.name).padEnd(16)} ${p.loggedIn ? (p.expired && !p.hasRefreshToken ? "signed in, expired" : "signed in") : "signed out"}${p.browserLogin ? "" : "  (device code only)"}`;
+
+async function loginView(args: string, c: ViewCtx): Promise<View> {
+  const title = "Sign in";
+  const w = words(args);
+  const device = w.includes("--device");
+  const name = w.find((x) => !x.startsWith("--"));
+  try {
+    if (!name) {
+      const r = await c.request("auth_list", {});
+      const list = (r?.providers ?? []) as any[];
+      const lines = list.length ? list.map(providerLine) : ["No OAuth providers are configured. Add oauthProviders to settings.json (see docs/auth.md)."];
+      for (const p of r?.problems ?? []) lines.push(`Problem: ${p}`);
+      lines.push("", "/login <provider> [--device]   sign in (a browser page, or a code with --device)", "/logout <provider>             sign out");
+      return { title, lines };
+    }
+    const st = await c.request("auth_login_start", { name, ...(device ? { mode: "device" } : {}) });
+    const lines: string[] = [];
+    if (st.url) {
+      lines.push(`Opening your browser to sign in to ${name}. If nothing opens, visit:`, st.url);
+      c.openUrl?.(st.url);
+    } else lines.push(`Sign in to ${name}: open ${st.verificationUriComplete ?? st.verificationUri} and enter the code`, `  ${st.userCode}`);
+    lines.push("", "Waiting for the sign-in to finish. You can keep using the session; the result is shown here.");
+    // Poll in the background; the overlay above stays as the instructions.
+    void (async () => {
+      const interval = c.loginPollMs ?? 1500;
+      for (let i = 0; i < Math.ceil((5 * 60_000 + 10_000) / interval); i++) {
+        await new Promise((r) => setTimeout(r, interval));
+        let s: any;
+        try { s = await c.request("auth_login_status", { loginId: st.loginId }); } catch (e) { c.notify?.(`Sign-in to ${name}: ${errText(e)}`, "error"); return; }
+        if (s.state === "complete") { c.notify?.(`Signed in to ${name}.`); return; }
+        if (s.state === "failed") { c.notify?.(`Sign-in to ${name} failed: ${s.error ?? "unknown error"}`, "error"); return; }
+        if (s.state === "cancelled") { c.notify?.(`Sign-in to ${name} was cancelled.`, "error"); return; }
+      }
+      c.notify?.(`Sign-in to ${name} timed out.`, "error");
+    })();
+    return { title, lines };
+  } catch (e) { return { title, lines: [`Sign-in: ${errText(e)}`] }; }
+}
+
+async function logoutView(args: string, c: ViewCtx): Promise<View> {
+  const title = "Sign out";
+  const name = words(args)[0];
+  try {
+    if (!name) {
+      const list = ((await c.request("auth_list", {}))?.providers ?? []) as any[];
+      return { title, lines: ["Usage: /logout <provider>", ...list.filter((p) => p.loggedIn).map((p) => `  ${p.name}`)] };
+    }
+    const r = await c.request("auth_logout", { name });
+    return { title, lines: [r?.loggedOut ? `Signed out of ${name}.` : `${name} was not signed in.`] };
+  } catch (e) { return { title, lines: [`Sign out: ${errText(e)}`] }; }
+}
+
 export async function buildView(name: string, args: string, c: ViewCtx): Promise<View> {
   switch (name) {
+    case "login": return loginView(args, c);
+    case "logout": return logoutView(args, c);
     case "mcp": return mcpView(args, c);
     case "hooks": return hooksView(c);
     case "skills": return skillsView(c);

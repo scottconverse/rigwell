@@ -17,6 +17,13 @@ import { render, stripAnsi } from "./render.ts";
 import { initialState, reduce } from "./reducer.ts";
 import type { DisplaySettings, Effect, TuiEvent, TuiState } from "./types.ts";
 
+/** Best effort: hands an http(s) URL to the desktop's opener. /login prints the URL as well, so a failure here is harmless. */
+function openInBrowser(url: string) {
+  if (!/^https?:\/\//.test(url) || process.env.RIGWELL_NO_BROWSER === "1") return;
+  const cmd = process.platform === "darwin" ? ["open", url] : process.platform === "win32" ? ["cmd", "/c", "start", "", url] : ["xdg-open", url];
+  try { const p = spawn(cmd[0]!, cmd.slice(1), { stdio: "ignore", detached: true }); p.on("error", () => {}); p.unref(); } catch { /* the printed URL is the fallback */ }
+}
+
 export interface TuiOptions {
   cwd: string;
   makeTransport: () => Promise<Transport>;
@@ -246,7 +253,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
           return;
         }
         case "view": {
-          const v = eff.name === "loop" ? await loopView(eff.args) : await buildView(eff.name, eff.args, { request: (m, p) => client!.request(m, p), state, connection: opts.connection ?? "in-process", settingsPath: opts.settingsPath });
+          const v = eff.name === "loop" ? await loopView(eff.args) : await buildView(eff.name, eff.args, { request: (m, p) => client!.request(m, p), state, connection: opts.connection ?? "in-process", settingsPath: opts.settingsPath, openUrl: openInBrowser, notify: (t, l) => info(t, l) });
           dispatch({ type: "overlay", title: v.title, lines: v.lines });
           if (eff.name === "statusline") void refreshStatusLine();
           if (eff.name === "mcp") void refreshExtras();

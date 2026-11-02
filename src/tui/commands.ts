@@ -41,6 +41,8 @@ export const COMMANDS: SlashCommand[] = [
   { name: "automations", desc: "Scheduled automations", args: "[pause|resume|run|delete|history <id>]" },
   { name: "loop", desc: "Repeat a prompt on an interval", args: "<30m|2h> <prompt> | list | stop [id|all]" },
   { name: "diagnostics", desc: "Versions, connection, MCP and config problems" },
+  { name: "login", desc: "Sign in to an OAuth account provider", args: "[provider] [--device]" },
+  { name: "logout", desc: "Sign out of an OAuth account provider", args: "[provider]" },
   { name: "quit", aliases: ["exit"], desc: "Quit" },
 ];
 
