@@ -27,6 +27,7 @@ export const COMMANDS: SlashCommand[] = [
   { name: "rewind-conversation", desc: "Go back to an earlier user turn", stopsRun: true },
   { name: "fork", desc: "Copy this session into a new one" },
   { name: "rename", desc: "Rename the session", args: "<title>" },
+  { name: "btw", desc: "Ask a side question without interrupting the agent", args: "<question>" },
   { name: "copy", desc: "Copy the last assistant message" },
   { name: "cwd", aliases: ["cd"], desc: "Change the working folder", args: "<dir>", stopsRun: true },
   { name: "mcp", desc: "MCP servers", args: "[add <name> <url|cmd> | remove <name>]" },
