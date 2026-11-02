@@ -27,6 +27,7 @@ import { loadAgents } from "../subagents/agents.ts";
 import { TaskLimits } from "../subagents/task.ts";
 import { forkSession } from "../storage/fork.ts";
 import { RewindError, rewindSession } from "../snapshots/index.ts";
+import { automationSetupParams } from "../automations/setup.ts";
 
 /** Sessions whose client went away while a prompt was open: kept for a reconnecting load_session (spec 3.1.5 pending lists). */
 const parked = new Map<string, { session: Session; files: SessionFiles; worktree?: SessionWorktree; timer: ReturnType<typeof setTimeout> }>();
@@ -255,6 +256,11 @@ export function createConnection(write: (line: string) => void, opts: Connection
 
   async function handle(method: string, p: Record<string, unknown>): Promise<unknown> {
     switch (method) {
+      case "start_automation_setup": {
+        // Guided "create by chatting" (spec 16.8): a normal session with the setup block added to its system prompt.
+        if (typeof p.cwd !== "string" || !p.cwd) throw new RpcError(ErrorCodes.INVALID_PARAMS, "cwd is required");
+        return { ...(await handle("initialize_session", automationSetupParams(p)) as Record<string, unknown>), automationSetup: true };
+      }
       case "initialize_session": {
         if (session) throw new RpcError(ErrorCodes.CONFLICT, "This connection already has a session");
         if (typeof p.cwd !== "string" || !p.cwd) throw new RpcError(ErrorCodes.INVALID_PARAMS, "cwd is required");
