@@ -3,7 +3,7 @@
 // Why no SDK: ConverseStream is one signed POST plus a framed response, about 250 lines here against a dependency
 // tree of hundreds of modules, and the harness does its own retrying (spec 4.6.9).
 import { createHash, createHmac } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawnShell } from "../platform/shell.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -72,7 +72,7 @@ function parseIni(text: string): Record<string, Record<string, string>> {
 
 function runShell(cmd: string, env: NodeJS.ProcessEnv, timeoutMs = 60_000): Promise<{ code: number | null; out: string; err: string }> {
   return new Promise((resolve) => {
-    const p = spawn("/bin/sh", ["-c", cmd], { env, stdio: ["ignore", "pipe", "pipe"] });
+    const p = spawnShell(cmd, { env, stdio: ["ignore", "pipe", "pipe"] });
     let out = "", err = "";
     const t = setTimeout(() => p.kill("SIGKILL"), timeoutMs);
     p.stdout.on("data", (d) => (out += d));

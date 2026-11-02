@@ -1,5 +1,6 @@
 // Setup profiles (spec §18.3): repo profiles (need a trusted repo) and local profiles (no trust check).
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { makePrivate } from "../platform/private.ts";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { rigwellHome } from "../storage/paths.ts";
@@ -90,7 +91,7 @@ export function readProfileIndex(repoRoot: string): ProfileIndex {
 function writeProfileIndex(repoRoot: string, idx: ProfileIndex) {
   const dir = localProfilesDir(repoRoot);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  chmodSync(dir, 0o700);
+  makePrivate(dir, { dir: true });
   const lines: string[] = [];
   if (idx.lastUsedProfileId) lines.push(`lastUsedProfileId: ${JSON.stringify(idx.lastUsedProfileId)}`);
   const ids = Object.keys(idx.deleted);
@@ -103,7 +104,7 @@ function writeProfileIndex(repoRoot: string, idx: ProfileIndex) {
   }
   const f = indexFile(repoRoot);
   writeFileSync(f, lines.join("\n") + "\n", { mode: 0o600 });
-  chmodSync(f, 0o600);
+  makePrivate(f);
 }
 
 /** Remembers the profile the user picked last for this repo. */
@@ -130,10 +131,10 @@ export function deleteLocalProfile(repoRoot: string, id: string): boolean {
 export function saveLocalProfile(repoRoot: string, p: Omit<SetupProfile, "source">): void {
   const dir = localProfilesDir(repoRoot);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  chmodSync(dir, 0o700);
+  makePrivate(dir, { dir: true });
   const lines = [`name: ${JSON.stringify(p.name)}`];
   for (const k of ["script", "initialPrompt", "cleanupScript"] as const) if (p[k]) lines.push(`${k}: ${JSON.stringify(p[k])}`);
   const f = path.join(dir, `${p.id}.yaml`);
   writeFileSync(f, lines.join("\n") + "\n", { mode: 0o600 });
-  chmodSync(f, 0o600);
+  makePrivate(f);
 }

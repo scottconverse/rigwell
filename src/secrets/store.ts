@@ -2,7 +2,8 @@
 // Secret VALUES live only in the credential store (keychain, else the 0600 file) under `secret:<name>`.
 // `<home>/secrets.json` is an index of names and masks (no values) so a list does not have to open the keychain.
 // `<home>/environments.json` holds environments: sets of variables, each a literal or a reference to a secret.
-import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { makePrivate } from "../platform/private.ts";
 import path from "node:path";
 import { lookupCredential, removeCredential, storeCredential } from "../storage/credentials.ts";
 import { rigwellHome } from "../storage/paths.ts";
@@ -34,7 +35,7 @@ function writeJson(file: string, v: unknown) {
   const tmp = `${file}.tmp-${process.pid}`;
   try {
     writeFileSync(tmp, JSON.stringify(v, null, 2) + "\n", { mode: 0o600 });
-    chmodSync(tmp, 0o600);
+    makePrivate(tmp);
     renameSync(tmp, file);
   } finally { rmSync(tmp, { force: true }); }
 }

@@ -2,6 +2,7 @@
 // Stream transports (child process, Unix socket) split NDJSON; WebSocket carries one message per text frame.
 import { spawn, type ChildProcess } from "node:child_process";
 import { connect as netConnect, type Socket } from "node:net";
+import { fileURLToPath } from "node:url";
 
 export interface Transport {
   /** Send one JSON message. */
@@ -51,7 +52,7 @@ export interface SpawnOptions {
   killMs?: number;
 }
 
-const DEFAULT_CLI = new URL("../cli/main.ts", import.meta.url).pathname;
+const DEFAULT_CLI = fileURLToPath(new URL("../cli/main.ts", import.meta.url));
 
 export class SpawnTransport implements Transport {
   onMessage: (m: string) => void = () => {};

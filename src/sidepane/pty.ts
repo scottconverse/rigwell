@@ -3,6 +3,10 @@
 // scrollback back so the view can repaint. Otherwise the terminal is killed when the timer fires.
 //
 // Mechanism: Bun's built-in pseudo terminal support (`Bun.spawn(cmd, { terminal })`), so no native module is needed.
+// Windows: Bun's terminal option is POSIX only, and a ConPTY binding would need a native module. There the shell is
+// started with plain pipes ("pipe mode"): output streams, input works, exit codes are reported, and the terminal keeps
+// its scrollback and survives a dropped connection like any other. Limits: no terminal emulation for the child (full
+// screen programs and line editing do not work, the shell does not echo typed text) and resize only records the size.
 // Scrollback is the raw output kept as a capped string (default 1 MB) instead of a headless xterm; the renderer
 // writes it into xterm.js, which repaints exactly what the shell drew. `plainText` strips escape sequences for
 // clients that only want text (search, accessibility, tests).
@@ -44,17 +48,23 @@ interface Term {
   scrollback: string;
   cursorHidden: boolean;
   proc: any;
+  /** Terminal I/O: a PTY where Bun supports it, plain pipes on Windows. */
+  io: { write(data: string): void; resize(cols: number, rows: number): void; close(): void };
   grace?: ReturnType<typeof setTimeout>;
   orphanSince?: number;
   closing: boolean;
 }
 
 /** Picks the shell: only allow-listed names are honored; anything else becomes the platform default. */
-export function resolveShell(requested?: string): string {
+export function resolveShell(requested?: string, platform: NodeJS.Platform = process.platform): string {
   const name = requested ? basename(requested.replace(/\\/g, "/")) : "";
-  const fallback = process.platform === "win32" ? "cmd.exe" : process.platform === "darwin" ? "zsh" : "bash";
-  const pick = SHELL_ALLOW.includes(name) && (process.platform === "win32" || UNIX_DIRS.some((d) => requested!.startsWith(d + "/")) || !requested!.includes("/")) ? name : fallback;
-  if (process.platform === "win32") return pick;
+  const fallback = platform === "win32" ? "cmd.exe" : platform === "darwin" ? "zsh" : "bash";
+  // Windows compares the file name only (case-insensitive); elsewhere the shell must sit in a system folder or be a bare name.
+  const allowed = platform === "win32"
+    ? SHELL_ALLOW.some((a) => a.toLowerCase() === name.toLowerCase())
+    : SHELL_ALLOW.includes(name) && (UNIX_DIRS.some((d) => requested!.startsWith(d + "/")) || !requested!.includes("/"));
+  const pick = allowed ? (platform === "win32" ? name.toLowerCase() : name) : fallback;
+  if (platform === "win32") return pick;
   for (const d of UNIX_DIRS) if (existsSync(`${d}/${pick}`)) return `${d}/${pick}`;
   return Bun.which(pick) ?? Bun.which("sh") ?? "/bin/sh";
 }
@@ -103,15 +113,32 @@ export class TerminalManager {
     const cols = Math.max(2, Math.floor(p.cols ?? 80));
     const rows = Math.max(1, Math.floor(p.rows ?? 24));
     const shell = resolveShell(p.shell);
-    const term: Term = { id: p.terminalId, sessionId: p.sessionId, pid: 0, cols, rows, createdAt: Date.now(), owner, scrollback: "", cursorHidden: false, proc: undefined, closing: false };
+    const term: Term = { id: p.terminalId, sessionId: p.sessionId, pid: 0, cols, rows, createdAt: Date.now(), owner, scrollback: "", cursorHidden: false, proc: undefined, io: { write() {}, resize() {}, close() {} }, closing: false };
     const decoder = new TextDecoder();
-    const proc = (Bun as any).spawn([shell], {
-      cwd, env: buildEnv(process.env, p.env),
-      terminal: {
-        cols, rows,
-        data: (_t: unknown, chunk: Uint8Array) => this.onData(term, decoder.decode(chunk, { stream: true })),
-      },
-    });
+    let proc: any;
+    if (process.platform === "win32") {
+      proc = (Bun as any).spawn([shell], { cwd, env: buildEnv(process.env, p.env), stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+      for (const stream of [proc.stdout, proc.stderr] as ReadableStream<Uint8Array>[]) {
+        const dec = new TextDecoder();
+        void (async () => {
+          try { for await (const chunk of stream as any) this.onData(term, dec.decode(chunk, { stream: true })); } catch { /* closed */ }
+        })();
+      }
+      term.io = {
+        write: (data) => { try { proc.stdin.write(data); proc.stdin.flush?.(); } catch { /* shell is gone */ } },
+        resize: () => { /* no PTY: the size is only recorded */ },
+        close: () => { try { proc.stdin.end(); } catch { /* ignore */ } },
+      };
+    } else {
+      proc = (Bun as any).spawn([shell], {
+        cwd, env: buildEnv(process.env, p.env),
+        terminal: {
+          cols, rows,
+          data: (_t: unknown, chunk: Uint8Array) => this.onData(term, decoder.decode(chunk, { stream: true })),
+        },
+      });
+      term.io = { write: (d) => proc.terminal.write(d), resize: (c, r) => proc.terminal.resize(c, r), close: () => proc.terminal?.close?.() };
+    }
     term.proc = proc;
     term.pid = proc.pid;
     this.terms.set(k, term);
@@ -147,14 +174,14 @@ export class TerminalManager {
   }
 
   write(owner: TerminalOwner, sessionId: string, terminalId: string, data: string) {
-    this.owned(owner, sessionId, terminalId).proc.terminal.write(data);
+    this.owned(owner, sessionId, terminalId).io.write(data);
     return { success: true };
   }
 
   resize(owner: TerminalOwner, sessionId: string, terminalId: string, cols: number, rows: number) {
     const t = this.owned(owner, sessionId, terminalId);
     t.cols = Math.max(2, Math.floor(cols)); t.rows = Math.max(1, Math.floor(rows));
-    t.proc.terminal.resize(t.cols, t.rows);
+    t.io.resize(t.cols, t.rows);
     return { success: true };
   }
 
@@ -167,7 +194,7 @@ export class TerminalManager {
   private kill(t: Term) {
     t.closing = true;
     try { t.proc.kill(); } catch {}
-    try { t.proc.terminal?.close?.(); } catch {}
+    try { t.io.close(); } catch {}
   }
 
   /** Terminals of a session. Unowned ones (their connection dropped) are adopted by `owner`, which cancels the grace timer. */

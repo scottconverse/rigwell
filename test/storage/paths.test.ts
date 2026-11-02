@@ -16,8 +16,10 @@ test("rigwellHome honours RIGWELL_HOME", () => {
 test("slug rule", () => {
   expect(projectSlug("C:\\Users\\scott")).toBe("-C-Users-scott");
   expect(projectSlug("C:/Users/scott/")).toBe("-C-Users-scott");
-  expect(projectSlug("/nonexistent/a_b/c.d-e")).toBe("-nonexistent-a_b-c.d-e");
-  expect(projectSlug("/nonexistent/a/b///")).toBe("-nonexistent-a-b");
+  // Step 2 makes the path absolute: on Windows "/x" is on the current drive, so the drive letter joins the slug.
+  const drive = process.platform === "win32" ? path.parse(path.resolve("/")).root.slice(0, 1) + "-" : "";
+  expect(projectSlug("/nonexistent/a_b/c.d-e")).toBe(`-${drive}nonexistent-a_b-c.d-e`);
+  expect(projectSlug("/nonexistent/a/b///")).toBe(`-${drive}nonexistent-a-b`);
 });
 
 test("slug resolves symlinks when the path exists", () => {

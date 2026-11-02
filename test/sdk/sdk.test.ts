@@ -8,6 +8,7 @@ import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer, FakeTurn } from "../fakes/types.ts";
 import { lastToolResult, makeHome, makeRepo } from "../e2e/helpers.ts";
 import { startDaemon } from "../../src/daemon/daemon.ts";
+import { expectOwnerOnly } from "../platform.ts";
 import { connectToDaemon, createSession, readDaemonInfo, run, type PermissionRequest } from "../../src/sdk/index.ts";
 
 const MODEL = "custom:Fake-Anthropic-0";
@@ -132,7 +133,7 @@ describe("SDK: connectToDaemon", () => {
       const info = readDaemonInfo(home)!;
       expect(info.token).toBe(d.wsToken!);
       expect(info.ws!.url).toBe(d.wsUrl!);
-      expect(statSync(join(home, "daemon.json")).mode & 0o777).toBe(0o600);
+      expectOwnerOnly(join(home, "daemon.json"));
       const asked: unknown[] = [];
       const session = await connectToDaemon({
         url: d.wsUrl, cwd: repo, modelId: MODEL, autonomyLevel: "low",

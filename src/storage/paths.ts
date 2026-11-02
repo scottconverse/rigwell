@@ -27,12 +27,13 @@ const WIN_DRIVE_ONLY = /^[A-Za-z]:$/;
  * ~ expand, absolute, realpath if exists, strip trailing slashes, drop ':' after a drive
  * letter, runs of / or \ -> '-', leading '-'.
  * `/home/a/b` -> `-home-a-b` (the leading '/' already became '-'), `C:\Users\scott` -> `-C-Users-scott`.
- * Windows-style paths are processed textually on any platform (no resolve/realpath).
+ * On Windows the path is made absolute and resolved like any other. A Windows-style path seen on another platform
+ * (a transcript copied across) is processed textually, since this machine cannot resolve it.
  */
-export function projectSlug(cwd: string): string {
+export function projectSlug(cwd: string, platform: NodeJS.Platform = process.platform): string {
   let p = cwd;
   if (p === "~" || p.startsWith("~/") || p.startsWith("~\\")) p = userHomeDir() + p.slice(1);
-  if (!WIN_ABS.test(p) && !WIN_DRIVE_ONLY.test(p)) {
+  if (platform === "win32" || (!WIN_ABS.test(p) && !WIN_DRIVE_ONLY.test(p))) {
     p = path.resolve(p);
     try {
       if (existsSync(p)) p = realpathSync(p);

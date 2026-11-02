@@ -15,6 +15,11 @@ const engine = detectEngine();
 const linux = engine.engine === "bubblewrap" && engine.available;
 if (!linux) console.log(`[sandbox tests] bubblewrap engine tests skipped: ${engine.reason ?? "not Linux"}`);
 const linuxTest = linux ? test : test.skip;
+// The seatbelt profile and the stderr/command-text violation detection serve macOS and Linux. Spec 5.5.8: on Windows the
+// sandbox is unavailable (commands rely on the permission rules), so their POSIX path assertions are not run there.
+const win = process.platform === "win32";
+if (win) console.log("[sandbox tests] seatbelt profile and violation detection tests skipped: the sandbox is unsupported on win32 (spec 5.5.8)");
+const posixSandboxTest = win ? test.skip : test;
 const proxyTest = linux && engine.canProxy ? test : test.skip;
 if (linux && !engine.canProxy) console.log("[sandbox tests] proxy tests skipped: socat is not installed");
 
@@ -98,7 +103,7 @@ describe("status and platform reporting", () => {
     expect(wp.mode).toBe("whole-process");
     expect(wp.note).toContain("per command");
   });
-  test("seatbelt profile denies writes, credentials and network by default", () => {
+  posixSandboxTest("seatbelt profile denies writes, credentials and network by default", () => {
     const t = mk("sb");
     const pol = buildPolicy({ cwd: t.cwd, home: t.home, rigwellHome: t.rhome, settings: on, canProxy: true });
     const prof = buildSeatbeltProfile(pol);
@@ -166,7 +171,7 @@ describe("violation detection and log", () => {
     expect(log.size).toBe(MAX_VIOLATIONS);
     expect(log.list()[0]!.target).toBe("h25");
   });
-  test("stderr and command text detection", () => {
+  posixSandboxTest("stderr and command text detection", () => {
     const t = mk("det");
     const pol = buildPolicy({ cwd: t.cwd, home: t.home, rigwellHome: t.rhome, canProxy: false, settings: on });
     const out = path.join(t.outside, "f");

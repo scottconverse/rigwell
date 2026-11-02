@@ -22,6 +22,8 @@ export function createGrepTool(): Tool {
       if (!["files", "content", "count"].includes(output)) return fail(`output must be files, content or count.`);
       const limit = Math.max(1, intArg(input, "limit") ?? SEARCH_DEFAULT_LIMIT);
       const args = ["--color=never", "--no-heading", "--no-config", "--no-require-git", "--sort=path"];
+      // rg prints native separators on Windows; the model sees "/" everywhere (same as Glob and LS).
+      if (process.platform === "win32") args.push("--path-separator", "/");
       if (output === "files") args.push("-l");
       else if (output === "count") args.push("-c", "--with-filename");
       else {

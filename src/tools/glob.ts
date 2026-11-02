@@ -16,6 +16,7 @@ export async function listMatching(
   signal: AbortSignal,
 ): Promise<{ files?: string[]; error?: string }> {
   const args = ["--files", "--no-config", "--no-require-git"];
+  if (process.platform === "win32") args.push("--path-separator", "/"); // so the glob sees "/" like everywhere else
   if (includeIgnored) args.push("--no-ignore", "--hidden");
   const r = await runRg(args, dir, signal);
   if (r.missing) return { error: "ripgrep (rg) is not installed or not on PATH." };

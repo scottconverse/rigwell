@@ -1,6 +1,7 @@
 // Credential store (spec 12.2): custom-model API keys in the OS keychain where possible, else a 0600 file.
 // Settings reference a stored key as `apiKey: "keychain:<name>"`. A plain `apiKey` in settings keeps working.
-import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { makePrivate } from "../platform/private.ts";
 import path from "node:path";
 import { rigwellHome } from "./paths.ts";
 
@@ -79,7 +80,7 @@ export class FileBackend implements CredentialBackend {
     const tmp = `${f}.tmp-${process.pid}`;
     try {
       writeFileSync(tmp, JSON.stringify(all, null, 2) + "\n", { mode: 0o600 });
-      chmodSync(tmp, 0o600);
+      makePrivate(tmp);
       renameSync(tmp, f);
     } finally { rmSync(tmp, { force: true }); }
   }
