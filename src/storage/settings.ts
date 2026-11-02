@@ -4,7 +4,7 @@
 // Merge: plain objects deep-merge; arrays and scalars REPLACE (command lists included: the
 // higher level's list is the whole list; no concatenation).
 // Project/folder config is always loaded (no trustedFolders gate) in Phase 1.
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AutonomyLevel, InteractionMode, ReasoningEffort } from "../core/types.ts";
 import type { SandboxSettings } from "../sandbox/policy.ts";
@@ -233,7 +233,12 @@ export function loadSettings(opts: {
 export function isFolderTrusted(cwd: string, trustedFolders: RigwellSettings["trustedFolders"], env: Record<string, string | undefined> = process.env): boolean {
   if (env.RIGWELL_TRUST_CWD === "1" || env.RIGWELL_TRUST_CWD === "true") return true;
   const abs = path.resolve(cwd);
-  return Object.keys(trustedFolders ?? {}).some((k) => contains(path.resolve(k), abs));
+  const keys = Object.keys(trustedFolders ?? {});
+  if (keys.some((k) => contains(path.resolve(k), abs))) return true;
+  // Symlinked roots (macOS /var -> /private/var, /tmp -> /private/tmp): compare real paths too.
+  const real = (p: string) => { try { return realpathSync.native(p); } catch { return p; } };
+  const rabs = real(abs);
+  return keys.some((k) => contains(real(path.resolve(k)), rabs));
 }
 
 /** True when the folder (or the repo around it) has project configuration that trust would unlock. */

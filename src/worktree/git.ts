@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs";
+import path from "node:path";
 // Non-interactive git runner for the worktree manager (spec §18.2: LC_ALL=C, no prompts, timeout).
 export interface GitResult { code: number; stdout: string; stderr: string; timedOut: boolean }
 
@@ -24,6 +26,16 @@ export async function gitOk(cwd: string, args: string[], opts?: { timeoutMs?: nu
   const r = await git(cwd, args, opts);
   if (r.code !== 0) throw new Error(`git ${args[0]} failed${r.timedOut ? " (timed out)" : ""}: ${r.stderr.trim() || r.stdout.trim()}`);
   return r.stdout.trim();
+}
+
+/**
+ * The real path of a folder, falling back to the resolved path when it does not exist.
+ * git always reports real paths (macOS /var/folders is /private/var/folders), so every
+ * path used as a key or compared with git output goes through here first.
+ */
+export function canonicalPath(p: string): string {
+  const abs = path.resolve(p);
+  try { return realpathSync.native(abs); } catch { return abs; }
 }
 
 export async function repoTopLevel(cwd: string): Promise<string | null> {
