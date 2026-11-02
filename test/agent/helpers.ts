@@ -29,6 +29,7 @@ export function makeStubSession(respond: Respond, over: Partial<SessionDeps> & {
   const model = over.resolveModel?.("x") ?? MODEL;
   const deps: SessionDeps = {
     id: crypto.randomUUID(), cwd,
+    disableBuiltinSkills: true, // the budget and tool-list tests measure the base request; built-ins have their own tests
     settings: { modelId: MODEL.id, reasoningEffort: "off", interactionMode: "auto", autonomyLevel: "high" },
     resolveModel: () => model,
     createAdapter: () => ({ stream: () => { throw new Error("stub adapter"); } }) as any,
