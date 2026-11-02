@@ -19,7 +19,14 @@ import { rigwellHome } from "../storage/paths.ts";
 
 /** Worktrees with a live session in this process (path -> session id); auto-delete and remove skip them. */
 const active = new Map<string, string>();
-export const releaseWorktree = (p: string) => { active.delete(p); heads.remove(p); };
+/**
+ * Key for `active`. Windows paths compare case-insensitively and may arrive as 8.3 short names, forward slashes or a
+ * different drive-letter case from the one the worktree was created with, so the key is the canonical lower-cased path
+ * there. Elsewhere the path is used as given.
+ */
+export const activeKey = (p: string, platform: NodeJS.Platform = process.platform): string =>
+  platform === "win32" ? (process.platform === "win32" ? canonicalPath(p) : path.win32.resolve(p)).replace(/\//g, "\\").toLowerCase() : p;
+export const releaseWorktree = (p: string) => { active.delete(activeKey(p)); heads.remove(p); };
 
 // ---- notifications (spec 18.5 and 18.6): the daemon subscribes and broadcasts to its clients ----
 // Wire names: rigwell.worktree.removed {worktreePath, sessionId, repoRoot, branch}
@@ -44,9 +51,9 @@ export function managerFor(s: RigwellSettings, log?: (m: string) => void): Workt
   return new WorktreeManager({
     root: resolveRoot(s.worktreeDirectory, log), autoDeleteLimit: limit, log,
     isTrusted: (repo) => trusted.has(path.resolve(repo)) || trusted.has(canonicalPath(repo)),
-    inUse: (p) => active.has(p),
+    inUse: (p) => active.has(activeKey(p)),
     trust: { mark: markTrusted, forget: forgetTrusted },
-    onRemoved: (e) => { heads.remove(e.path); active.delete(e.path); emit("worktree.removed", { worktreePath: e.path, sessionId: e.sessionId, repoRoot: e.repoRoot, branch: e.branch }); },
+    onRemoved: (e) => { heads.remove(e.path); active.delete(activeKey(e.path)); emit("worktree.removed", { worktreePath: e.path, sessionId: e.sessionId, repoRoot: e.repoRoot, branch: e.branch }); },
   });
 }
 
@@ -132,7 +139,7 @@ export async function startSessionWorktree(raw: unknown, cwd: string, sessionId:
   if (!req) {
     const adopted = await manager.containing(cwd);
     if (!adopted) return null;
-    active.set(adopted.path, sessionId);
+    active.set(activeKey(adopted.path), sessionId);
     void heads.add(adopted.path).catch(() => {});
     return { manager, info: adopted, cwd, adopted: true };
   }
@@ -143,7 +150,7 @@ export async function startSessionWorktree(raw: unknown, cwd: string, sessionId:
       repoRoot: top, sessionId, prompt: req.prompt, branchMode: req.branchMode, branch: req.branch,
       baseRef: req.baseRef, lifecycle: req.lifecycle, setupProfileId: req.setupProfile, pullFromOrigin: req.pullFromOrigin,
     });
-    active.set(info.path, sessionId);
+    active.set(activeKey(info.path), sessionId);
     void heads.add(info.path).catch(() => {});
     if (req.setupProfile) { try { setLastUsedProfile(top, req.setupProfile); } catch { /* the index is a convenience */ } }
     const rel = path.relative(top, canonicalPath(cwd));
@@ -217,6 +224,8 @@ export async function handleWorktreeMethod(method: string, p: Record<string, unk
       case "get_worktree_status": return ok({ status: await mgr().status(target()) });
       case "inspect_worktree_deletion": return ok(await mgr().inspectDeletion(path.resolve(need(p, "worktreePath"))));
       case "cleanup_worktree": {
+        // Answer the live-session case before any subprocess work, so it never waits on one.
+        if (p.force !== true && active.has(activeKey(need(p, "worktreePath")))) toWorktreeError(new WorktreeError("in_use", "A live session is using this worktree"));
         const r = await mgr().remove(path.resolve(need(p, "worktreePath")), {
           deleteLocalBranch: p.deleteLocalBranch === true, deleteRemoteBranch: p.deleteRemoteBranch === true, force: p.force === true,
         });
