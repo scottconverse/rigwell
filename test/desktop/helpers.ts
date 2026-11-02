@@ -1,5 +1,5 @@
 // Helpers for the desktop-side service tests: an in-process daemon and raw protocol clients (no Electron).
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -59,10 +59,37 @@ export async function connect(socketPath: string): Promise<TestClient> {
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Playwright is not a project dependency; the sandbox has it under /opt/node-tools. Null when missing. */
+/** Playwright comes from desktop/node_modules (devDependency, installed by `npm install` in desktop/) or, in the sandbox, /opt/node-tools. */
+const PW_BASES = [join(import.meta.dir, "../../desktop") + "/", "/opt/node-tools/", process.cwd() + "/"];
+
 export function loadPlaywright(): any | null {
-  for (const base of ["/opt/node-tools/", process.cwd() + "/"]) {
+  for (const base of PW_BASES) {
     try { return createRequire(base)("playwright"); } catch {}
   }
   return null;
+}
+
+/** Playwright plus a reason string ("" when everything needed is present) for tests that need a Chromium. Prints why it skips. */
+export function chromiumStatus(label: string): { pw: any | null; reason: string } {
+  const pw = loadPlaywright();
+  let reason = "";
+  if (!pw) reason = `playwright not resolvable from ${PW_BASES.join(", ")} (run npm install in desktop/)`;
+  else {
+    let exe = "";
+    try { exe = pw.chromium.executablePath(); } catch (e) { exe = ""; }
+    if (!exe || !existsSync(exe)) reason = `chromium not installed at ${exe || "(unknown)"} (run: npx playwright install chromium, in desktop/)`;
+  }
+  if (reason) console.log(`[${label} skipped: ${reason}]`);
+  return { pw: reason ? null : pw, reason };
+}
+
+/** Same for the Electron tests: also needs the Electron binary and an X server. */
+export function electronStatus(label: string): { pw: any | null; electronBin: string; reason: string } {
+  const electronBin = join(import.meta.dir, "../../desktop/node_modules/electron/dist/electron");
+  const pw = loadPlaywright();
+  const reason = !pw ? `playwright not resolvable from ${PW_BASES.join(", ")} (run npm install in desktop/)`
+    : !existsSync(electronBin) ? `electron binary missing at ${electronBin} (npm install in desktop/ ran with --ignore-scripts? run node node_modules/electron/install.js)`
+    : !Bun.which("Xvfb") && !process.env.DISPLAY ? "no X server: neither Xvfb on PATH nor DISPLAY set" : "";
+  if (reason) console.log(`[${label} skipped: ${reason}]`);
+  return { pw, electronBin, reason };
 }

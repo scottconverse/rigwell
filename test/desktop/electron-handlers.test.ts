@@ -9,15 +9,10 @@ import { join } from "node:path";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer, FakeTurn } from "../fakes/types.ts";
 import { CLI, makeHome, makeRepo } from "../e2e/helpers.ts";
-import { sleep } from "./helpers.ts";
+import { electronStatus, sleep } from "./helpers.ts";
 
 const desktop = join(import.meta.dir, "../../desktop");
-const electronBin = join(desktop, "node_modules/electron/dist/electron");
-let pw: any = null;
-for (const base of ["/opt/node-tools/", process.cwd() + "/"]) { try { pw = createRequire(base)("playwright"); break; } catch {} }
-const haveXvfb = !!Bun.which("Xvfb");
-const reason = !pw ? "playwright not installed" : !existsSync(electronBin) ? "electron binary not installed (npm install in desktop/)" : !haveXvfb && !process.env.DISPLAY ? "no X server (Xvfb)" : "";
-if (reason) console.log(`[electron handler test skipped: ${reason}]`);
+const { pw, electronBin, reason } = electronStatus("electron handler test");
 const maybe = reason ? describe.skip : describe;
 setDefaultTimeout(120_000);
 

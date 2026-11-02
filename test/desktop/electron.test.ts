@@ -10,17 +10,14 @@ import { join } from "node:path";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer, FakeTurn } from "../fakes/types.ts";
 import { CLI, makeHome, makeRepo } from "../e2e/helpers.ts";
-import { sleep } from "./helpers.ts";
+import { electronStatus, sleep } from "./helpers.ts";
 
 const desktop = join(import.meta.dir, "../../desktop");
-const electronBin = join(desktop, "node_modules/electron/dist/electron");
-let pw: any = null;
-for (const base of ["/opt/node-tools/", process.cwd() + "/"]) { try { pw = createRequire(base)("playwright"); break; } catch {} }
-const haveXvfb = !!Bun.which("Xvfb");
-const reason = !pw ? "playwright not installed" : !existsSync(electronBin) ? "electron binary not installed (npm install in desktop/)" : !haveXvfb && !process.env.DISPLAY ? "no X server (Xvfb)" : "";
-if (reason) console.log(`[electron smoke test skipped: ${reason}]`);
+const { pw, electronBin, reason } = electronStatus("electron smoke test");
 const maybe = reason ? describe.skip : describe;
 setDefaultTimeout(120_000);
+/** Waits on real readiness signals get a generous ceiling: a loaded machine slows app, daemon and polls alike. */
+const LOAD_WAIT = 90_000;
 
 const textOf = (m: any) => (typeof m.content === "string" ? m.content : (m.content ?? []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n"));
 
@@ -128,12 +125,15 @@ maybe("desktop app end to end", () => {
 
   test("the agent drives the browser pane", async () => {
     await composerSend("please browse the page");
-    await page.locator(".tool-name", { hasText: "Browser" }).first().waitFor({ timeout: 30_000 });
-    await page.locator(".assistant", { hasText: "browser done" }).first().waitFor({ timeout: 30_000 });
+    await page.locator(".tool-name", { hasText: "Browser" }).first().waitFor({ timeout: LOAD_WAIT });
+    await page.locator(".assistant", { hasText: "browser done" }).first().waitFor({ timeout: LOAD_WAIT });
     expect(webHits).toContain("/");
-    const titles: string[] = await app.evaluate(({ webContents }: any) => webContents.getAllWebContents().filter((w: any) => w.getType() === "webview").map((w: any) => w.getTitle()));
+    // The webview title arrives after the tool result under load: poll for it instead of reading it once.
+    const readTitles = (): Promise<string[]> => app.evaluate(({ webContents }: any) => webContents.getAllWebContents().filter((w: any) => w.getType() === "webview").map((w: any) => w.getTitle()));
+    let titles: string[] = [];
+    for (let i = 0; i < 300; i++) { titles = await readTitles(); if (titles.includes("Tasks")) break; await sleep(200); }
     expect(titles).toContain("Tasks");
-  }, 90_000);
+  }, 240_000);
 
   test("a side chat question is answered while the main agent works", async () => {
     await composerSend("LONG running task");
@@ -202,21 +202,21 @@ maybe("desktop app end to end", () => {
     writeFileSync(join(dir, "state.json"), state("paused"));
     writeFileSync(join(dir, "features.json"), features(false));
     await page.getByRole("button", { name: "Mission Control" }).click();
-    await page.getByRole("heading", { name: "Mission Control" }).waitFor();
+    await page.getByRole("heading", { name: "Mission Control" }).waitFor({ timeout: LOAD_WAIT });
     await page.getByRole("tab", { name: /^Paused/ }).click();
-    await page.getByTestId("mission-list").getByText("Build the status page").waitFor({ timeout: 20_000 });
+    await page.getByTestId("mission-list").getByText("Build the status page").waitFor({ timeout: LOAD_WAIT });
     await page.getByTestId("mission-list").getByText("Build the status page").click();
-    await page.getByTestId("mission-state").getByText("Paused").waitFor({ timeout: 20_000 });
+    await page.getByTestId("mission-state").getByText("Paused").waitFor({ timeout: LOAD_WAIT });
     // The runner (a fake: the files) moves the mission to running; the page follows without a reload.
     writeFileSync(join(dir, "features.json"), features(true));
     writeFileSync(join(dir, "state.json"), state("running"));
-    await page.getByTestId("mission-state").getByText("Running").waitFor({ timeout: 20_000 });
-    await page.getByRole("table", { name: "Features" }).getByText("Show the status").waitFor();
-    await page.getByRole("button", { name: "Stop worker for ui-2" }).waitFor();
+    await page.getByTestId("mission-state").getByText("Running").waitFor({ timeout: LOAD_WAIT });
+    await page.getByRole("table", { name: "Features" }).getByText("Show the status").waitFor({ timeout: LOAD_WAIT });
+    await page.getByRole("button", { name: "Stop worker for ui-2" }).waitFor({ timeout: LOAD_WAIT });
     expect(await page.getByTestId("mission-stats").innerText()).toContain("1/2");
     writeFileSync(join(dir, "state.json"), state("paused"));
     await page.getByRole("button", { name: "Back to Mission Control" }).click();
-  }, 120_000);
+  }, 300_000);
 
   test("adding a folder asks for trust and records it", async () => {
     const folder = mkdtempSync(join(tmpdir(), "rigwell-trust-"));

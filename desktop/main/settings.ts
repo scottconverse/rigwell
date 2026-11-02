@@ -35,6 +35,8 @@ export interface SoundSettings {
 export interface DesktopSettings {
   keepAwakeEnabled: boolean;
   desktopAutoUpdateEnabled: boolean;
+  /** Base URL of the update feed (see update-feed.ts). Empty means no feed. */
+  updateFeedUrl: string;
   locale: string;
   windowZoomLevel: number;
   automationQuitWarningDismissed: boolean;
@@ -53,6 +55,7 @@ export const DEFAULT_STARTUP_BACKGROUND = { dark: "#161413", light: "#f2f0f0" };
 export const DEFAULT_SETTINGS: DesktopSettings = {
   keepAwakeEnabled: false,
   desktopAutoUpdateEnabled: true,
+  updateFeedUrl: "",
   locale: "en",
   windowZoomLevel: 0,
   automationQuitWarningDismissed: false,

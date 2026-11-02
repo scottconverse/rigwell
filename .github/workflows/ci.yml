@@ -39,12 +39,10 @@ jobs:
       - name: Perf gate
         run: bun perf/gate.ts
 
-  # Optional: the desktop (Electron) smoke tests skip themselves unless `npm install` has run in desktop/ and an X
-  # server exists. This job provides both. It does not block the main job; remove continue-on-error to enforce it.
+  # Electron and Chromium tests. Each skipping test prints the exact cause ("[... skipped: ...]") in this job's log.
   desktop:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -55,8 +53,22 @@ jobs:
           node-version: 22
       - name: Install system packages
         run: sudo apt-get update && sudo apt-get install -y ripgrep xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1
+      - name: Allow unprivileged user namespaces (Chromium sandbox on Ubuntu 24.04)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: bun install --frozen-lockfile
-      - run: npm install
+      # npm ci runs the electron postinstall, which downloads the Electron binary; playwright is a devDependency here.
+      - run: npm ci
         working-directory: desktop
+      - name: Install Chromium for the CDP and browser pane tests
+        run: npx playwright install --with-deps chromium
+        working-directory: desktop
+      - name: Show what the desktop tests will find
+        run: |
+          ls -l desktop/node_modules/electron/dist/electron
+          cd desktop && node -e "console.log('playwright', require('playwright/package.json').version, require('playwright').chromium.executablePath())"
       - name: Desktop tests under Xvfb
-        run: xvfb-run -a bun test test/desktop
+        run: |
+          set -o pipefail
+          xvfb-run -a bun test test/desktop 2>&1 | tee /tmp/desktop.log
+      - name: Fail if tests skipped for a missing tool
+        run: "! grep -E 'skipped: (playwright|chromium|electron binary|no X server)' /tmp/desktop.log"

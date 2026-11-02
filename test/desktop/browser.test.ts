@@ -6,9 +6,9 @@ import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer, FakeTurn } from "../fakes/types.ts";
 import { lastToolResult, makeRepo } from "../e2e/helpers.ts";
 import { validateCdpUrl } from "../../src/sidepane/browser.ts";
-import { connect, loadPlaywright, MODEL, startTestDaemon } from "./helpers.ts";
+import { chromiumStatus, connect, MODEL, startTestDaemon } from "./helpers.ts";
 
-const pw = loadPlaywright();
+const { pw } = chromiumStatus("browser pane test");
 const maybe = pw ? describe : describe.skip;
 
 describe("CDP endpoint validation (spec 17.3)", () => {

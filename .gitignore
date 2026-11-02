@@ -2,3 +2,5 @@ node_modules/
 *.log
 .claude/worktrees/
 desktop/dist/
+desktop/release/
+desktop/build/

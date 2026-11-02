@@ -3,11 +3,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createRequire } from "node:module";
 import { BrowserService, CdpConnection, validateCdpUrl } from "../../src/sidepane/browser.ts";
-import { loadPlaywright } from "./helpers.ts";
+import { chromiumStatus } from "./helpers.ts";
 
 let hasWs = true;
 try { createRequire(import.meta.url)("../../desktop/node_modules/ws"); } catch { hasWs = false; }
-const pw = loadPlaywright();
+const { pw } = chromiumStatus("CDP proxy test");
 const maybe = pw && hasWs ? describe : describe.skip;
 
 maybe("CDP proxy (spec 17.3)", () => {
