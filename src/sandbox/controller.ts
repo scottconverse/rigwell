@@ -5,11 +5,14 @@ import * as path from "node:path";
 import type { ToolContext, ToolOutput } from "../core/types.ts";
 import { rigwellHome } from "../storage/paths.ts";
 import { loadSettings } from "../storage/settings.ts";
+import { loadOrgSettings } from "../storage/org.ts";
 import { bwrapCommand, buildSeatbeltProfile, detectEngine, proxyEnv, PROXY_INNER_PORT, type EngineInfo, type EngineProbe } from "./engine.ts";
 import {
   buildPolicy, contains, defaultHome, mergeSandboxOrg, protectedPaths, type SandboxMode, type SandboxPolicy, type SandboxSettings, type SessionGrants,
 } from "./policy.ts";
 import { startProxy, type ProxyHandle } from "./proxy.ts";
+import { seccompFile as defaultSeccompFile } from "./seccomp.ts";
+import { policyHash, WholeProcessWorker } from "./whole.ts";
 import { describeViolation, detectDeniedReads, detectFromStderr, ViolationLog, type SandboxViolation } from "./violations.ts";
 
 /** Session status for SessionSettings.sandbox (spec 3: reported as status only). */
@@ -22,6 +25,10 @@ export interface SandboxStatus {
   engine: string;
   reason?: string;
   note?: string;
+  /** True when the seccomp filter is loaded into the sandbox (bubblewrap only). */
+  seccomp: boolean;
+  /** Whole-process mode: the hash of the policy the live worker runs with (absent before the first command). */
+  policyHash?: string;
 }
 
 export type AskPermission = (params: Record<string, unknown>) => Promise<{ selectedOption: string }>;
@@ -45,6 +52,8 @@ export interface ControllerOptions extends EngineProbe {
   /** Test hook: settings instead of the settings files. */
   settings?: () => SandboxSettings | undefined;
   home?: string;
+  /** Test hook: a seccomp program file, or null for none. Default: the filter for this machine. */
+  seccompFile?: string | null;
 }
 
 const MAX_PROMPTS_PER_COMMAND = 5;
@@ -77,9 +86,32 @@ export class SandboxController {
   private grants: SessionGrants = { allowWrite: [], allowRead: [], allowedDomains: [] };
   private declined = new Set<string>();
   ask?: AskPermission;
+  /** Whole-process mode: one worker per policy hash; the current one serves new commands, older ones drain and stop. */
+  private workers = new Map<string, { w: WholeProcessWorker; active: number }>();
+  private currentHash?: string;
 
   constructor(readonly sessionId: string, private o: ControllerOptions = {}) {
     this.ask = o.ask;
+  }
+
+  /** Org-managed sandbox settings: the option, else the org settings file (RIGWELL_ORG_MANAGED_SETTINGS_LOCAL_PATH). */
+  private org(): SandboxSettings | undefined {
+    if (this.o.org) return this.o.org;
+    try { return loadOrgSettings()?.settings.sandbox as SandboxSettings | undefined; } catch { return undefined; }
+  }
+
+  private seccompFor(cwd: string): string | null {
+    if (this.engine().engine !== "bubblewrap") return null;
+    if (this.effective(cwd).seccomp === false) return null;
+    return this.o.seccompFile !== undefined ? this.o.seccompFile : defaultSeccompFile();
+  }
+
+  /** Stops the whole-process worker(s). Called when the session ends. */
+  async dispose(): Promise<void> {
+    const all = [...this.workers.values()];
+    this.workers.clear();
+    this.currentHash = undefined;
+    await Promise.all(all.map((e) => e.w.stop()));
   }
 
   private settingsFor(cwd: string): SandboxSettings | undefined {
@@ -97,7 +129,7 @@ export class SandboxController {
 
   /** Effective enabled flag and mode after the org merge. */
   private effective(cwd: string): SandboxSettings {
-    return mergeSandboxOrg(this.o.org, this.settingsFor(cwd));
+    return mergeSandboxOrg(this.org(), this.settingsFor(cwd));
   }
 
   status(cwd: string): SandboxStatus {
@@ -107,14 +139,16 @@ export class SandboxController {
     const mode: SandboxMode = eff.mode === "whole-process" ? "whole-process" : "per-command";
     return {
       enabled, mode, active: enabled && eng.available, available: eng.available, engine: eng.engine,
+      seccomp: enabled && eng.available && this.seccompFor(cwd) !== null,
       ...(eng.reason ? { reason: eng.reason } : {}),
-      ...(mode === "whole-process" ? { note: "whole-process mode is not built in v1; commands are sandboxed per command" } : {}),
+      ...(mode === "whole-process" && eng.engine !== "bubblewrap" ? { note: "whole-process mode needs bubblewrap; commands are sandboxed per command" } : {}),
+      ...(mode === "whole-process" && this.currentHash ? { policyHash: this.currentHash } : {}),
     };
   }
 
   policy(cwd: string): SandboxPolicy {
     return buildPolicy({
-      cwd, home: this.o.home ?? defaultHome(), rigwellHome: rigwellHome(), settings: this.settingsFor(cwd), org: this.o.org,
+      cwd, home: this.o.home ?? defaultHome(), rigwellHome: rigwellHome(), settings: this.settingsFor(cwd), org: this.org(),
       session: this.grants, vendorHosts: this.o.vendorHosts, canProxy: this.engine().canProxy,
     });
   }
@@ -133,6 +167,8 @@ export class SandboxController {
       return { ...plain, error: `The sandbox is enabled but unavailable: ${eng.reason}. Install it or turn the sandbox off in settings.` };
     }
     const policy = this.policy(args.cwd);
+    const seccompFile = this.seccompFor(args.cwd) ?? undefined;
+    if (st.mode === "whole-process" && eng.engine === "bubblewrap") return await this.prepareWhole(args, plain, policy, eng, seccompFile);
     const netViolations: SandboxViolation[] = [];
     let proxy: ProxyHandle | undefined;
     let sockDir: string | undefined;
@@ -149,7 +185,7 @@ export class SandboxController {
           const sock = path.join(sockDir, "proxy.sock");
           proxy = await startProxy({ ...common, listen: { unix: sock } });
           Object.assign(env, proxyEnv(PROXY_INNER_PORT));
-          ({ file, args: argv } = bwrapCommand(eng.bin!, { policy, proxySocket: sock, socat: eng.socat }, args.shell, args.command));
+          ({ file, args: argv } = bwrapCommand(eng.bin!, { policy, proxySocket: sock, socat: eng.socat, seccompFile }, args.shell, args.command));
         } else {
           proxy = await startProxy({ ...common, listen: { port: policy.network.httpProxyPort ?? 0 } });
           Object.assign(env, proxyEnv(proxy.address as number));
@@ -157,7 +193,7 @@ export class SandboxController {
           file = eng.bin!;
         }
       } else if (eng.engine === "bubblewrap") {
-        ({ file, args: argv } = bwrapCommand(eng.bin!, { policy }, args.shell, args.command));
+        ({ file, args: argv } = bwrapCommand(eng.bin!, { policy, seccompFile }, args.shell, args.command));
       } else {
         file = eng.bin!;
         argv = ["-p", buildSeatbeltProfile(policy), args.shell, "-c", args.command];
@@ -178,6 +214,55 @@ export class SandboxController {
           ...detectFromStderr(stderr, policy, args.cwd, args.command),
           ...detectDeniedReads(args.command, policy, this.o.home ?? defaultHome()),
           ...netViolations,
+        ];
+        return await this.report(out, found, policy, args);
+      },
+    };
+  }
+
+  /**
+   * Whole-process mode (src/sandbox/whole.ts): the command runs in the session's long-lived sandbox. Execute spawns a small
+   * client that relays it over the control channel. A changed policy (new grant) starts a worker for the new hash; the
+   * old one stops when its last command ends.
+   */
+  private async prepareWhole(
+    args: { shell: string; command: string; cwd: string; toolUseId?: string; input?: Record<string, unknown> },
+    plain: SandboxRun, policy: SandboxPolicy, eng: EngineInfo, seccompFile: string | undefined,
+  ): Promise<SandboxRun> {
+    const hash = policyHash(policy, eng.engine, !!seccompFile);
+    let entry = this.workers.get(hash);
+    if (!entry || !entry.w.running) {
+      await entry?.w.stop();
+      entry = { w: new WholeProcessWorker({ seccompFile, log: undefined }), active: 0 };
+      this.workers.set(hash, entry);
+    }
+    let info;
+    try {
+      info = await entry.w.ensure(policy, eng);
+    } catch (e) {
+      this.workers.delete(hash);
+      return { ...plain, error: `Could not start the sandbox: ${(e as Error).message}` };
+    }
+    this.currentHash = hash;
+    const mine = entry;
+    mine.active++;
+    const startIdx = mine.w.netViolations.length;
+    const cc = mine.w.clientCommand(info, args.shell, args.command, args.cwd);
+    const retire = () => {
+      for (const [h, e] of this.workers) {
+        if (h !== this.currentHash && e.active === 0) { this.workers.delete(h); void e.w.stop(); }
+      }
+    };
+    retire();
+    let released = false;
+    return {
+      file: cc.file, args: cc.args, env: info.proxyEnv,
+      cleanup: async () => { if (released) return; released = true; mine.active--; retire(); },
+      finalize: async (out, stderr) => {
+        const found = [
+          ...detectFromStderr(stderr, policy, args.cwd, args.command),
+          ...detectDeniedReads(args.command, policy, this.o.home ?? defaultHome()),
+          ...mine.w.netViolations.slice(startIdx),
         ];
         return await this.report(out, found, policy, args);
       },
@@ -307,8 +392,10 @@ export function attachSandbox(sessionId: string, ask: AskPermission | undefined,
   return c;
 }
 
-export function detachSandbox(sessionId: string): void {
+export function detachSandbox(sessionId: string): Promise<void> {
+  const c = controllers.get(sessionId);
   controllers.delete(sessionId);
+  return c ? c.dispose() : Promise.resolve();
 }
 
 /** For the session to report `sandbox {enabled, mode}` in SessionSettings and the environment block. */
@@ -320,7 +407,8 @@ export function sandboxStatus(sessionId: string, cwd: string): SandboxStatus {
 export function sandboxStatusLabel(st: SandboxStatus): string {
   if (!st.enabled) return "off";
   if (!st.available) return `on but unavailable (${st.reason ?? "no engine"})`;
-  return `on (${st.engine}, ${st.mode === "whole-process" ? "per-command; whole-process not built" : "per-command"})`;
+  const mode = st.mode === "whole-process" && !st.note ? "whole-process" : "per-command";
+  return `on (${st.engine}, ${mode}${st.seccomp ? ", seccomp" : ""})`;
 }
 
 /** The hook Execute calls. */

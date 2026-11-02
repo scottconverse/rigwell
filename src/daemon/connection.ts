@@ -6,10 +6,12 @@ import { ErrorCodes, METHOD_PREFIX, RpcError, RpcPeer } from "../protocol/rpc.ts
 import { Session, SessionBusyError, type SessionHost, type SessionSettings } from "../agent/session.ts";
 import { applyCompaction } from "../agent/compaction.ts";
 import { AUTO_MODEL_ID, type RouterConfig } from "../agent/router.ts";
+import { autonomyAllowed, modelAllowed } from "../storage/org.ts";
+import { handoffBrief, isHandoffId, loadHandoff } from "../agent/handoff.ts";
 import { hasProjectConfig, isFolderTrusted, loadSettings, trustFolder } from "../storage/settings.ts";
 import { findModel, listModelInfo, resolveModels, validateCustomModels } from "../storage/models.ts";
 import { appendCompaction, appendMessage, appendTitle, appendTodoState, appendTurnOutcome, createSession, findSession, loadTranscript, type SessionFiles } from "../storage/transcript.ts";
-import { listSessionEntries } from "../storage/session-list.ts";
+import { listSessionEntries, searchSessions } from "../storage/session-list.ts";
 import { outputFormatFrom, systemPromptFrom, tagsFrom, toolIdUpdates, toolIdsFrom, userMessageFrom } from "./params.ts";
 import { gitRepoOf } from "./gitrepo.ts";
 import { readSessionSettings, updateSessionSettings } from "../storage/session-settings.ts";
@@ -26,7 +28,11 @@ import { fromInitConfigs, type McpServerInitConfig } from "../mcp/index.ts";
 import { loadAgents } from "../subagents/agents.ts";
 import { TaskLimits } from "../subagents/task.ts";
 import { forkSession } from "../storage/fork.ts";
+import { handleAuthMethod } from "../auth/methods.ts";
+import { handleSecretsMethod } from "../secrets/methods.ts";
+import { SecretsError, redactSecrets, resolveEnvironment, type ResolvedEnvironment } from "../secrets/store.ts";
 import { RewindError, rewindSession } from "../snapshots/index.ts";
+import { automationSetupParams } from "../automations/setup.ts";
 
 /** Sessions whose client went away while a prompt was open: kept for a reconnecting load_session (spec 3.1.5 pending lists). */
 const parked = new Map<string, { session: Session; files: SessionFiles; worktree?: SessionWorktree; timer: ReturnType<typeof setTimeout> }>();
@@ -118,7 +124,9 @@ export function createConnection(write: (line: string) => void, opts: Connection
     const loaded = loadSettings({ cwd, runtimeSettingsPath: opts.runtimeSettingsPath, trusted });
     for (const w of loaded.warnings) opts.log?.(`[settings] ${w}`);
     const s = loaded.settings;
-    const models = resolveModels(s);
+    // Org modelPolicy: blocked and not-allowed models disappear from the picker and cannot be selected (spec 12.2).
+    // allowCustomModels=false already removed the lower levels' customModels when the settings were merged (storage/org.ts).
+    const models = resolveModels(s).filter((m) => modelAllowed(s.modelPolicy, [m.id, m.model], false));
     const lists: CommandLists = {
       allow: s.commandAllowlist ?? DEFAULT_COMMAND_LISTS.allow,
       deny: s.commandDenylist ?? DEFAULT_COMMAND_LISTS.deny,
@@ -141,8 +149,19 @@ export function createConnection(write: (line: string) => void, opts: Connection
       ...(t.disabled ? { disabledToolIds: t.disabled } : {}), ...(t.additional ? { additionalToolIds: t.additional } : {}),
       ...(saved.systemPrompt ? { systemPrompt: saved.systemPrompt } : {}), ...(saved.structuredOutputFormat ? { structuredOutputFormat: saved.structuredOutputFormat } : {}),
       ...(saved.disableBuiltinSkills ? { disableBuiltinSkills: true } : {}),
+      ...(typeof saved.environment === "string" ? { environment: saved.environment } : {}),
       ...(Array.isArray(saved.tags) ? { tags: saved.tags } : {}),
     };
+  }
+
+  /** The session's named environment (initialize_session `environment`): variables for Execute and hooks, never for the prompt. */
+  function sessionEnvironment(p: Record<string, unknown>): ResolvedEnvironment | undefined {
+    if (p.environment === undefined || p.environment === null || p.environment === "") return undefined;
+    if (typeof p.environment !== "string") throw new RpcError(ErrorCodes.INVALID_PARAMS, "environment must be a string");
+    try { return resolveEnvironment(p.environment); } catch (e) {
+      if (e instanceof SecretsError) throw new RpcError(e.kind === "not_found" ? ErrorCodes.ENTITY_NOT_FOUND : ErrorCodes.INVALID_PARAMS, e.message);
+      throw e;
+    }
   }
 
   function pendingLists(s: Session) {
@@ -174,11 +193,14 @@ export function createConnection(write: (line: string) => void, opts: Connection
   }
 
   function build(id: string, cwd: string, settings: SessionSettings, p: Record<string, unknown>, env: ReturnType<typeof environment>, override: ToolExecutionMode | undefined, restored?: { previousSessionId?: string; callingSessionId?: string; allowSubagentsInScripts?: boolean; messages: Message[]; tokenUsage?: any; deferred?: { loaded: string[]; announced: string[] }; archived?: Message[]; anchor?: string; todos?: any; title?: { value: string; manual: boolean } }) {
-    const skip = opts.forced?.skipPermissions ?? p.skipPermissionsUnsafe === true;
+    // An org autonomy ceiling below high also rules out skip-permissions (it is the highest level of all).
+    const skip = (opts.forced?.skipPermissions ?? p.skipPermissionsUnsafe === true) && autonomyAllowed("high", env.s.maxAutonomyLevel);
     const f = files!;
     const hooksConfig = loadHooksConfig({ cwd, trustProject: env.trusted });
+    const sessionEnv = sessionEnvironment(p);
     return new Session({
       id, cwd, settings,
+      ...(sessionEnv ? { extraEnv: sessionEnv.env, redact: (t: string) => redactSecrets(t, sessionEnv.secrets) } : {}),
       resolveModel: (mid) => findModel(env.models, mid),
       createAdapter, streamWithRetry: streamWithRetry as any,
       toolsFor: ((base) => (opts.wrapTools ? (o: Parameters<typeof toolsForSession>[0]) => opts.wrapTools!(base(o)) : base))(opts.extraTools ? (o: Parameters<typeof toolsForSession>[0]) => [...toolsForSession(o), ...opts.extraTools!()] : toolsForSession), decide, lists: env.lists,
@@ -201,11 +223,13 @@ export function createConnection(write: (line: string) => void, opts: Connection
       enterMissionMode: opts.extraMethods?.enter_mission_mode ? async () => (await opts.extraMethods!.enter_mission_mode!({})) as Record<string, unknown> : undefined,
       modelUpgradePath: Array.isArray(env.s.modelUpgradePath) ? (env.s.modelUpgradePath as unknown[]).filter((x): x is string => typeof x === "string") : undefined,
       compaction: env.s.compaction as any, compactionTokenLimit: env.s.compactionTokenLimit,
+      maxAutonomy: env.s.maxAutonomyLevel, enableSecretScan: env.s.enableSecretScan === true,
+      compactionModelMode: env.s.compactionModelMode === "current-model" ? "current-model" : "default",
       compactionThresholdCheckEnabled: env.s.compactionThresholdCheckEnabled, router: routerOf(env),
       persistence: persistenceFor(f),
       transcriptPath: f.transcriptPath,
       hooksFor: (a) => new HookRunner({
-        config: hooksConfig, sessionId: a.sessionId, transcriptPath: a.transcriptPath, cwd, permissionMode: a.permissionMode, notify: a.notify,
+        config: hooksConfig, sessionId: a.sessionId, transcriptPath: a.transcriptPath, cwd, permissionMode: a.permissionMode, notify: a.notify, env: sessionEnv?.env,
       }),
       mcp: { servers: fromInitConfigs(p.mcpServers as McpServerInitConfig[] | undefined) },
       allowSubagentsInScripts: restored?.allowSubagentsInScripts ?? (p.allowSubagentsInScripts === true || env.s.allowSubagentsInScripts === true),
@@ -255,6 +279,11 @@ export function createConnection(write: (line: string) => void, opts: Connection
 
   async function handle(method: string, p: Record<string, unknown>): Promise<unknown> {
     switch (method) {
+      case "start_automation_setup": {
+        // Guided "create by chatting" (spec 16.8): a normal session with the setup block added to its system prompt.
+        if (typeof p.cwd !== "string" || !p.cwd) throw new RpcError(ErrorCodes.INVALID_PARAMS, "cwd is required");
+        return { ...(await handle("initialize_session", automationSetupParams(p)) as Record<string, unknown>), automationSetup: true };
+      }
       case "initialize_session": {
         if (session) throw new RpcError(ErrorCodes.CONFLICT, "This connection already has a session");
         if (typeof p.cwd !== "string" || !p.cwd) throw new RpcError(ErrorCodes.INVALID_PARAMS, "cwd is required");
@@ -262,9 +291,16 @@ export function createConnection(write: (line: string) => void, opts: Connection
         if (!existsSync(cwd)) throw new RpcError(ErrorCodes.INVALID_PARAMS, `cwd does not exist: ${cwd}`);
         const id = p.sessionId === undefined ? crypto.randomUUID() : String(p.sessionId);
         if (!isValidSessionId(id)) throw new RpcError(ErrorCodes.INVALID_PARAMS, "Invalid sessionId");
+        // Spec handoff (spec 5.5.7): the record's plan is this session's brief, at the autonomy level the user chose.
+        let handoff: ReturnType<typeof loadHandoff> = null;
+        if (p.specHandoffId !== undefined) {
+          handoff = isHandoffId(p.specHandoffId) ? loadHandoff(p.specHandoffId) : null;
+          if (!handoff) throw new RpcError(ErrorCodes.INVALID_PARAMS, `Unknown specHandoffId: ${JSON.stringify(p.specHandoffId)}`);
+        }
         if (findSession(id, cwd)) throw new RpcError(ErrorCodes.CONFLICT, `Session ${id} already exists; use load_session`);
         // Check the structured params before anything is created.
         toolIdsFrom(p); systemPromptFrom(p); outputFormatFrom(p.structuredOutputFormat, "structuredOutputFormat"); tagsFrom(p.tags);
+        sessionEnvironment(p);
         await resolveTrust(cwd);
         const env = environment(cwd);
         const d = env.s.sessionDefaultSettings ?? {};
@@ -276,7 +312,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
           modelId,
           reasoningEffort: pick<ReasoningEffort>(p.reasoningEffort, EFFORTS, "reasoningEffort") ?? (d.reasoningEffort as ReasoningEffort) ?? "high",
           interactionMode: pick<InteractionMode>(p.interactionMode, MODES, "interactionMode") ?? (d.interactionMode as InteractionMode) ?? "auto",
-          autonomyLevel: opts.forced?.autonomyLevel ?? pick<AutonomyLevel>(p.autonomyLevel, AUTONOMY, "autonomyLevel") ?? (d.autonomyLevel as AutonomyLevel) ?? "off",
+          autonomyLevel: opts.forced?.autonomyLevel ?? pick<AutonomyLevel>(p.autonomyLevel, AUTONOMY, "autonomyLevel") ?? handoff?.autonomyLevel ?? (d.autonomyLevel as AutonomyLevel) ?? "off",
           ...(env.s.compactionModel && findModel(env.models, env.s.compactionModel) ? { compactionModelId: env.s.compactionModel } : {}),
           ...specSettings(p, d, env),
         };
@@ -287,6 +323,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
           files = createSession({ id, cwd: sessionCwd, title: typeof p.title === "string" ? p.title : undefined, ...(typeof p.callingSessionId === "string" && p.callingSessionId ? { extra: { callingSessionId: p.callingSessionId } } : {}) });
           session = build(id, sessionCwd, settings, p, env, pick<ToolExecutionMode>(p.toolExecutionMode, EXEC_MODES, "toolExecutionMode"));
           if (worktree) updateSessionSettings(files, { worktree: worktreeSettings(worktree) });
+          if (typeof p.environment === "string" && p.environment) updateSessionSettings(files, { environment: p.environment }); // the name only, never values
           await session.persistSettings();
         } catch (e) {
           if (worktree) await discardSessionWorktree(worktree);
@@ -294,6 +331,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
         }
         session.start("startup");
         notify({ type: "settings_updated", settings: session.settingsSnapshot() });
+        if (handoff) session.addUserMessage(handoffBrief(handoff));
         const setup = worktree ? await runSessionSetup(worktree, notify) : undefined;
         return {
           ...sessionResult(), availableModels: listModelInfo(env.models), trusted: env.trusted,
@@ -378,7 +416,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
         // The reconnecting client answers a re-shown prompt (load_session pendingPermissions / pendingAskUserRequests).
         const s = need();
         if (typeof p.requestId !== "string") throw new RpcError(ErrorCodes.INVALID_PARAMS, "requestId is required");
-        const answer = (p.answer ?? { selectedOption: p.selectedOption, comment: p.comment, editedSpecContent: p.editedSpecContent, cancelled: p.cancelled, answers: p.answers }) as unknown;
+        const answer = (p.answer ?? { selectedOption: p.selectedOption, comment: p.comment, editedSpecContent: p.editedSpecContent, clientStartsHandoffSession: p.clientStartsHandoffSession, specHandoffId: p.specHandoffId, cancelled: p.cancelled, answers: p.answers }) as unknown;
         if (!s.answerPrompt(p.requestId, answer)) throw new RpcError(ErrorCodes.ENTITY_NOT_FOUND, `No open request ${p.requestId}`);
         return {};
       }
@@ -404,6 +442,11 @@ export function createConnection(write: (line: string) => void, opts: Connection
       case "list_sessions": {
         const limit = typeof p.limit === "number" && p.limit > 0 ? Math.floor(p.limit) : undefined;
         return { sessions: listSessionEntries({ cwd: typeof p.cwd === "string" ? resolve(p.cwd) : undefined, includeArchived: p.includeArchived === true, includeBtwForks: p.includeBtwForks === true, limit }) };
+      }
+      case "search_sessions": {
+        if (typeof p.query !== "string" || !p.query.trim()) throw new RpcError(ErrorCodes.INVALID_PARAMS, "query must be a non-empty string");
+        if (p.mode !== undefined && p.mode !== "lexical" && p.mode !== "semantic") throw new RpcError(ErrorCodes.INVALID_PARAMS, "mode must be lexical or semantic");
+        return { hits: await searchSessions(p.query, p.mode ?? "lexical", { cwd: typeof p.cwd === "string" ? resolve(p.cwd) : undefined, includeArchived: p.includeArchived === true, limit: typeof p.limit === "number" ? p.limit : undefined }) };
       }
       case "interrupt_session": need().interrupt(); return {};
       case "close_session": {
@@ -544,6 +587,10 @@ export function createConnection(write: (line: string) => void, opts: Connection
         if (opts.extraMethods?.[method]) return opts.extraMethods[method](p);
         const w = await handleWorktreeMethod(method, p, { cwd: session?.cwd, settings: () => environment(session?.cwd ?? process.cwd()).s, log: opts.log });
         if (w.handled) return w.result;
+        const a = await handleAuthMethod(method, p, () => environment(session?.cwd ?? process.cwd()).s);
+        if (a.handled) return a.result;
+        const sx = handleSecretsMethod(method, p);
+        if (sx.handled) return sx.result;
         throw new RpcError(ErrorCodes.METHOD_NOT_FOUND, `Method not found or not in this build: ${METHOD_PREFIX}${method}`);
       }
     }

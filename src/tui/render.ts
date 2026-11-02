@@ -6,7 +6,8 @@ import type { Item, Panel, TuiState } from "./types.ts";
 export interface RenderOptions { width: number; height: number; color?: boolean }
 export interface Screen { lines: string[]; cursor: { row: number; col: number } | null }
 
-import { stripAnsi, styler, wrapText, transcriptLines } from "./transcript.ts";
+import { stripAnsi, styler, todoLines, transcriptLines, transcriptOpts, wrapText } from "./transcript.ts";
+import { isAddedLine, isRemovedLine } from "./diff.ts";
 export { stripAnsi, wrapText };
 
 const loaded = (n: number) => (n > 0 ? `Loaded +${n}` : "Not found");
@@ -21,7 +22,7 @@ function panelLines(p: Panel, s: TuiState, w: number, maxBody: number, st: Retur
   out.push(st.bold(p.title) + (p.tag ? " " + st.dim(p.tag) : ""));
   const body = p.body.flatMap((l) => wrapText(l, w - 2));
   const limit = s.detailed ? body.length : Math.max(3, maxBody);
-  for (const l of body.slice(0, limit)) out.push("  " + (l.startsWith("+ ") ? st.green(l) : l.startsWith("- ") ? st.red(l) : l));
+  for (const l of body.slice(0, limit)) out.push("  " + (isAddedLine(l) ? st.green(l) : isRemovedLine(l) ? st.red(l) : l.startsWith("@@") ? st.cyan(l) : l));
   if (body.length > limit) out.push(st.dim(`  ... ${body.length - limit} more lines (Ctrl+O to expand)`));
   if (p.savePath) out.push(`  Will save to: ${p.savePath}`);
   out.push("");
@@ -59,6 +60,14 @@ export function render(s: TuiState, o: RenderOptions): Screen {
     if (steer.length) { bottom.push(st.dim("Steering messages:")); steer.forEach((t) => bottom.push("  " + t.split("\n")[0].slice(0, W - 4))); }
     if (queue.length) { bottom.push(st.dim("Queued messages:")); queue.forEach((t) => bottom.push("  " + t.split("\n")[0].slice(0, W - 4))); }
     bottom.push(st.dim("Ctrl+R review · Ctrl+G pull the top · Ctrl+X clear"));
+  }
+  // todoDisplayMode "pinned": the todo list stays above the prompt (inline puts it in the transcript instead).
+  if (s.display.todoDisplayMode === "pinned" && s.todos.length && !s.overlay) {
+    const open = s.todos.filter((t) => t.status !== "completed").length;
+    bottom.push(st.dim(`Todos (${s.todos.length - open}/${s.todos.length} done)`));
+    const lines = todoLines(s.todos, W);
+    bottom.push(...lines.slice(0, 8));
+    if (lines.length > 8) bottom.push(st.dim(`  ... ${lines.length - 8} more`));
   }
   let cursor: Screen["cursor"] = null;
   let cursorInBottom: { row: number; col: number } | null = null;
@@ -143,7 +152,7 @@ export function render(s: TuiState, o: RenderOptions): Screen {
       st.dim("/ commands · @ files · ! shell · ? help"),
       "",
     ].map((x) => (stripAnsi(x).length > W ? x.slice(0, W) : x));
-    const body = transcriptLines(s.items, { width: W, detailed: s.detailed, showThinking: s.showThinking }, st).lines;
+    const body = transcriptLines(s.items, { ...transcriptOpts(s), width: W }, st).lines;
     top = [...header, ...body];
     if (top.length > topH) {
       const scroll = Math.min(s.scroll, top.length - topH);
