@@ -145,7 +145,7 @@ function setWindowZoom(win: BrowserWindow | null | undefined, level: number) {
   win.webContents.setZoomLevel(level);
   saveZoom(HOME, slots.get(win) ?? 0, level);
 }
-const zoomStep = (dir: 1 | -1 | 0) => (_item: unknown, from?: BrowserWindow) => { const w = from ?? BrowserWindow.getFocusedWindow() ?? [...windows][0]; if (w) setWindowZoom(w, stepZoom(w.webContents.getZoomLevel(), dir)); };
+const zoomStep = (dir: 1 | -1 | 0) => (_item: unknown, from?: Electron.BaseWindow) => { const w = (from instanceof BrowserWindow ? from : undefined) ?? BrowserWindow.getFocusedWindow() ?? [...windows][0]; if (w) setWindowZoom(w, stepZoom(w.webContents.getZoomLevel(), dir)); };
 
 function openRoute(route: string) {
   const w = BrowserWindow.getFocusedWindow() ?? [...windows][0];
