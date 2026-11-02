@@ -10,6 +10,7 @@ import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer, FakeTurn } from "../fakes/types.ts";
 import { CLI, makeHome, makeRepo } from "../e2e/helpers.ts";
 import { electronStatus, sleep } from "./helpers.ts";
+import { closeSessionIndexes, listSessionEntries, scanSessionEntries } from "../../src/storage/session-list.ts";
 
 const desktop = join(import.meta.dir, "../../desktop");
 const { pw, electronBin, reason } = electronStatus("electron final-gap test");
@@ -18,6 +19,25 @@ setDefaultTimeout(150_000);
 
 const textOf = (m: any) => (typeof m.content === "string" ? m.content : (m.content ?? []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n"));
 const PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+/** The promoted session as the files, the file scan and the index see it (printed when the Promote step fails). */
+function promoteState(id: string) {
+  const home = process.env.RIGWELL_HOME;
+  const out: Record<string, unknown> = {};
+  try {
+    const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((x) => x.isDirectory() ? walk(join(d, x.name)) : [join(d, x.name)]);
+    out.files = walk(join(currentHome, "sessions")).filter((f) => f.includes(id)).map((f) => ({ f, tail: readFileSync(f, "utf8").slice(-800) }));
+    process.env.RIGWELL_HOME = currentHome;
+    out.scan = scanSessionEntries({ includeArchived: true }).find((r) => r.sessionId === id) ?? "missing";
+    out.index = listSessionEntries({ includeArchived: true }).find((r) => r.sessionId === id) ?? "missing";
+    closeSessionIndexes();
+    const log = join(currentHome, "logs", "daemon-stderr.log");
+    if (existsSync(log)) out.daemonStderr = readFileSync(log, "utf8").slice(-1500);
+  } catch (e) { out.error = String(e); }
+  if (home === undefined) delete process.env.RIGWELL_HOME; else process.env.RIGWELL_HOME = home;
+  return out;
+}
+let currentHome = "";
 
 maybe("desktop app: final gaps", () => {
   let fake: FakeServer, xvfb: ChildProcess | undefined, app: any, page: any;
@@ -65,6 +85,7 @@ maybe("desktop app: final gaps", () => {
     fake = await startFakeAnthropic(Array.from({ length: 200 }, () => route));
     home = makeHome([{ provider: "anthropic", url: fake.url, displayName: "Fake Anthropic" }]);
     mkdirSync(home, { recursive: true });
+    currentHome = home;
     display = process.env.DISPLAY || `:${70 + Math.floor(Math.random() * 9)}`;
     if (process.platform === "linux" && !process.env.DISPLAY) {
       xvfb = spawn("Xvfb", [display, "-screen", "0", "1280x900x24"], { stdio: "ignore" });
@@ -201,7 +222,14 @@ maybe("desktop app: final gaps", () => {
     const promoted = page.url().split("#/sessions/")[1].split(/[?#]/)[0];
     expect(promoted).not.toBe(before);
     expect(readdirSync(btw).filter((f) => f.endsWith(".jsonl"))).toEqual([]);
-    await page.locator(".side-row", { hasText: "Side chat: SIDEQ what is going on?" }).first().waitFor({ timeout: 20_000 });
+    try {
+      await page.locator(".side-row", { hasText: "Side chat: SIDEQ what is going on?" }).first().waitFor({ timeout: 20_000 });
+    } catch (e) {
+      // This step failed once on Windows CI and once on Linux and never locally: print what each layer saw.
+      console.log("promote failure details " + JSON.stringify(promoteState(promoted), null, 1));
+      console.log("sidebar rows: " + JSON.stringify(await page.locator(".side-row").allInnerTexts()));
+      throw e;
+    }
     await page.locator(".assistant", { hasText: "side answer: all quiet" }).first().waitFor({ timeout: 20_000 });
   }, 120_000);
 

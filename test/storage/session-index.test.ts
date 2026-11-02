@@ -1,7 +1,7 @@
 // Session index (spec 12.1): migrations, incremental ingest by byte offset, picker hide rules, fallback to the file scan.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { appendFileSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { appendMessage, createSession } from "../../src/storage/transcript.ts";
 import { updateSessionSettings } from "../../src/storage/session-settings.ts";
@@ -74,6 +74,25 @@ test("a shrunk transcript is read again from the start; a vanished file drops it
   refreshIndex(db, key);
   expect(db.query("SELECT COUNT(*) n FROM sessions").get()).toEqual({ n: 0 });
   expect(db.query("SELECT COUNT(*) n FROM session_ingest").get()).toEqual({ n: 0 }); // deleted along with the session
+  db.close();
+});
+
+test("a session moved to another folder keeps its row, whatever order the folders are read in", async () => {
+  // Promote moves a side chat from <sessions>/btw into the project folder. The folder read order depends on the disk.
+  const f = createSession({ id: "moved", cwd });
+  await appendMessage(f, user("m1", "side question"), null);
+  const key = path.basename(f.dir);
+  const btw = path.join(path.dirname(f.dir), "btw");
+  mkdirSync(btw, { recursive: true });
+  const db = openSessionIndex();
+  renameSync(f.transcriptPath, path.join(btw, "moved.jsonl"));
+  refreshIndex(db, "btw");
+  expect(db.query("SELECT project_key k FROM sessions WHERE session_id='moved'").get()).toEqual({ k: "btw" });
+  renameSync(path.join(btw, "moved.jsonl"), f.transcriptPath);
+  refreshIndex(db, key); // the project folder first,
+  refreshIndex(db, "btw"); // then the folder the file left
+  expect(db.query("SELECT project_key k FROM sessions WHERE session_id='moved'").get()).toEqual({ k: key });
+  expect(queryPicker(db, { cwd }).map((r) => r.sessionId)).toEqual(["moved"]);
   db.close();
 });
 
