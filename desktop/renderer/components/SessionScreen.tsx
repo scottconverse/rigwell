@@ -73,6 +73,19 @@ function Loaded({ ctl }: { ctl: SessionController }) {
   const sid = state.sessionId;
   useEffect(() => { if (state.phase === "ready" && sid && pendingMission.delete(sid)) void enterMission(); }, [state.phase, sid, enterMission]);
 
+  // Approved spec handoff (spec 5.5.7): the old turn ended with reason spec_handoff; this client opens the new session.
+  useEffect(() => ctl.onHandoff((specHandoffId) => {
+    void (async () => {
+      try {
+        const next = await SessionController.create({ cwd: ctl.getSnapshot().cwd, specHandoffId });
+        const nid = next.getSnapshot().sessionId!;
+        live.set(nid, next);
+        void app.refresh();
+        window.location.hash = `/sessions/${nid}`;
+      } catch (e) { setToast(`Could not start the new session: ${(e as Error).message}`); setTimeout(() => setToast(""), 4000); }
+    })();
+  }), [ctl]);
+
   const showTab = useCallback((t: PaneTab) => { setMounted((m) => new Set(m).add(t)); setTab(t); setPaneOpen(true); }, []);
 
   useEffect(() => { if (state.phase === "ready") void ctl.attachBrowser(); }, [ctl, state.phase]);
