@@ -40,6 +40,9 @@ import {
   createAskUserTool, createStructuredOutputTool, createTaskOutputTool, createTaskStopTool, createTodoWriteTool, renderTodoList,
 } from "../tools/session-tools.ts";
 import { attachSandbox, sandboxStatus, sandboxStatusLabel } from "../sandbox/controller.ts";
+import { autonomyAllowed, clampAutonomy } from "../storage/org.ts";
+import { contextSavingsPercent, handoffLevel, saveHandoff } from "./handoff.ts";
+import { reportFalsePositives, secretFindingsFor } from "../permissions/secretscan.ts";
 
 export type WorkingState =
   | "idle" | "thinking" | "streaming_assistant_message" | "waiting_for_tool_confirmation" | "executing_tool"
@@ -62,7 +65,9 @@ export type TurnReason =
   | "completed" | "cancelled" | "permission_rejected" | "error" | "no_approver_available" | "prompt_rejected"
   | "model_authentication_failed" | "model_request_rejected" | "model_provider_unreachable"
   | "model_provider_unavailable" | "model_rate_limited"
-  | "structured_output_missing" | "structured_output_invalid" | "structured_output_schema_invalid";
+  | "structured_output_missing" | "structured_output_invalid" | "structured_output_schema_invalid"
+  /** ExitSpecMode was approved with a handoff option: this session ends, a new one starts with the spec as its brief. */
+  | "spec_handoff";
 
 export interface SessionTag { name: string; metadata?: Record<string, string> }
 /** Settings swapped in while list_tools works out what a session would offer. */
@@ -70,7 +75,7 @@ export interface ToolPreview {
   modelId?: string; interactionMode?: InteractionMode; autonomyLevel?: AutonomyLevel; specModeModelId?: string;
   skipPermissions?: boolean; depth?: number; toolIds?: SessionDeps["toolIds"] | null; mode?: ToolExecutionMode;
 }
-export interface PermissionAnswer { selectedOption: string; comment?: string; editedSpecContent?: string }
+export interface PermissionAnswer { selectedOption: string; comment?: string; editedSpecContent?: string; clientStartsHandoffSession?: boolean; specHandoffId?: string }
 export interface AskUserAnswer { cancelled?: boolean; answers: { index: number; question: string; answer: string }[] }
 export interface OutputFormat { type: "json_schema"; schema: Record<string, unknown> }
 
@@ -238,6 +243,14 @@ export interface SessionDeps {
   tags?: SessionTag[];
   /** Settings `modelUpgradePath`: model ids from weaker to stronger. Absent or exhausted: UpgradeModel is not offered. */
   modelUpgradePath?: string[];
+  /** Prompt-cache key for this session's requests (a side-chat fork passes its parent's id; spec 17.4). Absent: the session id. */
+  cacheKey?: string;
+  /** Org `maxAutonomyLevel`: no setting, "always allow" option or spec option may go above it. */
+  maxAutonomy?: AutonomyLevel;
+  /** Settings `enableSecretScan`: ask before a `git commit` whose changes contain secrets (spec 5.5.1, 12.2, 13.4). */
+  enableSecretScan?: boolean;
+  /** Settings `compactionModelMode`: "current-model" always summarizes with the active model; "default" (or absent) uses `compactionModel` when set. */
+  compactionModelMode?: "current-model" | "default";
 }
 
 /** Tool results longer than this many characters are cut for the model (head and tail); the full text stays in `content`. */
@@ -296,6 +309,8 @@ export function reasonForError(e: unknown): TurnReason {
 
 export class Session {
   readonly id: string;
+  /** The prompt-cache key this session's requests carry. */
+  get cacheKey(): string { return this.deps.cacheKey ?? this.id; }
   readonly cwd: string;
   settings: SessionSettings;
   messages: Message[];
@@ -388,6 +403,7 @@ export class Session {
     this.id = deps.id;
     this.cwd = deps.cwd;
     this.settings = { ...deps.settings };
+    if (deps.maxAutonomy) this.settings.autonomyLevel = clampAutonomy(this.settings.autonomyLevel, deps.maxAutonomy);
     this.messages = deps.messages ?? [];
     this.tokenUsage = deps.tokenUsage ?? zeroUsage();
     this.lastMode = this.effectiveMode();
@@ -575,6 +591,7 @@ export class Session {
     const causes: string[] = [];
     const modelBefore = this.activeModelId();
     const modeBefore = this.settings.interactionMode;
+    if (p.autonomyLevel !== undefined && this.deps.maxAutonomy) p = { ...p, autonomyLevel: clampAutonomy(p.autonomyLevel, this.deps.maxAutonomy) };
     if (p.autonomyLevel !== undefined && p.autonomyLevel !== this.settings.autonomyLevel) causes.push("autonomy changed (tool list)");
     Object.assign(this.settings, Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined)));
     if (this.activeModelId() !== modelBefore) causes.push("model changed");
@@ -965,6 +982,7 @@ export class Session {
           id: messageId, role: "assistant", content, modelId: model.id, apiProvider: model.provider,
           ...(this.routed && this.activeModelId() === AUTO_MODEL_ID ? { routerId: AUTO_MODEL_ID } : {}),
           reasoningEffort: this.activeEffort(), ...(done.openaiReasoning?.length ? { openaiReasoning: done.openaiReasoning } : {}),
+          ...(done.openaiPhase ? { openaiPhase: done.openaiPhase } : {}),
         });
         this.lastCallContext = {
           tokens: done.usage.inputTokens + done.usage.cacheReadTokens + done.usage.cacheCreationTokens + done.usage.outputTokens,
@@ -1288,7 +1306,7 @@ export class Session {
   }
 
   private compactionModel(): ModelConfig {
-    const id = this.settings.compactionModelId;
+    const id = this.deps.compactionModelMode === "current-model" ? undefined : this.settings.compactionModelId;
     const m = (id && this.deps.resolveModel(id)) || this.currentModel();
     if (!m) throw new ModelError("rejected", `Unknown model: ${this.settings.modelId}`);
     return m;
@@ -1389,6 +1407,7 @@ export class Session {
       reasoningEffort: this.activeEffort(), signal,
       extraSystem: [...(prof.promptVariant ? [prof.promptVariant] : []), ...(this.deps.extraSystem ?? [])],
       systemPrompt: this.deps.systemPrompt, toolDescriptions: prof.toolDescriptionOverrides, cacheStrategy: prof.cache.strategy, openai: openaiFields(prof),
+      ...(this.deps.cacheKey ? { cacheKey: this.deps.cacheKey } : {}),
     };
   }
 
@@ -1491,6 +1510,7 @@ export class Session {
         phase("executing");
         const out = await this.exitSpecMode(call, input, signal);
         finish(out.content, !!out.isError, true);
+        if ((out.data as { handoff?: unknown } | undefined)?.handoff) stop = "spec_handoff";
         continue;
       }
       if (call.name === "RecommendMission" || call.name === "UpgradeModel") {
@@ -1519,6 +1539,8 @@ export class Session {
           continue;
         }
       }
+      const scanned = await this.secretScanGate(call, input);
+      if (scanned) { finish(scanned, true, false); continue; }
       phase("executing");
       this.setState("executing_tool");
       let out: ToolOutput | undefined;
@@ -1711,6 +1733,8 @@ export class Session {
           : "PermissionDenied: this call needs approval, and this run cannot ask for it.", "PermissionDenied");
       }
     }
+    const scanned = await this.secretScanGate(use, input);
+    if (scanned) return refuse(scanned, "PermissionDenied");
     try {
       this.toolCalls++;
       const out = await tool.run(input, { ...this.toolContext(meta.signal), toolUseId: id, snapshots: this.snapshotHooks(id) });
@@ -1741,6 +1765,37 @@ export class Session {
     this.notify({ type: "create_message", message: notice });
     await this.push({ id: crypto.randomUUID(), role: "user", visibility: "llm_only", content: [{ type: "text", text: guardText("guard_scriptwait_stop_transcript", vars) }] });
     return true;
+  }
+
+  /**
+   * Secret scan (settings enableSecretScan): before an Execute that runs `git commit`, scan what the commit would record.
+   * On a hit, ask (secret_scan_violation): Proceed anyway / Proceed & report false positive / Cancel.
+   * Returns the text the model gets when the command must not run, or undefined to go on.
+   */
+  private async secretScanGate(call: ToolUseBlock, input: Record<string, unknown>): Promise<string | undefined> {
+    if (!this.deps.enableSecretScan || call.name !== "Execute" || typeof input.command !== "string") return undefined;
+    let findings: ReturnType<typeof secretFindingsFor>;
+    try { findings = secretFindingsFor(input.command, this.cwd); } catch (e) { this.deps.log?.(`[secret-scan] skipped: ${(e as Error)?.message ?? e}`); return undefined; }
+    if (!findings.length) return undefined;
+    const where = findings.slice(0, 5).map((f) => `${f.description} in ${f.file || "(unnamed)"}:${f.line}`).join("; ");
+    const r = await this.askRaw(call, {
+      decision: "ask", confirmationType: "secret_scan_violation", impactLevel: "high", alwaysLevel: null,
+      options: [
+        { label: "Proceed anyway", value: "proceed_once" },
+        { label: "Proceed & report false positive", value: "proceed_report_false_positive" },
+        { label: "Cancel", value: "cancel" },
+      ],
+      details: {
+        fullCommand: input.command, command: input.command, impactLevel: "high", title: "Possible secrets in the changes to commit",
+        count: findings.length, findings: findings.slice(0, 20).map(({ fingerprint: _f, ...rest }) => rest),
+      },
+    });
+    if (r.verdict === "no_approver" || r.verdict === "rejected") {
+      return `Not run: the changes to commit may contain secrets (${where}), and nobody can confirm here. Remove the secrets from the commit (unstage the files or edit them), or turn off enableSecretScan.`;
+    }
+    if (r.verdict === "cancel") return `The user cancelled this commit because the changes may contain secrets (${where}). Remove them from the commit before you try again.`;
+    if (r.option === "proceed_report_false_positive") reportFalsePositives(this.id, findings);
+    return undefined;
   }
 
   /** Returns "approved", "rejected" (model continues), "cancel" (turn stops) or "no_approver". */
@@ -1807,7 +1862,7 @@ export class Session {
     let options = d.options;
     if (!options) {
       options = [{ label: "Yes, allow once", value: "proceed_once" }];
-      if (d.alwaysLevel) options.push({ label: `Yes, and always allow ${d.alwaysLevel}`, value: "proceed_always" });
+      if (d.alwaysLevel && autonomyAllowed(d.alwaysLevel, this.deps.maxAutonomy)) options.push({ label: `Yes, and always allow ${d.alwaysLevel}`, value: "proceed_always" });
       options.push({ label: "No, cancel", value: "cancel" });
     }
     this.setState("waiting_for_tool_confirmation");
@@ -1966,10 +2021,20 @@ export class Session {
       { label: "Yes, and allow all commands (High)", value: "proceed_auto_run_high" },
       { label: "Edit the spec first", value: "proceed_edit" },
       { label: "No, keep iterating", value: "cancel" },
-    ];
+    ].filter((o) => { const m = /^proceed_auto_run_(low|medium|high)$/.exec(o.value); return !m || autonomyAllowed(m[1] as AutonomyLevel, this.deps.maxAutonomy); });
+    // Handoff to a new session (spec 5.5.7): offered when a client can answer and start the new session itself.
+    const handoffOk = this.interactive && !this.deps.isChild;
+    if (handoffOk) {
+      const at = options.findIndex((o) => o.value === "proceed_edit");
+      options.splice(at < 0 ? options.length - 1 : at + 1, 0,
+        ...([["off", ""], ["low", "_low"], ["medium", "_medium"], ["high", "_high"]] as const)
+          .filter(([lvl]) => autonomyAllowed(lvl, this.deps.maxAutonomy))
+          .map(([lvl, suf]) => ({ label: `Hand off to a new session${lvl === "off" ? " (every action asks)" : ` at ${lvl}`}`, value: `proceed_new_session${suf}` })));
+    }
+    const savings = contextSavingsPercent(Math.ceil(plan.length / 4), this.estimateContextTokens());
     const r = await this.askRaw(call, {
       decision: "ask", confirmationType: "exit_spec_mode", impactLevel: "low", alwaysLevel: null, options,
-      details: { plan, title: title ?? "Specification", filePath: `${dir}/${file}`, contextSavingsPercent: 0, supportsClientStartedHandoff: false },
+      details: { plan, title: title ?? "Specification", filePath: `${dir}/${file}`, contextSavingsPercent: savings, supportsClientStartedHandoff: handoffOk },
     });
     if (r.verdict === "rejected" || r.verdict === "no_approver") return bad("The plan cannot be approved here: this run has no one to ask. Present the plan as your answer.");
     const comment = r.answer?.comment?.trim();
@@ -1981,6 +2046,24 @@ export class Session {
     const level = /^proceed_auto_run_(low|medium|high)$/.exec(r.option ?? "")?.[1] as AutonomyLevel | undefined;
     let saved: string | undefined;
     try { saved = saveSpec(dir, file, title, plan); } catch (e) { this.deps.log?.(`[spec] could not save: ${(e as Error)?.message ?? e}`); }
+    const handoff = handoffOk ? handoffLevel(r.option) : null;
+    if (handoff !== null) {
+      const specHandoffId = crypto.randomUUID();
+      saveHandoff({
+        id: specHandoffId, plan, title: title ?? "Specification", ...(saved ? { specPath: saved } : {}),
+        autonomyLevel: clampAutonomy(handoff, this.deps.maxAutonomy), cwd: this.cwd, fromSessionId: this.id, createdAt: new Date().toISOString(),
+      });
+      // This session leaves spec mode; the turn ends with reason spec_handoff and the client opens the new session.
+      this.updateSettings({ interactionMode: "auto", autonomyLevel: "off" }, { quietModeChange: true });
+      this.notify({
+        type: "spec_handoff", specHandoffId, autonomyLevel: handoff, title: title ?? "Specification", ...(saved ? { specPath: saved } : {}),
+        contextSavingsPercent: savings, clientStartsHandoffSession: r.answer?.clientStartsHandoffSession === true,
+      });
+      return {
+        content: `The user approved the plan and chose to continue in a new session${saved ? ` (saved at ${saved})` : ""}. Spec mode has ended here. Do nothing more in this session.`,
+        data: { approved: true, handoff: { specHandoffId, autonomyLevel: handoff } },
+      };
+    }
     // Spec mode ends: the tool says so in its result, so no separate mode-change reminder is queued.
     this.updateSettings({ interactionMode: "auto", autonomyLevel: level ?? "off" }, { quietModeChange: true });
     const text =

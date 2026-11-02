@@ -8,6 +8,8 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import path from "node:path";
 import type { AutonomyLevel, InteractionMode, ReasoningEffort } from "../core/types.ts";
 import type { SandboxSettings } from "../sandbox/policy.ts";
+import { DEFAULT_COMMAND_LISTS } from "../permissions/lists.ts";
+import { applyOrg, loadOrgSettings } from "./org.ts";
 import { rigwellHome, userHomeDir } from "./paths.ts";
 
 export interface CustomModelEntry {
@@ -56,6 +58,22 @@ export interface RigwellSettings {
   /** Candidates for the "auto" model id: { classifierModel, candidates: [{ model, description, inputCost }], threshold?, timeoutMs? }. */
   autoRouter?: { classifierModel: string; candidates: { model: string; description: string; inputCost: number }[]; threshold?: number; timeoutMs?: number };
   compactionThresholdCheckEnabled?: boolean;
+  /** "current-model": compaction summaries use the active model; "default" (or unset): `compactionModel` when set. */
+  compactionModelMode?: "current-model" | "default";
+  /** Scan staged changes before `git commit` for secrets (spec 12.2; Rigwell name for the secret-scan switch). */
+  enableSecretScan?: boolean;
+  /** Org only: the highest autonomy level any session may use. */
+  maxAutonomyLevel?: AutonomyLevel;
+  /** Org: allowedModelIds / blockedModelIds / allowCustomModels. */
+  modelPolicy?: { allowedModelIds?: string[]; blockedModelIds?: string[]; allowCustomModels?: boolean };
+  allowManagedHooksOnly?: boolean;
+  /** Display (TUI): diffMode github|unified, todoDisplayMode pinned|inline, toolResultDisplay expanded|compact, outputStyle, showThinkingInMainView, streamAssistantResponses. */
+  diffMode?: "github" | "unified";
+  todoDisplayMode?: "pinned" | "inline";
+  toolResultDisplay?: "expanded" | "compact";
+  outputStyle?: string;
+  showThinkingInMainView?: boolean;
+  streamAssistantResponses?: boolean;
   /** Per-command Execute sandbox (spec 5.5.8). */
   sandbox?: SandboxSettings;
   env?: Record<string, string>;
@@ -76,6 +94,8 @@ export interface LoadedSettings {
   sources: SettingsSource[];
   /** Unreadable/invalid files and similar non-fatal problems. */
   warnings: string[];
+  /** Top-level keys the org level set (shown as "[managed by org]"). Empty when there is no org file. */
+  managedKeys: string[];
 }
 
 export const BUILTIN_SETTINGS: RigwellSettings = {
@@ -136,6 +156,8 @@ export function loadSettings(opts: {
   trusted?: boolean;
   /** Override for tests; defaults to $HOME. */
   homeDir?: string;
+  /** Environment holding RIGWELL_ORG_MANAGED_SETTINGS_LOCAL_PATH; defaults to process.env. */
+  env?: Record<string, string | undefined>;
 }): LoadedSettings {
   const warnings: string[] = [];
   const cwd = path.resolve(opts.cwd);
@@ -169,7 +191,6 @@ export function loadSettings(opts: {
     }
   }
   if (opts.runtimeSettingsPath) layers.push({ level: "runtime", file: path.resolve(opts.runtimeSettingsPath) });
-  // org: no-op slot (would be appended here).
 
   let settings: RigwellSettings = mergeSettings({}, BUILTIN_SETTINGS);
   const used: SettingsSource[] = [];
@@ -182,8 +203,20 @@ export function loadSettings(opts: {
     settings = mergeSettings(settings, j);
     used.push({ level: l.level, path: l.file });
   }
+  // org: the highest level (spec 12.2), from the local file named by RIGWELL_ORG_MANAGED_SETTINGS_LOCAL_PATH.
+  let managedKeys: string[] = [];
+  const org = loadOrgSettings(opts.env ?? process.env);
+  if (org) {
+    warnings.push(...org.warnings);
+    if (Object.keys(org.settings).length > 0) {
+      const r = applyOrg(settings as Record<string, unknown>, org.settings, DEFAULT_COMMAND_LISTS, mergeSettings);
+      settings = r.settings as RigwellSettings;
+      managedKeys = r.managedKeys;
+      used.push({ level: "org", path: org.path });
+    }
+  }
   const sources = [...used.reverse(), { level: "builtin" as const, path: "" }];
-  return { settings, sources, warnings };
+  return { settings, sources, warnings, managedKeys };
 }
 
 // ---------- trusted folders (spec 12.2) ----------

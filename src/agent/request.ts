@@ -29,6 +29,8 @@ export interface BuildInput {
   /** Model profile: "none" sends no cache markers. */
   cacheStrategy?: ModelRequest["cacheStrategy"];
   openai?: ModelRequest["openai"];
+  /** Prompt-cache key override (side-chat forks use the parent session id). */
+  cacheKey?: string;
 }
 
 /** Messages the model sees, in order. Encrypted reasoning is dropped when the provider changed. */
@@ -145,7 +147,7 @@ export class RequestBuilder {
     return {
       model: i.model, sessionId: i.sessionId, system: [...systemBlocks(i.mode, systemChoice(i.systemPrompt)), ...(i.extraSystem ?? [])],
       tools: i.tools.map((t) => ({ name: t.name, description: i.toolDescriptions?.[t.name] ?? t.description, inputSchema: t.inputSchema })),
-      messages, ...(i.cacheStrategy ? { cacheStrategy: i.cacheStrategy } : {}), ...(i.openai ? { openai: i.openai } : {}),
+      messages, ...(i.cacheStrategy ? { cacheStrategy: i.cacheStrategy } : {}), ...(i.openai ? { openai: i.openai } : {}), ...(i.cacheKey ? { cacheKey: i.cacheKey } : {}),
       maxOutputTokens: i.maxOutputTokens ?? i.model.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
       reasoningEffort: i.reasoningEffort, signal: i.signal,
     };

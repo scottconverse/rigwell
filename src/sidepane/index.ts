@@ -71,6 +71,8 @@ export async function defaultFork(main: Session, messages: Message[], host: Cons
     toolsForSession({ autonomy: o.autonomy, skipPermissions: false }).filter((t) => info.writes || (t.name !== "Edit" && t.name !== "Create"));
   return new Session({
     id, cwd: main.cwd,
+    // Same prompt-cache key as the main session: the fork's requests extend the cached prefix (spec 17.4). Nothing else is shared.
+    cacheKey: main.cacheKey,
     settings: { ...main.settings, autonomyLevel: "low", interactionMode: "auto" },
     resolveModel: (mid) => findModel(models, mid),
     createAdapter, streamWithRetry: streamWithRetry as any,
