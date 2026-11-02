@@ -284,3 +284,12 @@ describe("profile index", () => {
     expect(readFileSync(join(repo, "cleaned.txt"), "utf8").trim()).toBe("cleaned");
   });
 });
+
+describe("live-session key (Windows simulation)", () => {
+  test("Windows keys ignore case and separators; POSIX keys are the path as given", async () => {
+    const { activeKey } = await import("../../src/worktree/connect.ts");
+    expect(activeKey("C:\\Users\\Runner\\wt\\a\\b", "win32")).toBe(activeKey("c:/users/runner/WT/a/b", "win32"));
+    expect(activeKey("/tmp/Wt/a", "linux")).toBe("/tmp/Wt/a");
+    expect(activeKey("/tmp/Wt/a", "linux")).not.toBe(activeKey("/tmp/wt/a", "linux"));
+  });
+});
