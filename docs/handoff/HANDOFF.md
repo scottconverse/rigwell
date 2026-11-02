@@ -49,6 +49,9 @@ None assigned. Ask the owner. The spec is built; later phases (hosted parts, Wor
    A second flake: in `test/desktop/electron.test.ts` the file save step showed "Saved" but the file kept its old text.
    Seen once on Linux CI (ci pull_request run 41401628274, commit a341f7b). Root cause not found. The test now prints
    the editor view and the disk text on failure ("save failure details" in the CI log).
+   A third flake: `test/tui/gaps.test.ts` afterAll failed on Windows CI with EBUSY when it deleted its temp folder
+   (platforms pull_request run 41403041082, commit a002f25; the push run of the same commit passed). Not reproduced,
+   root cause not found. The file opens no watcher or database; the /statusline test runs a shell with cwd in that folder.
 2. On a Windows PC without the symlink right, tests that create symlinks fail with `EPERM` (decision 319). CI has the right.
 3. Found in the Windows walkthrough, not fixed (outside the agreed scope, owner to decide):
    - "Create PR" on a worktree with only uncommitted edits makes a PR from the "init" commit with no change in it.
