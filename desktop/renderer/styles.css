@@ -246,3 +246,5 @@ h3.cap { text-transform: capitalize; }
 .chip.rec { border-color: #e5484d; color: #e5484d; }
 .menu.note { padding: 10px; max-width: 360px; white-space: normal; }
 .cookie-list { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+.badge.pr-ok { background: var(--ok); color: var(--accent-fg); } .badge.pr-bad { background: var(--danger); color: var(--accent-fg); } .badge.pr-warn { background: var(--warn-bg); }
+a.badge { text-decoration: none; color: inherit; margin-right: 8px; }

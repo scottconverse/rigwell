@@ -179,7 +179,7 @@ export type Effect =
   | { type: "attention"; kind: "completion" | "awaiting" }
   | { type: "status_line" }
   | { type: "open_rewind" }
-  | { type: "rpc"; method: string; params: Record<string, unknown>; label: string; after?: "resume_new" }
+  | { type: "rpc"; method: string; params: Record<string, unknown>; label: string; after?: "resume_new" | "show_pr" }
   /** /btw: ask the side chat (daemon.side_chat_ask). */
   | { type: "btw"; question: string }
   /** Start the new session of an approved spec handoff (initialize_session specHandoffId). */

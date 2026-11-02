@@ -16,6 +16,7 @@ function describe(params: any): { title: string; lines: string[] } {
     case "exec": return { title: u.toolUse?.name === "Browser" ? "Use the browser pane" : "Command to approve", lines: [String(d.fullCommand ?? d.command ?? JSON.stringify(u.toolUse?.input ?? {})), ...(d.impactLevel ? [`${d.impactLevel} risk`] : []), ...(d.riskLevelReason ? [String(d.riskLevelReason)] : [])] };
     case "edit": return { title: `Edit ${d.fileName ?? ""}`, lines: [String(d.filePath ?? ""), ...diff(d.oldContent, d.newContent)] };
     case "create": return { title: `Create ${d.fileName ?? ""}`, lines: [String(d.filePath ?? ""), ...diff(undefined, d.content)] };
+    case "create_pr": return { title: "Push and create a pull request", lines: [`${d.branch} into ${d.base}${d.remote ? ` on ${d.remote}` : ""}${d.draft ? " (draft)" : ""}`, `Title: ${d.title ?? ""}`, ...String(d.body ?? "").split("\n").filter(Boolean)] };
     case "exit_spec_mode": return { title: "Specification for approval", lines: String(d.plan ?? d.specContent ?? d.content ?? "").split("\n") };
     default: return { title: `Approve ${u.toolUse?.name ?? "action"}`, lines: [JSON.stringify(u.toolUse?.input ?? d, null, 2)] };
   }

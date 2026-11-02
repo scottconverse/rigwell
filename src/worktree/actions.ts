@@ -1,4 +1,4 @@
-// Git actions for a session's checkout (spec §18.6). create_pr and PR status are not built.
+// Git actions for a session's checkout (spec §18.6). create_pr and PR status are in pr.ts.
 import { git, gitOk } from "./git.ts";
 
 export async function listBranches(cwd: string): Promise<{ current: string | null; local: string[]; remote: string[] }> {

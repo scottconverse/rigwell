@@ -1,12 +1,13 @@
 // Glue between the connection (initialize_session and protocol methods) and the worktree manager.
 // Keeps src/daemon/connection.ts changes small. Protocol methods are `rigwell.<name>` (snake_case):
 //   list_managed_worktrees, get_worktree_status, inspect_worktree_deletion, cleanup_worktree,
-//   list_git_branches, checkout_git_branch, get_git_branch_divergence, git_commit, git_push
+//   list_git_branches, checkout_git_branch, get_git_branch_divergence, git_commit, git_push, create_pr, get_pr_status
 import path from "node:path";
 import { ErrorCodes, RpcError } from "../protocol/rpc.ts";
 import type { RigwellSettings } from "../storage/settings.ts";
 import { WorktreeError, WorktreeManager, resolveRoot, type Lifecycle, type ManagedWorktree } from "./manager.ts";
 import { checkoutBranch, commit, listBranches, push } from "./actions.ts";
+import { createPr, hasOpenPr, prStatus } from "./pr.ts";
 import { canonicalPath, repoTopLevel } from "./git.ts";
 import { deleteLocalProfile, listProfiles, readProfileIndex, setLastUsedProfile, type SetupProfile } from "./profiles.ts";
 import { forgetTrusted, markTrusted } from "./trust.ts";
@@ -53,6 +54,7 @@ export function managerFor(s: RigwellSettings, log?: (m: string) => void): Workt
     isTrusted: (repo) => trusted.has(path.resolve(repo)) || trusted.has(canonicalPath(repo)),
     inUse: (p) => active.has(activeKey(p)),
     trust: { mark: markTrusted, forget: forgetTrusted },
+    hasOpenPr: (w) => hasOpenPr(w),
     onRemoved: (e) => { heads.remove(e.path); active.delete(activeKey(e.path)); emit("worktree.removed", { worktreePath: e.path, sessionId: e.sessionId, repoRoot: e.repoRoot, branch: e.branch }); },
   });
 }
@@ -198,6 +200,8 @@ export interface MethodContext {
   cwd?: string;
   settings: () => RigwellSettings;
   log?: (m: string) => void;
+  /** The connection's request_permission to its client; absent when nobody can answer (a headless run). */
+  requestPermission?: (params: Record<string, unknown>) => Promise<unknown>;
 }
 
 const need = (p: Record<string, unknown>, k: string): string => {
@@ -244,6 +248,16 @@ export async function handleWorktreeMethod(method: string, p: Record<string, unk
       }
       case "git_commit": return ok(await commit(target(), need(p, "message")));
       case "git_push": return ok(await push(target()));
+      case "create_pr": {
+        const wt = target();
+        const opt = (k: string) => (typeof p[k] === "string" ? (p[k] as string) : undefined);
+        const m = mgr();
+        const meta = await m.get(wt).catch(() => null);
+        const r = await createPr(wt, { title: opt("title"), body: opt("body"), base: opt("base"), draft: p.draft === true }, ctx.requestPermission, { fallbackBase: meta?.baseRef });
+        if (r.created && meta) await m.updateMeta(wt, { pr: { number: r.number, url: r.url } }).catch(() => {});
+        return ok(r);
+      }
+      case "get_pr_status": return ok(await prStatus(target()));
       default: return { handled: false };
     }
   } catch (e) {

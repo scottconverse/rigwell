@@ -146,6 +146,11 @@ export function permissionPanel(id: string, params: any, display: DisplaySetting
       const options = opts.map((o) => (o.value.startsWith("proceed_new_session") ? { ...o, label: o.label + saved } : o));
       return { ...base, kind: "exit_spec", title: d.title ? `Specification for approval: ${d.title}` : "Specification for approval", body: plan.split("\n"), savePath: d.filePath ?? d.path, options };
     }
+    case "create_pr": {
+      const body = [`Branch: ${d.branch} into ${d.base}${d.remote ? ` on ${d.remote}` : ""}${d.draft ? " (draft)" : ""}`, `Title:  ${d.title ?? ""}`];
+      if (d.body) body.push("", ...String(d.body).split("\n"));
+      return { ...base, kind: "permission", title: "Push and create a pull request", body, options: opts };
+    }
     case "secret_scan_violation": {
       // Secret-scan prompt (spec 13.4): the command, then what was found where. The secret itself is never shown.
       const found: any[] = Array.isArray(d.findings) ? d.findings : [];
@@ -570,6 +575,9 @@ function runCommand(s0: TuiState, line: string): Step {
     case "rename":
       if (!args) return { state: { ...s, items: [...s.items, info("Usage: /rename <title>", "error")] }, effects: [] };
       return { state: s, effects: [{ type: "rpc", method: "rename_session", params: { title: args }, label: "rename" }] };
+    case "pr":
+      if (args === "status") return { state: s, effects: [{ type: "rpc", method: "get_pr_status", params: {}, label: "pr status", after: "show_pr" }] };
+      return { state: s, effects: [{ type: "rpc", method: "create_pr", params: args ? { title: args } : {}, label: "pr", after: "show_pr" }] };
     case "btw":
       if (!args) return { state: { ...s, items: [...s.items, info("Usage: /btw <question>", "error")] }, effects: [] };
       return { state: s, effects: [{ type: "btw", question: args }] };

@@ -5,6 +5,7 @@ import { app, useApp } from "../lib/app-model.ts";
 import { MASK, PROVIDERS, emptyForm, keyHint, toEntry, toForm, validate, type ModelForm } from "../lib/custom-models.ts";
 import { DaemonConn, bridge } from "../lib/rpc.ts";
 import { bulkRename, managementRows, projectName, type SessionRow } from "../lib/sessions.ts";
+import { prChip, prRequestHandler, type PrDetails, type PrStatusResult } from "../lib/pr.ts";
 import { addUsage, fmt, percentUsed, total, zero, type TokenUsage } from "../lib/usage.ts";
 import { ManagedNote, OrgCeiling } from "./SettingsAccess.tsx";
 import { AddServerForm, Dialog, ServerList, TextDialog, useMcp } from "./Dialogs.tsx";
@@ -175,7 +176,7 @@ export function CustomModels() {
 
 // ------------------------------------------------------------------ Worktrees (spec §18)
 
-interface Managed { path: string; branch?: string; repoRoot?: string; lifecycle?: string; baseRef?: string }
+interface Managed { path: string; branch?: string; repoRoot?: string; lifecycle?: string; baseRef?: string; pr?: { number: number; url: string } }
 interface Profile { id: string; source: string; name: string; script?: string; initialPrompt?: string; cleanupScript?: string }
 
 export function WorktreeSettings() {
@@ -189,7 +190,27 @@ export function WorktreeSettings() {
   const [managed, setManaged] = useState<Managed[]>([]);
   const [err, setErr] = useState("");
   const [removing, setRemoving] = useState<{ w: Managed; info: any } | null>(null);
-  const reload = useCallback(async () => { try { setManaged((await app.request("list_managed_worktrees")).worktrees ?? []); setErr(""); } catch (e) { setErr((e as Error).message); } }, []);
+  const [prs, setPrs] = useState<Record<string, PrStatusResult | null>>({});
+  const [confirmPr, setConfirmPr] = useState<{ d: PrDetails; answer: (yes: boolean) => void } | null>(null);
+  const [prBusy, setPrBusy] = useState("");
+  // PR status for each row. A row whose status cannot be read (no gh, no token, no remote) shows no chip.
+  const loadPrs = useCallback(async (rows: Managed[]) => {
+    const pairs = await Promise.all(rows.map(async (w) => [w.path, await app.request<PrStatusResult>("get_pr_status", { worktreePath: w.path }).catch(() => null)] as const));
+    setPrs(Object.fromEntries(pairs));
+  }, []);
+  const reload = useCallback(async () => {
+    try { const rows: Managed[] = (await app.request("list_managed_worktrees")).worktrees ?? []; setManaged(rows); setErr(""); void loadPrs(rows); } catch (e) { setErr((e as Error).message); }
+  }, [loadPrs]);
+  // create_pr asks first (request_permission); the dialog below answers it. A short-lived connection carries the ask.
+  const createPr = async (w: Managed) => {
+    setPrBusy(w.path); setErr("");
+    const c = await DaemonConn.open();
+    c.onRequest = prRequestHandler((d) => new Promise<boolean>((answer) => setConfirmPr({ d, answer: (yes) => { setConfirmPr(null); answer(yes); } })));
+    try {
+      const r = await c.request("create_pr", { worktreePath: w.path });
+      if (r.created) void reload();
+    } catch (e) { setErr((e as Error).message); } finally { c.close(); setPrBusy(""); }
+  };
   useEffect(() => { if (a.daemon.state === "running") void reload(); }, [reload, a.daemon.state]);
 
   const [folder, setFolder] = useState(a.recentFolders[0] ?? "");
@@ -215,10 +236,22 @@ export function WorktreeSettings() {
       <ul className="plain-list" aria-label="Managed worktrees">
         {managed.map((w) => (
           <li key={w.path} className="srv"><span className="srv-name">{w.branch ?? projectName(w.path)}</span><span className="muted small mono">{w.path}</span><span className="spacer" />
+            {(() => { const chip = prChip(prs[w.path]); return chip ? <a className={`badge pr-${chip.tone}`} href={prs[w.path]?.url} target="_blank" rel="noreferrer" aria-label={`Pull request for ${w.path}`}>{chip.text}</a> : null; })()}
+            {(!prs[w.path] || prs[w.path]!.state === "none" || prs[w.path]!.state === "closed") && <button aria-label={`Create PR for ${w.path}`} disabled={prBusy === w.path} onClick={() => void createPr(w)}>{prBusy === w.path ? "Creating PR..." : "Create PR"}</button>}
             <button className="danger" aria-label={`Remove ${w.path}`} onClick={() => void app.request("inspect_worktree_deletion", { worktreePath: w.path }).then((info) => setRemoving({ w, info })).catch((e) => setErr(e.message))}>Remove</button></li>
         ))}
         {!managed.length && <li className="muted pad">No managed worktrees.</li>}
       </ul>
+      {confirmPr && (
+        <Dialog title="Push and create a pull request?" onClose={() => confirmPr.answer(false)}>
+          <p className="mono-line">{confirmPr.d.branch} into {confirmPr.d.base}{confirmPr.d.remote ? ` on ${confirmPr.d.remote}` : ""}</p>
+          <p><strong>{confirmPr.d.title}</strong></p>
+          {confirmPr.d.body && <pre className="code-block small">{confirmPr.d.body}</pre>}
+          <p className="muted small">This pushes the branch, then opens the pull request on GitHub.</p>
+          <div className="dialog-actions"><button onClick={() => confirmPr.answer(false)}>Cancel</button>
+            <button className="primary" onClick={() => confirmPr.answer(true)}>Push and create</button></div>
+        </Dialog>
+      )}
       {removing && (
         <Dialog title="Remove this worktree?" onClose={() => setRemoving(null)}>
           <p className="mono-line">{removing.w.path}</p>

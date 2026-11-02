@@ -25,39 +25,23 @@ Branch `phase-1-core-loop`, draft PR scottconverse/rigwell#1 (base `main`). Do n
   `cd desktop && bun run package:linux` for the packaging tests). `bunx tsc --noEmit -p .` and `cd desktop && npx tsc -p .` clean.
 - CI (`.github/workflows/ci.yml`, `.github/workflows/platforms.yml`): Linux `test` green; macOS tests + app package green.
 
-## Next task: build `create_pr` (owner approved)
-Spec §18.6 (and §18.5 for the auto-delete rule). Scope:
-- Daemon method `rigwell.create_pr {worktreePath, title?, body?, base?, draft?}`: push the session's worktree branch
-  (`git push -u origin <branch>`), then open the PR with the `gh` CLI if present (`gh pr create`), else the GitHub REST API
-  with a token from the credential store (`src/storage/credentials.ts`, name e.g. `github`). Return `{url, number}`.
-- Always confirm first: a `request_permission` with confirmationType `create_pr` showing branch, base, title and body;
-  nothing is pushed on cancel. Headless runs without an approver refuse.
-- `rigwell.get_pr_status {worktreePath}`: open/merged/closed and checks summary (via `gh pr view --json` or the API).
-- Auto-delete (§18.5) skips a worktree whose branch has an open PR (the rule decision #254 skipped).
-- UI: a "Create PR" button and PR status chip in the desktop worktree panel (`desktop/`), and `/pr` in the TUI.
-- Tests with a local bare repo as origin and a fake `gh` script / fake API server; never call real GitHub.
+## Done in the last session (Windows PC)
+- Windows worktree e2e hang: fixed (decision 319, commit 1aba96a). Root cause was the test's `expect(c.call(...)).rejects` wait on Windows.
+- Linux CI `desktop` job: fixed (decision 320, commit 7974e45). The window was never shown under Xvfb. All CI jobs green on 7974e45.
+- `create_pr` and `get_pr_status` (spec 18.6) built: `src/worktree/pr.ts`, daemon methods in `src/worktree/connect.ts`,
+  auto-delete skips open PRs, desktop "Create PR" button and chip, TUI `/pr`. Decisions 321 to 327.
+  Tests: `test/worktree/pr.test.ts`, `test/e2e/create-pr.test.ts`, `test/tui/pr-ui.test.ts` (fake gh and fake API only).
 
-## Also note
-The `desktop` CI job still failed on a0f7175 even with the trust-dialog fallback (decision 318): read that run's
-`electron-handlers` diagnostic block first.
+## Next task
+None assigned. Ask the owner. The spec is built; later phases (hosted parts, Workstreams, MCP OAuth) need the owner's go-ahead.
 
-## Open issues (start here)
-1. **Windows, 1 test:** `test/e2e/worktree.test.ts` "a setup profile runs with secrets stripped; REPO_ROOT_PATH set;
-   protocol list/status/remove" hangs ~21 s on a protocol call (RpcChild waits 20 s per call). Two fix attempts are in
-   (decisions "Platform fixes: Windows", entries 316 and 317). Latest failing job: Actions job 125070575048 (head dc52906).
-   RpcChild now captures child stderr live, so that log should name the stuck step: read the error above its "(fail)".
-   Suspects: a git subprocess waiting for input on Windows, a PowerShell setup/cleanup script that never exits, a grandchild
-   holding the stdout pipe, a file lock blocking `git worktree remove`.
-2. **Linux CI `desktop` job, 2 tests:** `test/desktop/electron-handlers.test.ts` (trust dialog; ask-user panel) fail only on
-   the GitHub runner: the composer keeps the typed text after Enter, 0 model requests, no `request_trust`. They pass locally,
-   also as a non-root user with a fresh HOME and CI=true. The latest commit (decision 318) verifies the send, falls back to
-   clicking Send, and logs every keydown, focus and data-ready. Read the next run's diagnostic block to see whether Enter
-   reaches the editor. Never skip these tests and never only raise timeouts.
-3. Occasional flake seen once locally under load: `test/desktop/electron-final.test.ts` "side chat: the writes switch" and
+## Open issues
+1. Occasional flake seen once locally under load: `test/desktop/electron-final.test.ts` "side chat: the writes switch" and
    "Archive Project". Not investigated.
+2. On a Windows PC without the symlink right, tests that create symlinks fail with `EPERM` (decision 319). CI has the right.
 
 ## Waiting on the owner (do not decide for them)
-- (Resolved) `create_pr` and PR status (§18.6): the owner APPROVED building it. See "Next task" below.
+- (Resolved) `create_pr` and PR status (§18.6): approved and built (decisions 321 to 327).
 - License: decided by the owner: AGPL-3.0-only (`LICENSE`, package.json `license`, README, NOTICE).
 - Declined by the owner: GitHub-event and Slack-message triggers. Spec later phases (not built): hosted parts, §15.10 Workstreams, MCP OAuth.
 

@@ -585,7 +585,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
       }
       default: {
         if (opts.extraMethods?.[method]) return opts.extraMethods[method](p);
-        const w = await handleWorktreeMethod(method, p, { cwd: session?.cwd, settings: () => environment(session?.cwd ?? process.cwd()).s, log: opts.log });
+        const w = await handleWorktreeMethod(method, p, { cwd: session?.cwd, settings: () => environment(session?.cwd ?? process.cwd()).s, log: opts.log, requestPermission: hostFor().requestPermission as ((params: Record<string, unknown>) => Promise<unknown>) | undefined });
         if (w.handled) return w.result;
         const a = await handleAuthMethod(method, p, () => environment(session?.cwd ?? process.cwd()).s);
         if (a.handled) return a.result;

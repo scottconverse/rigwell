@@ -273,7 +273,8 @@ export async function runTui(opts: TuiOptions): Promise<number> {
         case "rpc": {
           try {
             const r = await client!.request(eff.method, eff.params);
-            info(`${eff.label}: done`);
+            if (eff.after === "show_pr") info(prText(r));
+            else info(`${eff.label}: done`);
             if (eff.after === "resume_new" && r?.newSessionId) await switchTo({}, r.newSessionId);
           } catch (e) {
             info(`/${eff.label}: ${errText(e)}`, "error");
@@ -430,4 +431,17 @@ export async function runTui(opts: TuiOptions): Promise<number> {
   for (const chunk of early.splice(0)) onData(chunk);
   process.once("SIGTERM", () => void finish(143));
   return exited;
+}
+
+/** One line for /pr: the new PR, a cancel, or the branch's PR status. */
+export function prText(r: any): string {
+  if (r?.cancelled) return "pr: cancelled; nothing was pushed";
+  if (r?.created) return `pr: created #${r.number} ${r.url}`;
+  if (r?.state === "none") return `pr: no pull request for ${r.branch}`;
+  if (r?.state) {
+    const c = r.checks;
+    const checks = !c || c.state === "none" ? "no checks" : `checks ${c.state} (${c.passed} passed, ${c.failed} failed, ${c.pending} running)`;
+    return `pr: #${r.number} ${r.draft ? "draft" : r.state}, ${checks} ${r.url}`;
+  }
+  return "pr: done";
 }
