@@ -1,5 +1,5 @@
 // Helpers for the desktop-side service tests: an in-process daemon and raw protocol clients (no Electron).
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -92,4 +92,27 @@ export function electronStatus(label: string): { pw: any | null; electronBin: st
     : !Bun.which("Xvfb") && !process.env.DISPLAY ? "no X server: neither Xvfb on PATH nor DISPLAY set" : "";
   if (reason) console.log(`[${label} skipped: ${reason}]`);
   return { pw, electronBin, reason };
+}
+
+/**
+ * What to print when an Electron UI wait times out: visible alerts and banners, the page's text, the daemon's stderr log
+ * (it records the trust decision, "[trust] ... is not trusted"), the trust-related environment the app was given and
+ * the folders the user settings trust. Never throws.
+ */
+export async function diagnose(page: any, home: string, extra: Record<string, unknown> = {}): Promise<string> {
+  const lines: string[] = [];
+  const safe = async (label: string, fn: () => unknown) => { try { lines.push(`${label}: ${JSON.stringify(await fn())}`); } catch (e) { lines.push(`${label}: unavailable (${(e as Error).message})`); } };
+  await safe("url", () => page.url());
+  await safe("alerts", () => page.locator("[role=alert], [role=alertdialog], [role=dialog], .banner").allTextContents());
+  await safe("body", async () => ((await page.locator("body").innerText()) as string).slice(0, 600));
+  await safe("daemon stderr tail", () => readFileSync(join(home, "logs", "daemon-stderr.log"), "utf8").slice(-1500));
+  await safe("trustedFolders", () => Object.keys(JSON.parse(readFileSync(join(home, "settings.json"), "utf8")).trustedFolders ?? {}));
+  await safe("test process RIGWELL_TRUST_CWD", () => process.env.RIGWELL_TRUST_CWD);
+  for (const [k, v] of Object.entries(extra)) await safe(k, () => v);
+  return lines.join("\n");
+}
+
+/** Runs `fn`; when it throws, prints `diagnose(...)` before rethrowing, so a CI log shows why. */
+export async function withDiagnosis<T>(page: any, home: string, extra: () => Record<string, unknown>, fn: () => Promise<T>): Promise<T> {
+  try { return await fn(); } catch (e) { console.log(`[ui wait failed: ${(e as Error).message.split("\n")[0]}]\n${await diagnose(page, home, extra())}`); throw e; }
 }

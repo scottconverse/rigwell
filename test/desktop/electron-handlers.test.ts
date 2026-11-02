@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer, FakeTurn } from "../fakes/types.ts";
 import { CLI, makeHome, makeRepo } from "../e2e/helpers.ts";
-import { electronStatus, sleep } from "./helpers.ts";
+import { electronStatus, sleep, withDiagnosis } from "./helpers.ts";
 
 const desktop = join(import.meta.dir, "../../desktop");
 const { pw, electronBin, reason } = electronStatus("electron handler test");
@@ -63,6 +63,8 @@ maybe("desktop app: trust dialog and ask-user panel", () => {
     await page.locator(".composer[data-ready=true]").first().waitFor({ timeout: 30_000 });
     const ta = page.getByLabel("Message").first();
     await ta.fill(text);
+    // Enter before the editor's state has caught up with the typed text would send nothing; the Send button turns on when it has.
+    await page.locator('button[aria-label="Send"]:not([disabled])').first().waitFor({ timeout: 10_000 });
     await ta.press("Enter");
   };
 
@@ -70,7 +72,7 @@ maybe("desktop app: trust dialog and ask-user panel", () => {
     await page.getByText("Fake Anthropic").first().waitFor({ timeout: 20_000 });
     await composerSend("hello");
     const dialog = page.getByRole("dialog", { name: "Trust this folder?" });
-    await dialog.waitFor({ timeout: 30_000 });
+    await withDiagnosis(page, home, () => ({ modelRequests: fake.requests.length, appTrustEnv: "0" }), () => dialog.waitFor({ timeout: 30_000 }));
     expect(await dialog.textContent()).toContain(repo);
     expect(await dialog.textContent()).toContain("project settings");
     expect(fake.requests.length).toBe(0); // nothing reaches the model before the answer
@@ -84,7 +86,7 @@ maybe("desktop app: trust dialog and ask-user panel", () => {
   test("the agent's question shows as a panel and the chosen answer reaches the model", async () => {
     await composerSend("ask me something");
     const panel = page.getByRole("alertdialog", { name: "Question" });
-    await panel.waitFor({ timeout: 30_000 });
+    await withDiagnosis(page, home, () => ({ modelRequests: fake.requests.length }), () => panel.waitFor({ timeout: 30_000 }));
     expect(await panel.textContent()).toContain("Which language?");
     await panel.getByRole("button", { name: "py", exact: true }).click();
     await page.locator(".assistant", { hasText: "you chose py" }).first().waitFor({ timeout: 30_000 });
