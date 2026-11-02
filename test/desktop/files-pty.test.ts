@@ -1,6 +1,7 @@
 // Side pane Files and Terminal services, through a real daemon connection (no Electron).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer } from "../fakes/types.ts";
@@ -79,7 +80,9 @@ describe("Files (spec 17.1)", () => {
     }
     const w: any = await c.call("daemon.write_workspace_file_content", { filePath: "/etc/passwd", content: "x" }).catch((x) => x);
     expect(w.code).toBe(-32602);
-    symlinkSync("/etc/hostname", join(repo, "link.txt"));
+    const outside = join(mkdtempSync(join(tmpdir(), "rigwell-outside-")), "target.txt");
+    writeFileSync(outside, "outside\n");
+    symlinkSync(outside, join(repo, "link.txt"));
     const l: any = await c.call("daemon.write_workspace_file_content", { filePath: "link.txt", content: "x" }).catch((x) => x);
     expect(l.code).toBe(-32602);
     writeFileSync(join(repo, "bin.dat"), Buffer.from([1, 2, 0, 3]));
@@ -99,7 +102,8 @@ describe("Terminal (spec 17.2)", () => {
     expect(resolveShell("/bin/bash")).toMatch(/bash$/);
     expect(resolveShell("/tmp/evil/bash")).toMatch(/(bash|zsh)$/);
     expect(resolveShell("/tmp/evil/bash")).not.toContain("/tmp/evil");
-    expect(resolveShell("python3")).toMatch(/bash$/);
+    // Unknown shells fall back to the platform default: zsh on macOS, bash elsewhere.
+    expect(resolveShell("python3")).toMatch(process.platform === "darwin" ? /zsh$/ : /bash$/);
     const env = buildEnv({ PATH: "/bin", HOME: "/home/real" }, { HOME: "/tmp/fake", LD_PRELOAD: "x.so", FOO: "bar" });
     expect(env.HOME).toBe("/home/real");
     expect(env.LD_PRELOAD).toBeUndefined();

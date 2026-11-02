@@ -6,7 +6,7 @@
 import { existsSync } from "node:fs";
 import { findSession, listSessions } from "../storage/transcript.ts";
 import { readSessionSettings, updateSessionSettings } from "../storage/session-settings.ts";
-import { git } from "./git.ts";
+import { canonicalPath, git } from "./git.ts";
 import type { WorktreeManager } from "./manager.ts";
 
 export const HOUSEKEEPING_INTERVAL_MS = 5 * 60_000;
@@ -73,7 +73,7 @@ export class Housekeeper {
 
       // 1. Sessions whose worktree folder is gone are archived.
       for (const s of sessions) {
-        if (s.repoRoot) repos.add(s.repoRoot);
+        if (s.repoRoot) repos.add(canonicalPath(s.repoRoot));
         if (s.worktreePath && !s.archived && !existsSync(s.worktreePath)) {
           host.archive(s.sessionId);
           res.archived.push(s.sessionId);
@@ -84,7 +84,7 @@ export class Housekeeper {
       const byId = new Map(sessions.map((s) => [s.sessionId, s]));
       const ageLimit = this.o.orphanAgeMs ?? ORPHAN_AGE_MS;
       for (const w of await mgr.list()) {
-        repos.add(w.repoRoot);
+        repos.add(canonicalPath(w.repoRoot));
         if (w.lifecycle !== "ephemeral") continue;
         const rec = byId.get(w.sessionId);
         if (rec && !rec.archived) continue; // its session is still active

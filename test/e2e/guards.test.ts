@@ -156,7 +156,7 @@ describe("repeated identical tool calls", () => {
   }, 30_000);
 
   test("identical calls that return new results (polling) are allowed", async () => {
-    const poll: FakeTurn = () => ({ toolCalls: [{ name: "Execute", input: { command: "date +%s%N", riskLevel: "low", riskReason: "Prints the time." } }] });
+    const poll: FakeTurn = () => ({ toolCalls: [{ name: "Execute", input: { command: "node -e \"console.log(process.hrtime.bigint())\"", riskLevel: "low", riskReason: "Prints the time." } }] });
     const s = await setup([...Array.from({ length: 9 }, () => poll), { text: "done polling" }]);
     await s.c.turn("poll");
     expect(completed(s.c).reason).toBe("completed");

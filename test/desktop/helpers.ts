@@ -113,6 +113,6 @@ export async function diagnose(page: any, home: string, extra: Record<string, un
 }
 
 /** Runs `fn`; when it throws, prints `diagnose(...)` before rethrowing, so a CI log shows why. */
-export async function withDiagnosis<T>(page: any, home: string, extra: () => Record<string, unknown>, fn: () => Promise<T>): Promise<T> {
-  try { return await fn(); } catch (e) { console.log(`[ui wait failed: ${(e as Error).message.split("\n")[0]}]\n${await diagnose(page, home, extra())}`); throw e; }
+export async function withDiagnosis<T>(page: any, home: string, extra: () => Record<string, unknown> | Promise<Record<string, unknown>>, fn: () => Promise<T>): Promise<T> {
+  try { return await fn(); } catch (e) { console.log(`[ui wait failed: ${(e as Error).message.split("\n")[0]}]\n${await diagnose(page, home, await extra())}`); throw e; }
 }

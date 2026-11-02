@@ -21,6 +21,13 @@ const textOf = (m: any) => (typeof m.content === "string" ? m.content : (m.conte
 maybe("desktop app: trust dialog and ask-user panel", () => {
   let fake: FakeServer, xvfb: ChildProcess | undefined, app: any, page: any;
   let repo: string, home: string, display: string;
+  const pageLog: string[] = [];
+  // What the composer looks like when a wait fails: a sent message empties it, so a stuck one shows whether Enter reached the editor.
+  const composerState = async () => ({
+    editorText: await page.getByLabel("Message").first().innerText().catch(() => "?"),
+    sendDisabled: await page.locator('button[aria-label="Send"]').first().isDisabled().catch(() => "?"),
+    pageLog: pageLog.slice(-8),
+  });
 
   beforeAll(async () => {
     spawnSync("bun", ["run", "build.ts"], { cwd: desktop, stdio: "ignore" });
@@ -50,6 +57,8 @@ maybe("desktop app: trust dialog and ask-user panel", () => {
     delete env.NODE_OPTIONS;
     app = await pw._electron.launch({ executablePath: electronBin, args: ["--no-sandbox", desktop, `--route=/?folder=${encodeURIComponent(repo)}`], env, timeout: 60_000 });
     page = await app.firstWindow();
+    page.on("console", (m: any) => { if (["error", "warning"].includes(m.type())) pageLog.push(`${m.type()}: ${m.text().slice(0, 300)}`); });
+    page.on("pageerror", (e: Error) => pageLog.push(`pageerror: ${e.message.slice(0, 300)}`));
     await page.waitForSelector(".dot.running", { timeout: 40_000 });
   });
 
@@ -72,7 +81,7 @@ maybe("desktop app: trust dialog and ask-user panel", () => {
     await page.getByText("Fake Anthropic").first().waitFor({ timeout: 20_000 });
     await composerSend("hello");
     const dialog = page.getByRole("dialog", { name: "Trust this folder?" });
-    await withDiagnosis(page, home, () => ({ modelRequests: fake.requests.length, appTrustEnv: "0" }), () => dialog.waitFor({ timeout: 30_000 }));
+    await withDiagnosis(page, home, async () => ({ modelRequests: fake.requests.length, appTrustEnv: "0", ...(await composerState()) }), () => dialog.waitFor({ timeout: 30_000 }));
     expect(await dialog.textContent()).toContain(repo);
     expect(await dialog.textContent()).toContain("project settings");
     expect(fake.requests.length).toBe(0); // nothing reaches the model before the answer
@@ -86,7 +95,7 @@ maybe("desktop app: trust dialog and ask-user panel", () => {
   test("the agent's question shows as a panel and the chosen answer reaches the model", async () => {
     await composerSend("ask me something");
     const panel = page.getByRole("alertdialog", { name: "Question" });
-    await withDiagnosis(page, home, () => ({ modelRequests: fake.requests.length }), () => panel.waitFor({ timeout: 30_000 }));
+    await withDiagnosis(page, home, async () => ({ modelRequests: fake.requests.length, ...(await composerState()) }), () => panel.waitFor({ timeout: 30_000 }));
     expect(await panel.textContent()).toContain("Which language?");
     await panel.getByRole("button", { name: "py", exact: true }).click();
     await page.locator(".assistant", { hasText: "you chose py" }).first().waitFor({ timeout: 30_000 });
