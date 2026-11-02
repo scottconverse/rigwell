@@ -29,7 +29,7 @@ Branch `phase-1-core-loop`, draft PR scottconverse/rigwell#1 (base `main`). Do n
 
 ## Waiting on the owner (do not decide for them)
 - Build `create_pr` and PR status (§18.6)? It pushes branches and opens PRs with the user's GitHub credentials.
-- License for Rigwell: AGPL-3.0, Apache-2.0, MIT, or none. `NOTICE` already credits the Apache-2.0 SDK the protocol adapts.
+- License: decided by the owner: AGPL-3.0-only (`LICENSE`, package.json `license`, README, NOTICE).
 - Declined by the owner: GitHub-event and Slack-message triggers. Spec later phases (not built): hosted parts, §15.10 Workstreams, MCP OAuth.
 
 ## Not verified on real hardware
