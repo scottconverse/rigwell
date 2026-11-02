@@ -26,6 +26,8 @@ export interface SandboxNetworkSettings {
 export interface SandboxSettings {
   enabled?: boolean;
   mode?: SandboxMode;
+  /** Linux / bubblewrap: load the seccomp filter (src/sandbox/seccomp.ts). Default true; false turns it off. */
+  seccomp?: boolean;
   filesystem?: SandboxFilesystemSettings;
   network?: SandboxNetworkSettings;
 }
@@ -120,6 +122,9 @@ export function mergeSandboxOrg(org: SandboxSettings | undefined, user: SandboxS
   out.enabled = !!(org.enabled || user.enabled);
   const mode = org.mode === "whole-process" || user.mode === "whole-process" ? "whole-process" : (org.mode ?? user.mode);
   if (mode) out.mode = mode;
+  // The filter stays on unless every side that sets it turns it off.
+  const secs = [org.seccomp, user.seccomp].filter((v): v is boolean => v !== undefined);
+  if (secs.length) out.seccomp = secs.some(Boolean);
   const f: SandboxFilesystemSettings = {};
   const aw = intersectPaths(org.filesystem?.allowWrite, user.filesystem?.allowWrite);
   const ar = intersectPaths(org.filesystem?.allowRead, user.filesystem?.allowRead);

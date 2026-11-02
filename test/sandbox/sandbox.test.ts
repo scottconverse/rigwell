@@ -93,7 +93,8 @@ describe("status and platform reporting", () => {
     const c = sandboxFor(sid(), { settings: () => ({ enabled: false }) });
     expect(c.status(root).enabled).toBe(false);
     expect(sandboxStatusLabel(c.status(root))).toBe("off");
-    const wp = sandboxFor(sid(), { settings: () => ({ enabled: true, mode: "whole-process" }) }).status(root);
+    // whole-process needs bubblewrap: on macOS it is reported and commands stay per command
+    const wp = sandboxFor(sid(), { platform: "darwin", which: () => "/usr/bin/sandbox-exec", settings: () => ({ enabled: true, mode: "whole-process" }) }).status(root);
     expect(wp.mode).toBe("whole-process");
     expect(wp.note).toContain("per command");
   });
