@@ -2,9 +2,12 @@ name: platforms
 
 # Runs the suite and the desktop package build on macOS and Windows, which the Linux CI job cannot cover:
 # the sandbox-exec sandbox, the macOS keychain backend, the PowerShell worktree runner, and the packaged apps.
+# Non-code changes (docs, spec, website, notices) start no CI run.
 on:
   push:
+    paths-ignore: ["**.md", "docs/**", "spec/**", "website/**", "LICENSE", "NOTICE", ".github/workflows/pages.yml"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**", "spec/**", "website/**", "LICENSE", "NOTICE", ".github/workflows/pages.yml"]
 
 jobs:
   test:

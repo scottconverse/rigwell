@@ -1,9 +1,12 @@
 name: ci
 
+# Non-code changes (docs, spec, website, notices) start no CI run.
 on:
   push:
     branches: [main, "phase-*"]
+    paths-ignore: ["**.md", "docs/**", "spec/**", "website/**", "LICENSE", "NOTICE", ".github/workflows/pages.yml"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**", "spec/**", "website/**", "LICENSE", "NOTICE", ".github/workflows/pages.yml"]
 
 permissions:
   contents: read
