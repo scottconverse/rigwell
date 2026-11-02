@@ -59,7 +59,7 @@ function listFiles(abs: string, rel: string): string[] {
   const out: string[] = [];
   for (const e of readdirSync(abs, { withFileTypes: true })) {
     if (e.name === ".git") continue;
-    const r = path.join(rel, e.name);
+    const r = `${rel}/${e.name}`; // the reported paths always use "/", like git
     if (e.isDirectory()) out.push(...listFiles(path.join(abs, e.name), r));
     else if (e.isFile()) out.push(r);
   }

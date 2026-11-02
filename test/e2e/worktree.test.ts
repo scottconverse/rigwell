@@ -80,13 +80,16 @@ describe("worktrees end to end", () => {
 
   test("a setup profile runs with secrets stripped; REPO_ROOT_PATH set; protocol list/status/remove", async () => {
     const repo = makeRepo();
-    const top = realpathSync(repo);
+    const top = realpathSync.native(repo); // the same canonical path the profile folder hash is made from
     const root = tmp("e2e-root");
     const home = makeHome([{ provider: "anthropic", url: "http://127.0.0.1:1", displayName: "Fake Anthropic" }]);
     const dir = join(home, "worktree-setups", createHash("sha256").update(top).digest("hex"));
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "dev.yaml"),
-      'name: Dev setup\nscript: |\n  env > setup-env.txt\n  echo "normal=$NORMAL_VAR key=${FAKE_API_KEY-unset} tok=${MY_SERVICE_TOKEN-unset} repo=$REPO_ROOT_PATH"\ninitialPrompt: run the tests\n');
+      process.platform === "win32"
+        // Windows runs setup scripts with PowerShell (spec 18.3).
+        ? 'name: Dev setup\nscript: |\n  Get-ChildItem Env: | ForEach-Object { "$($_.Name)=$($_.Value)" } | Set-Content setup-env.txt\n  Write-Output "normal=$env:NORMAL_VAR key=$(if ($env:FAKE_API_KEY) { $env:FAKE_API_KEY } else { \'unset\' }) tok=$(if ($env:MY_SERVICE_TOKEN) { $env:MY_SERVICE_TOKEN } else { \'unset\' }) repo=$env:REPO_ROOT_PATH"\ninitialPrompt: run the tests\n'
+        : 'name: Dev setup\nscript: |\n  env > setup-env.txt\n  echo "normal=$NORMAL_VAR key=${FAKE_API_KEY-unset} tok=${MY_SERVICE_TOKEN-unset} repo=$REPO_ROOT_PATH"\ninitialPrompt: run the tests\n');
     patchSettings(home, { worktreeDirectory: root });
     const c = new RpcChild(["exec", "--input-format", "stream-jsonrpc", "--output-format", "stream-jsonrpc", "--auto", "low"], {
       cwd: repo, env: { RIGWELL_HOME: home, FAKE_API_KEY: "sk-do-not-leak", MY_SERVICE_TOKEN: "tok-do-not-leak", NORMAL_VAR: "visible" },

@@ -2,7 +2,7 @@
 // removal broadcast, trusted folders, profile index. Temp repos and a local bare repo as origin.
 import { beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { WorktreeManager } from "../../src/worktree/manager.ts";
 import { HeadWatcher } from "../../src/worktree/watch.ts";
 import { Housekeeper, type HousekeepingHost, type SessionRecord } from "../../src/worktree/housekeeping.ts";
@@ -164,7 +164,7 @@ describe("removal broadcast, trust, archive", () => {
     forgetTrusted("/other");
     const j = JSON.parse(readFileSync(join(home, "settings.json"), "utf8"));
     expect(j.keep).toBe(1);
-    expect(Object.keys(j.trustedFolders)).toEqual(["/some/folder"]);
+    expect(Object.keys(j.trustedFolders)).toEqual([resolve("/some/folder")]); // stored as an absolute path (Windows adds the drive)
   });
 
   test("onSessionArchived removes a safe ephemeral worktree, keeps dirty, persistent and pinned ones", async () => {
@@ -261,7 +261,7 @@ describe("housekeeping", () => {
 describe("profile index", () => {
   test("lastUsedProfileId and deleted profiles keep name and cleanup script", async () => {
     const repo = makeGitRepo();
-    saveLocalProfile(repo, { id: "node", name: "Node setup", script: "echo up", cleanupScript: "echo cleaned > \"$REPO_ROOT_PATH/cleaned.txt\"" });
+    saveLocalProfile(repo, { id: "node", name: "Node setup", script: "echo up", cleanupScript: process.platform === "win32" ? "Set-Content -Path \"$env:REPO_ROOT_PATH\\cleaned.txt\" -Value cleaned" : "echo cleaned > \"$REPO_ROOT_PATH/cleaned.txt\"" });
     setLastUsedProfile(repo, "node");
     expect(readProfileIndex(repo).lastUsedProfileId).toBe("node");
     expect(findProfile(repo, "node")?.script).toBe("echo up");

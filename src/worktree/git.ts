@@ -40,10 +40,10 @@ export function canonicalPath(p: string): string {
 
 export async function repoTopLevel(cwd: string): Promise<string | null> {
   const r = await git(cwd, ["rev-parse", "--show-toplevel"]);
-  return r.code === 0 ? r.stdout.trim() : null;
+  return r.code === 0 ? path.resolve(r.stdout.trim()) : null; // git prints "C:/x" on Windows; keep native separators
 }
 
 /** Absolute path of the worktree's own git dir (where the receipt lives). */
 export async function gitDirOf(cwd: string): Promise<string> {
-  return await gitOk(cwd, ["rev-parse", "--absolute-git-dir"]);
+  return path.resolve(await gitOk(cwd, ["rev-parse", "--absolute-git-dir"]));
 }
