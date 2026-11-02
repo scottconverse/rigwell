@@ -512,6 +512,9 @@ function quietChromium() {
 
 async function boot() {
   quietChromium();
+  // A custom RIGWELL_HOME is a separate Rigwell install: give it its own Electron profile, so its single-instance lock,
+  // cookies and window state do not collide with another home's app (also lets parallel test runs coexist).
+  if (process.env.RIGWELL_HOME) app.setPath("userData", join(process.env.RIGWELL_HOME, "desktop-profile"));
   if (!app.requestSingleInstanceLock()) { app.quit(); return; }
   app.on("second-instance", (_e, argv) => {
     const link = argv.find((a) => a.startsWith(`${SCHEME}://`));

@@ -11,6 +11,12 @@ import { daemonCommand } from "../../desktop/main/daemon-cmd.ts";
 import { probeDaemon, readDaemonInfo } from "../../desktop/main/supervisor.ts";
 import { sleep } from "./helpers.ts";
 
+/** A display number no X server is using (no /tmp/.X<n>-lock), so parallel runs do not share one. */
+function freeDisplay(): string {
+  for (let n = 80; n < 200; n++) if (!existsSync(`/tmp/.X${n}-lock`) && !existsSync(`/tmp/.X11-unix/X${n}`)) return `:${n}`;
+  throw new Error("no free X display between :80 and :199");
+}
+
 setDefaultTimeout(120_000);
 const desktop = join(import.meta.dir, "../../desktop");
 const unpacked = join(desktop, "release/linux-unpacked");
@@ -67,7 +73,7 @@ maybe("Linux package", () => {
   });
 
   test("the packaged binary starts and its bundled daemon answers", async () => {
-    display = process.env.DISPLAY || `:${80 + Math.floor(Math.random() * 9)}`;
+    display = process.env.DISPLAY || freeDisplay();
     if (!process.env.DISPLAY) {
       xvfb = spawn("Xvfb", [display, "-screen", "0", "1280x900x24"], { stdio: "ignore" });
       for (let i = 0; i < 50 && !existsSync(`/tmp/.X11-unix/X${display.slice(1)}`); i++) await sleep(100);
