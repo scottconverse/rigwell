@@ -41,6 +41,7 @@ Windows test fixtures (332), the re-shown prompt test race (333), Electron tests
 
 ## Done on Nov 2 2026
 - Landing page in `website/` (decision 339), checked at desktop, tablet and phone widths in light and dark mode.
+- Non-code changes start no CI run (decision 340): `ci.yml` and `platforms.yml` skip docs, spec and website changes.
   `.github/workflows/pages.yml` publishes it. GitHub Pages is on (owner approved, Nov 2 2026, source: GitHub Actions).
   The site goes live at https://scottconverse.github.io/rigwell/ after the branch is merged to `main`.
 - The root README is now a short entry point that links to the site.
