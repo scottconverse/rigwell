@@ -159,7 +159,9 @@ export function toElectronCookie(c: ImportedCookie) {
   return {
     url: `${c.secure ? "https" : "http"}://${host}${c.path}`, name: c.name, value: c.value,
     ...(c.domain.startsWith(".") ? { domain: c.domain } : {}), path: c.path, secure: c.secure, httpOnly: c.httpOnly,
-    ...(c.expirationDate !== undefined ? { expirationDate: c.expirationDate } : {}), sameSite: c.sameSite,
+    ...(c.expirationDate !== undefined ? { expirationDate: c.expirationDate } : {}),
+    // SameSite=None is only valid on a Secure cookie; Chromium refuses the rest, so they fall back to the browser default.
+    sameSite: c.sameSite === "no_restriction" && !c.secure ? "unspecified" : c.sameSite,
   };
 }
 
