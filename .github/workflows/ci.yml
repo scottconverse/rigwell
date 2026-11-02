@@ -59,6 +59,10 @@ jobs:
       # npm ci runs the electron postinstall, which downloads the Electron binary; playwright is a devDependency here.
       - run: npm ci
         working-directory: desktop
+      # npm ci does not always fetch the Electron binary (seen on the runner and locally); run its installer explicitly.
+      - name: Install the Electron binary
+        run: test -x node_modules/electron/dist/electron || node node_modules/electron/install.js
+        working-directory: desktop
       - name: Install Chromium for the CDP and browser pane tests
         run: npx playwright install --with-deps chromium
         working-directory: desktop
