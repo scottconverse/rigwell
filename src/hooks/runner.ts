@@ -1,5 +1,5 @@
 // Hook runner: spawns commands, stdin JSON, timeouts, parallel groups, notifications (spec §5.6 Running).
-import { spawn } from "node:child_process";
+import { killProcessTree, spawnShell } from "../platform/shell.ts";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -54,15 +54,13 @@ export interface RunCommandOptions {
 export function runCommand(command: string, o: RunCommandOptions): Promise<{ exitCode: number; stdout: string; stderr: string; timedOut: boolean }> {
   return new Promise((resolve) => {
     const isWin = process.platform === "win32";
-    const child = spawn(isWin ? (process.env.ComSpec || "C:\\Windows\\System32\\cmd.exe") : "sh",
-      isWin ? ["/d", "/s", "/c", command] : ["-c", command],
-      { cwd: o.cwd, env: { ...process.env, ...o.env }, stdio: ["pipe", "pipe", "pipe"], detached: !isWin });
+    const child = spawnShell(command, { cwd: o.cwd, env: { ...process.env, ...o.env }, stdio: ["pipe", "pipe", "pipe"], detached: !isWin });
     let stdout = "", stderr = "", done = false, timedOut = false, cancelled = false;
     const MAX = 1024 * 1024;
     child.stdout.on("data", (d) => { if (stdout.length < MAX) stdout += d.toString(); });
     child.stderr.on("data", (d) => { if (stderr.length < MAX) stderr += d.toString(); });
     const killGroup = (sig: NodeJS.Signals) => {
-      try { if (!isWin && child.pid) process.kill(-child.pid, sig); else child.kill(sig); } catch { /* gone */ }
+      killProcessTree(child.pid, sig);
     };
     const finish = (code: number | null) => {
       if (done) return;

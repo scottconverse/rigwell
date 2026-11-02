@@ -1,6 +1,6 @@
 // Dictation backends: a fake local speech-to-text program, a fake remote endpoint, and the "not configured" paths.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cleanTranscript, DEFAULT_DICTATION, dictationStatus, DictationError, splitCommand, transcribe, type DictationSettings } from "../../desktop/main/dictation.ts";
@@ -9,15 +9,31 @@ let dir: string, fakeStt: string, fakeWhisper: string;
 const WAV = Buffer.from("RIFF....WAVEfmt fake audio bytes");
 const cfg = (o: Partial<DictationSettings>): DictationSettings => ({ ...DEFAULT_DICTATION, ...o });
 
+/** A fake speech-to-text "program": the current bun running a script. Works the same on POSIX and Windows. */
+function fakeProgram(name: string, source: string): string {
+  const script = join(dir, `${name}.js`);
+  writeFileSync(script, source);
+  return `"${process.execPath}" "${script}"`;
+}
+
+/** A launcher file named like the real program, so name based behaviour (whisper) and PATH lookup are exercised. */
+function launcherFor(folder: string, name: string, script: string): string {
+  mkdirSync(folder, { recursive: true });
+  const win = process.platform === "win32";
+  const file = join(folder, win ? `${name}.cmd` : name);
+  writeFileSync(file, win ? `@"${process.execPath}" "${script}" %*\r\n` : `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`);
+  chmodSync(file, 0o755);
+  return file;
+}
+
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "rigwell-stt-"));
-  fakeStt = join(dir, "fake-stt");
-  writeFileSync(fakeStt, '#!/bin/sh\n# args: <flag> <wav>; prints a whisper style transcript\necho "[00:00:00.000 --> 00:00:02.000]   heard $(wc -c < "$2") bytes"\necho "[BLANK_AUDIO]"\n');
-  chmodSync(fakeStt, 0o755);
+  // args: <flag> <wav>; prints a whisper style transcript
+  fakeStt = fakeProgram("fake-stt", 'const fs = require("fs"); console.log("[00:00:00.000 --> 00:00:02.000]   heard " + fs.statSync(process.argv[3]).size + " bytes"); console.log("[BLANK_AUDIO]");');
   // mimics the Python CLI: writes <name>.txt into --output_dir and prints progress on stdout
-  fakeWhisper = join(dir, "whisper");
-  writeFileSync(fakeWhisper, '#!/bin/sh\nwav="$1"; shift\nwhile [ $# -gt 0 ]; do if [ "$1" = "--output_dir" ]; then out="$2"; fi; shift; done\necho progress...\necho "python style text" > "$out/$(basename "$wav" .wav).txt"\n');
-  chmodSync(fakeWhisper, 0o755);
+  const script = join(dir, "whisper.js");
+  writeFileSync(script, 'const fs = require("fs"), path = require("path"); const a = process.argv.slice(2); const wav = a[0]; const out = a[a.indexOf("--output_dir") + 1]; console.log("progress..."); fs.writeFileSync(path.join(out, path.basename(wav, ".wav") + ".txt"), "python style text\\n");');
+  fakeWhisper = launcherFor(join(dir, "pybin"), "whisper", script);
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -37,23 +53,19 @@ describe("local command backend", () => {
     expect(await transcribe(WAV, cfg({ backend: "command", command: `${fakeStt} -f {file}` }))).toBe(`heard ${WAV.length} bytes`);
   });
   test("the Python whisper CLI style (transcript in a file) works", async () => {
-    expect(await transcribe(WAV, cfg({ backend: "command", command: `${fakeWhisper} {file}` }))).toBe("python style text");
+    expect(await transcribe(WAV, cfg({ backend: "command", command: `"${fakeWhisper}" {file}` }))).toBe("python style text");
   });
   test("temp audio is deleted afterwards", async () => {
     const seen = join(dir, "seen.txt");
-    const spy = join(dir, "spy");
-    writeFileSync(spy, `#!/bin/sh\necho "$1" > ${seen}\necho ok\n`);
-    chmodSync(spy, 0o755);
+    const spy = fakeProgram("spy", `require("fs").writeFileSync(${JSON.stringify(seen)}, process.argv[2]); console.log("ok");`);
     await transcribe(WAV, cfg({ backend: "command", command: `${spy} {file}` }));
     expect(await Bun.file(readFileSync(seen, "utf8").trim()).exists()).toBe(false);
   });
   test("missing program, failing program and silence give clear errors", async () => {
     await expect(transcribe(WAV, cfg({ backend: "command", command: join(dir, "nope") + " {file}" }))).rejects.toMatchObject({ code: "not-configured" });
-    const bad = join(dir, "bad");
-    writeFileSync(bad, "#!/bin/sh\necho boom >&2\nexit 3\n"); chmodSync(bad, 0o755);
+    const bad = fakeProgram("bad", 'console.error("boom"); process.exit(3);');
     await expect(transcribe(WAV, cfg({ backend: "command", command: bad }))).rejects.toThrow(/boom/);
-    const quiet = join(dir, "quiet");
-    writeFileSync(quiet, "#!/bin/sh\necho '[BLANK_AUDIO]'\n"); chmodSync(quiet, 0o755);
+    const quiet = fakeProgram("quiet", 'console.log("[BLANK_AUDIO]");');
     await expect(transcribe(WAV, cfg({ backend: "command", command: quiet }))).rejects.toMatchObject({ code: "empty" });
   });
   test("an empty command without whisper-cli on PATH explains how to enable dictation", async () => {
@@ -62,14 +74,17 @@ describe("local command backend", () => {
     expect(e.message).toContain("whisper.cpp");
   });
   test("whisper-cli on PATH is used with the model path", async () => {
-    const bin = join(dir, "bin"); Bun.spawnSync(["mkdir", "-p", bin]);
     const args = join(dir, "args.txt");
-    writeFileSync(join(bin, "whisper-cli"), `#!/bin/sh\necho "$@" > ${args}\necho spoken words\n`); chmodSync(join(bin, "whisper-cli"), 0o755);
-    expect(await transcribe(WAV, cfg({ backend: "command", model: "/m/base.bin", language: "en" }), { env: { PATH: bin } })).toBe("spoken words");
+    const script = join(dir, "whisper-cli.js");
+    writeFileSync(script, `require("fs").writeFileSync(${JSON.stringify(args)}, process.argv.slice(2).join(" ")); console.log("spoken words");`);
+    const bin = join(dir, "bin");
+    launcherFor(bin, "whisper-cli", script); // POSIX: executable script. Windows: whisper-cli.cmd, found through PATHEXT.
+    const env = { PATH: bin, Path: bin, PATHEXT: ".EXE;.CMD;.BAT", ComSpec: process.env.ComSpec };
+    expect(await transcribe(WAV, cfg({ backend: "command", model: "/m/base.bin", language: "en" }), { env })).toBe("spoken words");
     const a = readFileSync(args, "utf8");
     expect(a).toContain("-m /m/base.bin");
     expect(a).toContain("-nt -np -l en");
-    const noModel = await transcribe(WAV, cfg({ backend: "command" }), { env: { PATH: bin } }).catch((x) => x);
+    const noModel = await transcribe(WAV, cfg({ backend: "command" }), { env }).catch((x) => x);
     expect(noModel.message).toContain("model");
   });
 });

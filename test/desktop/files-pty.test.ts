@@ -1,7 +1,9 @@
 // Side pane Files and Terminal services, through a real daemon connection (no Electron).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isWin } from "../platform.ts";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer } from "../fakes/types.ts";
 import { makeRepo } from "../e2e/helpers.ts";
@@ -71,15 +73,19 @@ describe("Files (spec 17.1)", () => {
 
   test("paths cannot escape the working folder; binary and missing files are refused", async () => {
     const { c, repo } = await session();
-    for (const bad of ["../x", "/etc/passwd", "a/../../b", "C:\\x"]) {
+    // A real file outside the working folder (the same role /etc/passwd plays on POSIX).
+    const outside = join(mkdtempSync(join(tmpdir(), "rigwell-outside-")), "outside.txt");
+    writeFileSync(outside, "outside\n");
+    for (const bad of ["../x", outside, "a/../../b", "C:\\x"]) {
       const e: any = await c.call("daemon.get_workspace_file_content", { filePath: bad }).catch((x) => x);
       // Absolute reads are allowed for the session owner; relative escapes are not.
-      if (bad === "/etc/passwd") expect(e.content).toBeDefined();
+      if (bad === outside) expect(e.content).toBeDefined();
+      else if (bad === "C:\\x" && isWin) expect(e.code).toBeDefined(); // a drive path is absolute on Windows (and does not exist here)
       else expect(e.code).toBe(-32602);
     }
-    const w: any = await c.call("daemon.write_workspace_file_content", { filePath: "/etc/passwd", content: "x" }).catch((x) => x);
+    const w: any = await c.call("daemon.write_workspace_file_content", { filePath: outside, content: "x" }).catch((x) => x);
     expect(w.code).toBe(-32602);
-    symlinkSync("/etc/hostname", join(repo, "link.txt"));
+    symlinkSync(outside, join(repo, "link.txt"));
     const l: any = await c.call("daemon.write_workspace_file_content", { filePath: "link.txt", content: "x" }).catch((x) => x);
     expect(l.code).toBe(-32602);
     writeFileSync(join(repo, "bin.dat"), Buffer.from([1, 2, 0, 3]));
@@ -96,10 +102,19 @@ describe("Files (spec 17.1)", () => {
 
 describe("Terminal (spec 17.2)", () => {
   test("shell allow-list and protected environment keys", () => {
-    expect(resolveShell("/bin/bash")).toMatch(/bash$/);
-    expect(resolveShell("/tmp/evil/bash")).toMatch(/(bash|zsh)$/);
-    expect(resolveShell("/tmp/evil/bash")).not.toContain("/tmp/evil");
-    expect(resolveShell("python3")).toMatch(/bash$/);
+    if (isWin) {
+      expect(resolveShell("python3")).toBe("cmd.exe");
+      expect(resolveShell("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")).toBe("powershell.exe");
+    } else {
+      expect(resolveShell("/bin/bash")).toMatch(/bash$/);
+      expect(resolveShell("/tmp/evil/bash")).toMatch(/(bash|zsh)$/);
+      expect(resolveShell("/tmp/evil/bash")).not.toContain("/tmp/evil");
+      expect(resolveShell("python3")).toMatch(/bash$/);
+    }
+    // Windows rules, simulated on any platform: the file name decides, the folder does not, the default is cmd.exe.
+    expect(resolveShell("C:\\Tools\\evil\\pwsh.exe", "win32")).toBe("pwsh.exe");
+    expect(resolveShell("C:\\Tools\\evil\\malware.exe", "win32")).toBe("cmd.exe");
+    expect(resolveShell(undefined, "win32")).toBe("cmd.exe");
     const env = buildEnv({ PATH: "/bin", HOME: "/home/real" }, { HOME: "/tmp/fake", LD_PRELOAD: "x.so", FOO: "bar" });
     expect(env.HOME).toBe("/home/real");
     expect(env.LD_PRELOAD).toBeUndefined();
@@ -114,13 +129,16 @@ describe("Terminal (spec 17.2)", () => {
     const bad: any = await c.call("daemon.create_terminal", { terminalId: "t2", cwd: join(repo, "nope") }).catch((e) => e);
     expect(bad.code).toBe(-32602);
     expect(bad.data?.reason).toBe("not_found");
-    await c.call("daemon.write_terminal_data", { terminalId: "t1", data: "echo marker-$((6*7)); pwd\n" });
+    await c.call("daemon.write_terminal_data", { terminalId: "t1", data: isWin ? "echo marker-42\r\n" : "echo marker-$((6*7)); pwd\n" });
     await c.waitFor((n) => n.type === "daemon.terminal_data" && n.terminalId === "t1" && n.data.includes("marker-42"));
     const out = c.notes.filter((n) => n.type === "daemon.terminal_data").map((n) => n.data).join("");
     expect(out).toContain("marker-42");
     await c.call("daemon.resize_terminal", { terminalId: "t1", cols: 120, rows: 40 });
-    await c.call("daemon.write_terminal_data", { terminalId: "t1", data: "stty size\n" });
-    await c.waitFor((n) => n.type === "daemon.terminal_data" && n.data.includes("40 120"));
+    if (!isWin) {
+      // Needs a real terminal. On Windows the terminal runs on pipes (no PTY), so only the call is checked.
+      await c.call("daemon.write_terminal_data", { terminalId: "t1", data: "stty size\n" });
+      await c.waitFor((n) => n.type === "daemon.terminal_data" && n.data.includes("40 120"));
+    }
     await c.call("daemon.write_terminal_data", { terminalId: "t1", data: "exit 3\n" });
     const exit = await c.waitFor((n) => n.type === "daemon.terminal_exit");
     expect(exit.exitCode).toBe(3);
@@ -131,7 +149,7 @@ describe("Terminal (spec 17.2)", () => {
   test("a terminal survives a dropped connection and the new connection gets the scrollback", async () => {
     const { c, repo, sessionId } = await session();
     await c.call("daemon.create_terminal", { terminalId: "keep", cwd: repo });
-    await c.call("daemon.write_terminal_data", { terminalId: "keep", data: "echo before-reload; export KEPT=alive\n" });
+    await c.call("daemon.write_terminal_data", { terminalId: "keep", data: isWin ? "echo before-reload& set KEPT=alive\r\n" : "echo before-reload; export KEPT=alive\n" });
     await c.waitFor((n) => n.type === "daemon.terminal_data" && n.data.includes("before-reload"));
     const pid = (await c.call("daemon.list_terminals", {})).terminals[0].pid;
     await c.close(); // the window reloads: its connection is gone
@@ -146,7 +164,7 @@ describe("Terminal (spec 17.2)", () => {
     expect(listed[0].state.plainText).toContain("before-reload");
     expect(stripAnsi(listed[0].state.serialized)).toContain("before-reload");
     // Still the same shell: its variable is set, and new output reaches the new connection.
-    await c2.call("daemon.write_terminal_data", { terminalId: "keep", data: "echo kept=$KEPT\n" });
+    await c2.call("daemon.write_terminal_data", { terminalId: "keep", data: isWin ? "echo kept=%KEPT%\r\n" : "echo kept=$KEPT\n" });
     await c2.waitFor((n) => n.type === "daemon.terminal_data" && n.data.includes("kept=alive"));
     // Output must not have gone to the dead connection, and the grace timer must not kill an adopted terminal.
     await sleep(1000);

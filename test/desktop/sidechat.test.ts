@@ -1,6 +1,8 @@
 // Side chat (spec 17.4): a question is answered while the main turn is still running, without touching the main session.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { jsCommand } from "../platform.ts";
 import { join } from "node:path";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer, FakeTurn } from "../fakes/types.ts";
@@ -55,7 +57,7 @@ describe("side chat while the main agent works", () => {
       mainBodies.push(body);
       if (isToolResult) return { text: "long work finished" };
       if (lastUserText.includes("LONG")) {
-        return { toolCalls: [{ name: "Execute", input: { command: `while [ ! -f ${join(repo, "GATE")} ]; do sleep 0.05; done; echo released`, riskLevel: "low", riskReason: "waits for a file" } }] };
+        return { toolCalls: [{ name: "Execute", input: { command: jsCommand(tmpdir(), `const fs = require("fs"); const t = setInterval(() => { if (fs.existsSync(${JSON.stringify(join(repo, "GATE"))})) { clearInterval(t); console.log("released"); } }, 50);`), riskLevel: "low", riskReason: "waits for a file" } }] };
       }
       return { text: "hi there" };
     };

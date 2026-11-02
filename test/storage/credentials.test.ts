@@ -8,6 +8,7 @@ import {
 } from "../../src/storage/credentials.ts";
 import { validateCustomModels } from "../../src/storage/models.ts";
 import { tmpEnv } from "./helpers.ts";
+import { expectOwnerOnly } from "../platform.ts";
 
 let env: ReturnType<typeof tmpEnv>;
 beforeEach(() => { env = tmpEnv(); });
@@ -43,7 +44,7 @@ test("file backend: round trip, mode 0600, delete", () => {
   expect(b.set("k", "secret-1")).toBe(true);
   expect(b.get("k")).toBe("secret-1");
   const file = path.join(env.rigwellHome, "credentials.json");
-  expect(statSync(file).mode & 0o777).toBe(0o600);
+  expectOwnerOnly(file);
   b.set("k2", "secret-2");
   expect(b.names().sort()).toEqual(["k", "k2"]);
   expect(b.delete("k")).toBe(true);

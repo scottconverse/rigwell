@@ -6,6 +6,7 @@ import path from "node:path";
 import { HookRunner, loadHooksConfig } from "../../src/hooks/index.ts";
 import { TaskLimits } from "../../src/subagents/task.ts";
 import { tmpEnv } from "../storage/helpers.ts";
+import { jsCommand } from "../platform.ts";
 import { call, makeStubSession, text } from "./helpers.ts";
 
 let env: ReturnType<typeof tmpEnv>;
@@ -51,9 +52,9 @@ test("no skills: no Skill tool", async () => {
 test("hooks: PreToolUse deny, PostToolUse context, Stop sends the agent back once", async () => {
   const stopFile = path.join(mkdtempSync(path.join(tmpdir(), "rigwell-hk-")), "stopped");
   const h = hooks({
-    PreToolUse: [{ matcher: "Grep", hooks: [sh("echo 'no grep today' >&2; exit 2")] }],
-    PostToolUse: [{ matcher: "Read", hooks: [sh("echo post-read-context")] }],
-    Stop: [{ hooks: [sh(`if [ -f ${stopFile} ]; then exit 0; else touch ${stopFile}; echo 'run the tests first' >&2; exit 2; fi`)] }],
+    PreToolUse: [{ matcher: "Grep", hooks: [sh(jsCommand(path.dirname(stopFile), `console.error("no grep today"); process.exit(2);`))] }],
+    PostToolUse: [{ matcher: "Read", hooks: [sh(jsCommand(path.dirname(stopFile), `console.log("post-read-context");`))] }],
+    Stop: [{ hooks: [sh(jsCommand(path.dirname(stopFile), `const fs = require("fs"); const f = ${JSON.stringify(stopFile)}; if (fs.existsSync(f)) process.exit(0); fs.writeFileSync(f, ""); console.error("run the tests first"); process.exit(2);`))] }],
   });
   const { session, requests, notes } = makeStubSession((req, n) => {
     if (n === 0) return { content: [{ type: "tool_use", id: "a", name: "Grep", input: { pattern: "x" } }, { type: "tool_use", id: "b", name: "Read", input: { path: "a.txt" } }] };
@@ -70,7 +71,7 @@ test("hooks: PreToolUse deny, PostToolUse context, Stop sends the agent back onc
 });
 
 test("hooks: UserPromptSubmit can block the prompt", async () => {
-  const { session, requests, notes } = makeStubSession(() => text("hi"), { hooksFor: hooks({ UserPromptSubmit: [{ hooks: [sh("echo nope >&2; exit 2")] }] }) });
+  const { session, requests, notes } = makeStubSession(() => text("hi"), { hooksFor: hooks({ UserPromptSubmit: [{ hooks: [sh(jsCommand(env.root, `console.error("nope"); process.exit(2);`))] }] }) });
   session.addUserMessage("go");
   await session.idle();
   expect(requests.length).toBe(0);
@@ -78,7 +79,7 @@ test("hooks: UserPromptSubmit can block the prompt", async () => {
 });
 
 test("hooks: a rewritten Execute command drops the model's risk fields and asks", async () => {
-  const h = hooks({ PreToolUse: [{ matcher: "Execute", hooks: [sh(`echo '{"hookSpecificOutput":{"updatedInput":{"command":"echo rewritten"}}}'`)] }] });
+  const h = hooks({ PreToolUse: [{ matcher: "Execute", hooks: [sh(jsCommand(env.root, `console.log(JSON.stringify({ hookSpecificOutput: { updatedInput: { command: "echo rewritten" } } }));`))] }] });
   const { session, requests } = makeStubSession((req, n) => (n === 0 ? call("Execute", { command: "echo hi", riskLevel: "low", riskReason: "r" }) : text("ok")), { hooksFor: h, settings: { modelId: "custom:Stub-0", reasoningEffort: "off", interactionMode: "auto", autonomyLevel: "medium" } });
   session.addUserMessage("go");
   await session.idle();

@@ -76,7 +76,9 @@ export function listFiles(cwd: string, p: { path?: unknown; showHidden?: unknown
     // rg exits 1 when nothing matches; 2 on errors (a failed listing is an empty list, spec §17.1).
     if (r.exitCode === 0 || r.exitCode === 1) {
       let bytes = 0;
-      for (const line of r.stdout.toString().split("\n")) {
+      for (const raw of r.stdout.toString().split("\n")) {
+        // ripgrep prints native separators; the protocol always uses "/".
+        const line = process.platform === "win32" ? raw.replace(/\r$/, "").replace(/\\/g, "/") : raw;
         if (!line) continue;
         if (files.length >= MAX_LIST_FILES || bytes + line.length > MAX_LIST_BYTES) { truncated = true; break; }
         files.push(line); bytes += line.length;

@@ -61,7 +61,9 @@ describe("daemon supervisor (spec 14.1)", () => {
     expect(s.state).toBe("running");
     // The new daemon works (fresh token), and the crash breadcrumb was written.
     expect(await ping(second)).toHaveProperty("models");
-    expect(JSON.parse(readFileSync(join(home, "logs", "daemon-critical-error.json"), "utf8")).signal).toBe("SIGKILL");
+    const crash = JSON.parse(readFileSync(join(home, "logs", "daemon-critical-error.json"), "utf8"));
+    // Windows has no signals: a killed process reports exit code 1 and no signal name.
+    if (process.platform === "win32") { expect(crash.signal).toBeNull(); expect(crash.code).not.toBe(0); } else expect(crash.signal).toBe("SIGKILL");
     // A second kill is attempt 1 again, not 2: the counter reset on ready.
     const again = new Promise<any>((r) => s.once("ready", r));
     process.kill(second.pid, "SIGKILL");

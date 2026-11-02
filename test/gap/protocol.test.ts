@@ -8,6 +8,7 @@ import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer, FakeTurn } from "../fakes/types.ts";
 import { makeHome, makeRepo } from "../e2e/helpers.ts";
 import { driver } from "./helpers.ts";
+import { jsCommand } from "../platform.ts";
 
 const servers: FakeServer[] = [];
 afterEach(() => { servers.splice(0).forEach((s) => s.stop()); });
@@ -355,7 +356,7 @@ describe("permissions", () => {
     ]);
     const log = join(home, "notifications.log");
     const sf = join(home, "settings.json");
-    writeFileSync(sf, JSON.stringify({ ...JSON.parse(readFileSync(sf, "utf8")), hooks: { Notification: [{ hooks: [{ type: "command", command: `cat >> ${log}; echo >> ${log}` }] }] } }));
+    writeFileSync(sf, JSON.stringify({ ...JSON.parse(readFileSync(sf, "utf8")), hooks: { Notification: [{ hooks: [{ type: "command", command: jsCommand(home, `let s = ""; process.stdin.on("data", (d) => (s += d)); process.stdin.on("end", () => require("fs").appendFileSync(${JSON.stringify(log)}, s + "\\n"));`) }] }] } }));
     const d = driver({ canPrompt: true, answer: (m) => (m === "ask_user" ? { answers: [{ index: 1, question: "q?", answer: "a" }] } : { selectedOption: "proceed_once" }) });
     await d.call("initialize_session", { cwd: repo, modelId: "custom:F-0", autonomyLevel: "low" });
     await d.turn("go");

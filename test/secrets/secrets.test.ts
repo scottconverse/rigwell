@@ -9,6 +9,7 @@ import type { FakeServer } from "../fakes/types.ts";
 import { lastToolResult, makeRepo } from "../e2e/helpers.ts";
 import { inproc } from "../e2e/inproc.ts";
 import { tmpEnv } from "../storage/helpers.ts";
+import { expectOwnerOnly, jsCommand } from "../platform.ts";
 
 let env: ReturnType<typeof tmpEnv>;
 const servers: FakeServer[] = [];
@@ -33,7 +34,7 @@ test("secret values live only in the credential store; the index and lists hold 
   expect(JSON.stringify(list)).not.toContain(SECRET);
   // The index file has no value; the credential file (mode 0600) has it.
   expect(readFileSync(path.join(env.rigwellHome, "secrets.json"), "utf8")).not.toContain(SECRET);
-  expect(statSync(path.join(env.rigwellHome, "secrets.json")).mode & 0o777).toBe(0o600);
+  expectOwnerOnly(path.join(env.rigwellHome, "secrets.json"));
   expect(readFileSync(path.join(env.rigwellHome, "credentials.json"), "utf8")).toContain(SECRET);
   // Short values show no characters at all.
   expect(maskSecret("short")).toBe("****");
@@ -90,7 +91,7 @@ test("session environment reaches Execute and hooks, and never the prompt, trans
   mkdirSync(path.join(repo, ".rigwell"), { recursive: true });
   const hookOut = path.join(env.root, "hook-saw.txt");
   writeFileSync(path.join(repo, ".rigwell", "settings.json"), JSON.stringify({
-    hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: `printf '%s' "$MY_TOKEN" > '${hookOut}'` }] }] },
+    hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: jsCommand(env.root, `require("fs").writeFileSync(${JSON.stringify(hookOut)}, process.env.MY_TOKEN ?? "");`) }] }] },
   }));
   const c = inproc();
   await c.call("set_secret", { name: "tok", value: SECRET });

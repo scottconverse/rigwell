@@ -37,15 +37,19 @@ export const HOW_TO_ENABLE =
   "Dictation needs a speech-to-text program on this computer. Install whisper.cpp (the whisper-cli program) and download a model, "
   + "then open Settings > Voice dictation, choose \"Local command\" and set the model path. Nothing is sent anywhere unless you choose a remote endpoint.";
 
-/** Splits a command line into arguments: whitespace separates, single and double quotes group, backslash escapes inside double quotes. */
-export function splitCommand(line: string): string[] {
+/**
+ * Splits a command line into arguments: whitespace separates, single and double quotes group, backslash escapes
+ * inside double quotes. On Windows a backslash is a path separator, so inside double quotes it only escapes a quote
+ * (`C:\\tools\\whisper.exe` in quotes stays intact).
+ */
+export function splitCommand(line: string, platform: NodeJS.Platform = process.platform): string[] {
   const out: string[] = [];
   let cur = "", has = false, q: "'" | '"' | null = null;
   for (let i = 0; i < line.length; i++) {
     const c = line[i];
     if (q) {
       if (c === q) q = null;
-      else if (c === "\\" && q === '"' && i + 1 < line.length) cur += line[++i];
+      else if (c === "\\" && q === '"' && i + 1 < line.length && (platform !== "win32" || line[i + 1] === '"')) cur += line[++i];
       else cur += c;
     } else if (c === "'" || c === '"') { q = c; has = true; }
     else if (/\s/.test(c)) { if (has || cur) out.push(cur); cur = ""; has = false; }
@@ -56,12 +60,17 @@ export function splitCommand(line: string): string[] {
   return out;
 }
 
-/** Looks for a program on PATH. */
-export function which(name: string, env: Record<string, string | undefined> = process.env): string | undefined {
-  for (const dir of (env.PATH ?? "").split(delimiter)) {
+/** Looks for a program on PATH. On Windows the variable may be spelled `Path` and PATHEXT lists the executable extensions. */
+export function which(name: string, env: Record<string, string | undefined> = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
+  const win = platform === "win32";
+  const pathVar = env.PATH ?? (win ? Object.entries(env).find(([k]) => k.toUpperCase() === "PATH")?.[1] : undefined) ?? "";
+  const exts = win ? ["", ...(env.PATHEXT ?? Object.entries(env).find(([k]) => k.toUpperCase() === "PATHEXT")?.[1] ?? ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean)] : [""];
+  for (const dir of pathVar.split(win ? ";" : delimiter)) {
     if (!dir) continue;
-    const p = join(dir, name);
-    try { if (existsSync(p) && statSync(p).isFile()) return p; } catch { /* next */ }
+    for (const ext of exts) {
+      const p = join(dir, name + ext);
+      try { if (existsSync(p) && statSync(p).isFile()) return p; } catch { /* next */ }
+    }
   }
   return undefined;
 }
@@ -98,9 +107,22 @@ export interface TranscribeDeps {
   timeoutMs?: number;
 }
 
+/**
+ * How to start a program. Windows cannot start a .cmd or .bat file directly, so those go through cmd.exe with
+ * every argument quoted; anything else is started as is. (No shell interprets the user's command line.)
+ */
+export function launchSpec(file: string, args: string[], platform: NodeJS.Platform = process.platform, comspec = "C:\\Windows\\System32\\cmd.exe"): { file: string; args: string[]; verbatim: boolean } {
+  if (platform === "win32" && /\.(cmd|bat)$/i.test(file)) {
+    const q = (a: string) => `"${a.replace(/"/g, '""')}"`;
+    return { file: comspec, args: ["/d", "/s", "/c", `"${[file, ...args].map(q).join(" ")}"`], verbatim: true };
+  }
+  return { file, args, verbatim: false };
+}
+
 function run(file: string, args: string[], timeoutMs: number, env: Record<string, string | undefined>): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(file, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: env as NodeJS.ProcessEnv }, (err, stdout, stderr) => {
+    const l = launchSpec(file, args, process.platform, env.ComSpec ?? process.env.ComSpec);
+    execFile(l.file, l.args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: env as NodeJS.ProcessEnv, ...(l.verbatim ? { windowsVerbatimArguments: true } : {}) }, (err, stdout, stderr) => {
       if (err) {
         const code = (err as NodeJS.ErrnoException).code;
         if (code === "ENOENT") return reject(new DictationError(`The dictation program "${file}" was not found. ${HOW_TO_ENABLE}`, "not-configured"));
@@ -138,8 +160,9 @@ export async function transcribe(wav: Uint8Array, s: DictationSettings, deps: Tr
       writeFileSync(file, wav);
       const sub = (a: string) => a.replaceAll("{file}", file).replaceAll("{dir}", dir);
       let args = argv.slice(1).map(sub);
-      const prog = sub(argv[0]);
-      const isPythonWhisper = basename(prog) === "whisper" && !argv.includes("--output_format");
+      let prog = sub(argv[0]);
+      if (!/[\\/]/.test(prog)) prog = which(prog, env) ?? prog;
+      const isPythonWhisper = basename(prog).replace(/\.(exe|cmd|bat)$/i, "") === "whisper" && !argv.includes("--output_format");
       if (isPythonWhisper) {
         if (!args.includes(file)) args = [file, ...args];
         args.push("--output_format", "txt", "--output_dir", dir);

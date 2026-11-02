@@ -7,7 +7,8 @@
 //    a missing or wrong token gets 401 and no upgrade happens;
 //  - the Host header must be loopback (blocks DNS rebinding);
 //  - the token lives in $RIGWELL_HOME/daemon.json, written with mode 0600, next to the socket path and WS URL.
-import { chmodSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { makePrivate } from "../platform/private.ts";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
 
@@ -80,7 +81,7 @@ const infoPath = (home: string) => join(home, "daemon.json");
 export function writeDaemonInfo(home: string, info: DaemonInfoFile) {
   const p = infoPath(home);
   writeFileSync(p, JSON.stringify(info, null, 2) + "\n", { mode: 0o600 });
-  chmodSync(p, 0o600);
+  makePrivate(p);
 }
 
 /** Removes daemon.json only if it still belongs to this daemon. */

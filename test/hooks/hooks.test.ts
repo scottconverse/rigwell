@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { tmpEnv, writeJson } from "../storage/helpers.ts";
+import { jsCommand, sleepCommand } from "../platform.ts";
 import {
   HookRunner, aggregatePreToolUse, aggregateStop, aggregateUserPromptSubmit, aggregatePreCompact, groupApplies,
   loadHooksConfig, makeResult, matcherMatches, parseEnvFile, runHooks, type HookNotification, type HooksConfig,
@@ -60,8 +61,8 @@ test("runner: stdin JSON, parallel, config order, timeout, notifications", async
   const out = path.join(env.root, "stdin.json");
   const cfg = cfgOf({
     PreToolUse: [
-      { matcher: "Edit", hooks: [cmd(`cat > ${out}; echo '{"decision":"block","reason":"nope"}'`)] },
-      { hooks: [cmd("sleep 5", { timeout: 0.3 }), cmd("echo hi >&2; exit 2")] },
+      { matcher: "Edit", hooks: [cmd(jsCommand(env.root, `let s = ""; process.stdin.on("data", (d) => (s += d)); process.stdin.on("end", () => { require("fs").writeFileSync(${JSON.stringify(out)}, s); console.log(JSON.stringify({ decision: "block", reason: "nope" })); });`))] },
+      { hooks: [cmd(sleepCommand(env.root, 5), { timeout: 0.3 }), cmd(jsCommand(env.root, `console.error("hi"); process.exit(2);`))] },
     ],
   });
   const t0 = Date.now();
@@ -91,7 +92,7 @@ test("runner: hooksDisabled and no match do nothing", async () => {
 
 test("runner: abort signal counts as exit 1", async () => {
   const ac = new AbortController();
-  const cfg = cfgOf({ Stop: [{ hooks: [cmd("sleep 5")] }] });
+  const cfg = cfgOf({ Stop: [{ hooks: [cmd(sleepCommand(env.root, 5))] }] });
   const p = runHooks(cfg, "Stop", base(), {}, { signal: ac.signal });
   setTimeout(() => ac.abort(), 100);
   const r = await p;
@@ -131,8 +132,8 @@ test("env file parsing", () => {
 test("HookRunner: Stop tracks stop_hook_active; SessionStart collects env + context", async () => {
   const log = path.join(env.root, "stops.log");
   const cfg = cfgOf({
-    Stop: [{ hooks: [cmd(`cat >> ${log}; echo >> ${log}; echo again >&2; exit 2`)] }],
-    SessionStart: [{ matcher: "startup", hooks: [cmd('echo "export FOO=bar" >> "$CLAUDE_ENV_FILE"; echo ctx-line')] }],
+    Stop: [{ hooks: [cmd(jsCommand(env.root, `let s = ""; process.stdin.on("data", (d) => (s += d)); process.stdin.on("end", () => { require("fs").appendFileSync(${JSON.stringify(log)}, s + "\\n"); console.error("again"); process.exit(2); });`))] }],
+    SessionStart: [{ matcher: "startup", hooks: [cmd(jsCommand(env.root, `require("fs").appendFileSync(process.env.CLAUDE_ENV_FILE, "export FOO=bar\\n"); console.log("ctx-line");`))] }],
   });
   const hr = new HookRunner({ config: cfg, sessionId: "s1", transcriptPath: "/t", cwd: proj, permissionMode: () => "auto-low" });
   const a = await hr.stop({ toolExecutionCount: 2, elapsedMs: 10 });

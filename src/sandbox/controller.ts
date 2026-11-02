@@ -154,9 +154,9 @@ export class SandboxController {
   }
 
   /** Wraps one shell command. When the sandbox is off the command runs as before. */
-  async prepare(args: { shell: string; command: string; cwd: string; toolUseId?: string; input?: Record<string, unknown> }): Promise<SandboxRun> {
+  async prepare(args: { shell: string; shellArgs?: string[]; command: string; cwd: string; toolUseId?: string; input?: Record<string, unknown> }): Promise<SandboxRun> {
     const plain: SandboxRun = {
-      file: args.shell, args: ["-c", args.command], env: {}, finalize: async (o) => o, cleanup: async () => {},
+      file: args.shell, args: args.shellArgs ?? ["-c", args.command], env: {}, finalize: async (o) => o, cleanup: async () => {},
     };
     const st = this.status(args.cwd);
     if (!st.enabled) return plain;
@@ -412,6 +412,6 @@ export function sandboxStatusLabel(st: SandboxStatus): string {
 }
 
 /** The hook Execute calls. */
-export function prepareSandbox(ctx: Pick<ToolContext, "sessionId" | "toolUseId">, args: { shell: string; command: string; cwd: string; input?: Record<string, unknown> }): Promise<SandboxRun> {
+export function prepareSandbox(ctx: Pick<ToolContext, "sessionId" | "toolUseId">, args: { shell: string; shellArgs?: string[]; command: string; cwd: string; input?: Record<string, unknown> }): Promise<SandboxRun> {
   return sandboxFor(ctx.sessionId).prepare({ ...args, toolUseId: ctx.toolUseId });
 }

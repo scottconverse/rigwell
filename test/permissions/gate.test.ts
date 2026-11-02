@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import path from "node:path";
 import type { AutonomyLevel, PermissionContext } from "../../src/core/types.ts";
 import { classifyCommand, splitSegments } from "../../src/permissions/command.ts";
 import { decide } from "../../src/permissions/gate.ts";
@@ -114,10 +115,10 @@ describe("Edit/Create", () => {
     const e = decide("Edit", { path: "src/a.ts", old_text: "x", new_text: "y" }, pctx());
     expect(e).toMatchObject({
       decision: "ask", confirmationType: "edit", impactLevel: "medium", alwaysLevel: "low",
-      details: { filePath: "/work/proj/src/a.ts", fileName: "a.ts", oldContent: "x", newContent: "y" },
+      details: { filePath: path.resolve("/work/proj/src/a.ts"), fileName: "a.ts", oldContent: "x", newContent: "y" },
     });
     const c = decide("Create", { path: "/abs/n.txt", content: "hi" }, pctx());
-    expect(c).toMatchObject({ decision: "ask", confirmationType: "create", details: { filePath: "/abs/n.txt", fileName: "n.txt", content: "hi" } });
+    expect(c).toMatchObject({ decision: "ask", confirmationType: "create", details: { filePath: path.resolve("/abs/n.txt"), fileName: "n.txt", content: "hi" } });
     expect(decide("Edit", { path: "a" }, pctx({ autonomy: "low" })).decision).toBe("allow");
   });
   test("spec mode blocks writes except under .rigwell/specs", () => {

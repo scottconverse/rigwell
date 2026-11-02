@@ -7,6 +7,7 @@ import {
   clearAwsCredentialCache, decodeEventMessage, encodeEventMessage, parseCredentialOutput, resolveBedrockAuth, signV4,
 } from "../../src/adapters/bedrock-auth.ts";
 import { model } from "./helpers.ts";
+import { jsCommand } from "../platform.ts";
 
 afterEach(() => clearAwsCredentialCache());
 const bm = (bedrock: object, extra: object = {}) => model("bedrock-converse", "http://x", { bedrock: { awsRegion: "us-east-1", ...bedrock }, apiKey: undefined, ...extra });
@@ -89,8 +90,8 @@ describe("credentials", () => {
     const dir = mkdtempSync(join(tmpdir(), "rigwell-aws-"));
     const marker = join(dir, "logged-in");
     const counter = join(dir, "count");
-    const exportCmd = `echo x >> ${counter}; test -f ${marker} && echo '{"AccessKeyId":"CA","SecretAccessKey":"CS","SessionToken":"CT"}'`;
-    const m = bm({ awsAuthMethod: "credentials-command", awsCredentialExport: exportCmd, awsAuthRefresh: `touch ${marker}` });
+    const exportCmd = jsCommand(dir, `const fs = require("fs"); fs.appendFileSync(${JSON.stringify(counter)}, "x\\n"); if (!fs.existsSync(${JSON.stringify(marker)})) process.exit(1); console.log(JSON.stringify({ AccessKeyId: "CA", SecretAccessKey: "CS", SessionToken: "CT" }));`);
+    const m = bm({ awsAuthMethod: "credentials-command", awsCredentialExport: exportCmd, awsAuthRefresh: jsCommand(dir, `require("fs").writeFileSync(${JSON.stringify(marker)}, "");`) });
     const a = await resolveBedrockAuth(m, process.env);
     expect(a).toEqual({ kind: "sigv4", credentials: expect.objectContaining({ accessKeyId: "CA", sessionToken: "CT" }) });
     const lines = (f: string) => require("node:fs").readFileSync(f, "utf8").trim().split("\n").length;
@@ -98,7 +99,7 @@ describe("credentials", () => {
     await resolveBedrockAuth(m, process.env);
     expect(lines(counter)).toBe(2); // cached
     clearAwsCredentialCache();
-    const failing = bm({ awsAuthMethod: "credentials-command", awsCredentialExport: "exit 3" });
+    const failing = bm({ awsAuthMethod: "credentials-command", awsCredentialExport: jsCommand(dir, "process.exit(3);") });
     await expect(resolveBedrockAuth(failing, process.env)).rejects.toThrow(/failed \(exit 3\)/);
   });
 });

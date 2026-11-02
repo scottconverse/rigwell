@@ -10,8 +10,10 @@ function str(v: unknown): string | undefined {
 }
 
 function insideSpecs(p: string, cwd: string): boolean {
-  const dir = path.join(cwd, ".rigwell", "specs") + path.sep;
-  return path.resolve(cwd, p).startsWith(dir);
+  const dir = path.resolve(cwd, ".rigwell", "specs") + path.sep;
+  const target = path.resolve(cwd, p);
+  // Windows paths are case-insensitive.
+  return process.platform === "win32" ? target.toLowerCase().startsWith(dir.toLowerCase()) : target.startsWith(dir);
 }
 
 const SPEC_BLOCK =

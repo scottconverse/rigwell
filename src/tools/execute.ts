@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import type { Tool, ToolContext, ToolOutput } from "../core/types.ts";
+import { killProcessTree } from "../platform/shell.ts";
 import { prepareSandbox } from "../sandbox/controller.ts";
 import { fail, intArg, ok, promptDesc, promptSchema, resolvePath, strArg } from "./util.ts";
 
@@ -9,13 +10,49 @@ export const EXECUTE_OUTPUT_CAP = 30_000;
 export const EXECUTE_DEFAULT_TIMEOUT_MS = 120_000;
 export const EXECUTE_MAX_TIMEOUT_MS = 600_000;
 
-let shellCache: { path: string; name: string } | undefined;
-export function resolveShell(): { path: string; name: string } {
-  if (!shellCache) {
-    const bash = Bun.which("bash");
-    shellCache = bash ? { path: bash, name: "bash" } : { path: Bun.which("sh") ?? "/bin/sh", name: "/bin/sh" };
+export interface ShellInfo {
+  path: string;
+  name: string;
+  /** Arguments that run one command string. */
+  args: (command: string) => string[];
+}
+
+const dashC = (command: string) => ["-c", command];
+
+/**
+ * The shell Execute uses. Linux and macOS: bash if present, else sh.
+ * Windows: Git Bash when it is installed (so the model writes the same POSIX commands everywhere), found on PATH
+ * or next to git; the WSL launcher in System32 does not count (it runs a different machine). Without Git Bash:
+ * PowerShell (pwsh, then Windows PowerShell), and as a last resort cmd.exe.
+ */
+export function pickShell(
+  platform: NodeJS.Platform = process.platform,
+  which: (name: string) => string | null | undefined = (n) => Bun.which(n),
+  exists: (p: string) => boolean = fs.existsSync,
+  env: NodeJS.ProcessEnv = process.env,
+): ShellInfo {
+  if (platform !== "win32") {
+    const bash = which("bash");
+    return bash ? { path: bash, name: "bash", args: dashC } : { path: which("sh") ?? "/bin/sh", name: "/bin/sh", args: dashC };
   }
-  return shellCache;
+  const notWsl = (p: string | null | undefined) => (p && !/[\\/](system32|windowsapps)[\\/]bash\.exe$/i.test(p) ? p : undefined);
+  const gitExe = which("git");
+  const gitRoot = gitExe?.replace(/[\\/](?:cmd|bin|mingw64[\\/]bin|usr[\\/]bin)[\\/]git(?:\.exe)?$/i, "");
+  const fromGit = gitExe && gitRoot !== gitExe ? [gitRoot!] : [];
+  const gitBashes = [
+    ...fromGit.map((root) => `${root}\\bin\\bash.exe`),
+    ...[env.ProgramFiles, env["ProgramFiles(x86)"], env.LOCALAPPDATA && `${env.LOCALAPPDATA}\\Programs`].filter(Boolean).map((b) => `${b}\\Git\\bin\\bash.exe`),
+  ];
+  const bash = notWsl(which("bash")) ?? gitBashes.find((p) => exists(p));
+  if (bash) return { path: bash, name: "bash", args: dashC };
+  const ps = which("pwsh") ?? which("powershell");
+  if (ps) return { path: ps, name: "PowerShell", args: (c) => ["-NoProfile", "-NonInteractive", "-Command", c] };
+  return { path: env.ComSpec || "C:\\Windows\\System32\\cmd.exe", name: "cmd.exe", args: (c) => ["/d", "/s", "/c", c] };
+}
+
+let shellCache: ShellInfo | undefined;
+export function resolveShell(): ShellInfo {
+  return (shellCache ??= pickShell());
 }
 
 /** Keeps the head and tail of a stream, dropping the middle once over the cap. */
@@ -77,16 +114,7 @@ export function createExecuteTool(opts: { skipPermissions?: boolean } = {}): Too
 }
 
 function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
-  if (!pid) return;
-  try {
-    process.kill(-pid, sig);
-  } catch {
-    try {
-      process.kill(pid, sig);
-    } catch {
-      /* already gone */
-    }
-  }
+  killProcessTree(pid, sig); // process group on POSIX, taskkill /T on Windows
 }
 
 async function runExecute(input: Record<string, unknown>, ctx: ToolContext, background = false): Promise<ToolOutput> {
@@ -123,13 +151,14 @@ async function runExecute(input: Record<string, unknown>, ctx: ToolContext, back
   const err = new CappedText(EXECUTE_OUTPUT_CAP);
   const both = new CappedText(EXECUTE_OUTPUT_CAP);
 
-  const sbx = await prepareSandbox(ctx, { shell: shell.path, command, cwd, input });
+  const sbx = await prepareSandbox(ctx, { shell: shell.path, shellArgs: shell.args(command), command, cwd, input });
   if (sbx.error) return fail(sbx.error);
   return await new Promise<ToolOutput>((resolveRaw) => {
     const resolve = (o: ToolOutput) => void sbx.finalize(o, err.toString()).then(resolveRaw).finally(() => sbx.cleanup());
     const child = spawn(sbx.file, sbx.args, {
       cwd,
       detached: true,
+      windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, ...ctx.env, ...sbx.env, CI: process.env.CI ?? "1", GIT_PAGER: "cat", PAGER: "cat", GIT_TERMINAL_PROMPT: "0" },
     });
