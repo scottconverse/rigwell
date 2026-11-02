@@ -6,7 +6,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { daemonCommand } from "../../desktop/main/daemon-cmd.ts";
 import { probeDaemon, readDaemonInfo } from "../../desktop/main/supervisor.ts";
 import { sleep } from "./helpers.ts";
@@ -28,7 +28,7 @@ describe("daemon command", () => {
     expect(daemonCommand({ ...base, packaged: true, resourcesPath: "/opt/R/resources", platform: "linux" })).toEqual(["/opt/R/resources/bun/bun", "/opt/R/resources/daemon/src/cli/main.ts"]);
     expect(daemonCommand({ ...base, packaged: true, resourcesPath: "C:/R/resources", platform: "win32" })[0]).toMatch(/bun\.exe$/);
     expect(daemonCommand({ ...base, env: { RIGWELL_DAEMON_CMD: '["x","y"]' }, packaged: true, resourcesPath: "/r" })).toEqual(["x", "y"]);
-    expect(daemonCommand({ ...base, packaged: false })).toEqual(["bun", "/repo/src/cli/main.ts"]);
+    expect(daemonCommand({ ...base, packaged: false })).toEqual(["bun", resolve("/repo/src/cli/main.ts")]);
   });
 });
 

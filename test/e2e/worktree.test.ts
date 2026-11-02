@@ -126,7 +126,7 @@ describe("worktrees end to end", () => {
     expect(existsSync(init.worktree.path)).toBe(false);
     expect(gitOut(repo, "branch", "--list", init.worktree.branch)).toContain(init.worktree.branch); // branch kept
     await c2.close();
-  });
+  }, process.platform === "win32" ? 30_000 : 5_000); // Windows: two cold bun starts plus PowerShell for the setup script on a slow runner
 
   test("a repository profile does not run in an untrusted folder", async () => {
     const repo = makeRepo();

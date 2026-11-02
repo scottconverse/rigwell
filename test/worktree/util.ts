@@ -9,7 +9,7 @@ Object.assign(process.env, {
   GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null",
 });
 
-export const tmp = (prefix: string) => mkdtempSync(join(realpathSync(tmpdir()), `rigwell-wt-${prefix}-`));
+export const tmp = (prefix: string) => mkdtempSync(join(realpathSync.native(tmpdir()), `rigwell-wt-${prefix}-`));
 
 export function sh(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", env: process.env }).trim();
