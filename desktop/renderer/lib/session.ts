@@ -235,8 +235,28 @@ export class SessionController extends Store<SessionState> {
     if (i >= 0) list[i] = e; else list.push(e);
     this.set({ sideChat: list });
   }
-  async refreshSideChat() { try { const r = await this.request("daemon.side_chat_list"); this.set({ sideChat: r.entries, sideWrites: r.writes === true }); } catch {} }
-  async setSideWrites(enabled: boolean) { const r = await this.request("daemon.side_chat_set_writes", { enabled }); this.set({ sideWrites: r.writes === true }); }
+  /** Counts writes-switch changes, so a list reply sent before a change does not put the old value back. */
+  private writesSeq = 0;
+  async refreshSideChat() {
+    const seq = this.writesSeq;
+    try {
+      const r = await this.request("daemon.side_chat_list");
+      this.set(seq === this.writesSeq ? { sideChat: r.entries, sideWrites: r.writes === true } : { sideChat: r.entries });
+    } catch {}
+  }
+  /** The switch shows the new value at once (it does not wait for the daemon) and goes back if the call fails. */
+  async setSideWrites(enabled: boolean) {
+    const seq = ++this.writesSeq;
+    const before = this.state.sideWrites;
+    this.set({ sideWrites: enabled });
+    try {
+      const r = await this.request("daemon.side_chat_set_writes", { enabled });
+      if (seq === this.writesSeq) this.set({ sideWrites: r.writes === true });
+    } catch (e) {
+      if (seq === this.writesSeq) this.set({ sideWrites: before });
+      throw e;
+    }
+  }
   /** Promote: the side chat becomes a normal session in this project (spec 17.4). Returns the new session id. */
   async promoteSide(entryId: string): Promise<string> { const r = await this.request("daemon.side_chat_promote", { entryId }); void this.refreshSideChat(); return String(r.sessionId); }
   async askSide(question: string) { const r = await this.request("daemon.side_chat_ask", { question }); this.upsertSide(r.entry); }

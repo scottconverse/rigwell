@@ -46,6 +46,9 @@ None assigned. Ask the owner. The spec is built; later phases (hosted parts, Wor
    8 of 8 local Windows runs under load passed. Root cause not found. The index theory was checked and is wrong
    (a guard test in test/storage/session-index.test.ts). The test now prints each layer's state on failure.
    Read the "promote failure details" line in the CI log the next time it fails.
+   Fixed (decision 335): the writes switch step before Promote ("Clicking the checkbox did not change its state",
+   ci push run 41403866649). The "Archive Project" failure in that run probably came from it: the side chat stopped
+   before Promote, so its file was not archived (likely, not proven). The Promote sidebar step is still open.
    A second flake: in `test/desktop/electron.test.ts` the file save step showed "Saved" but the file kept its old text.
    Seen once on Linux CI (ci pull_request run 41401628274, commit a341f7b). Root cause not found. The test now prints
    the editor view and the disk text on failure ("save failure details" in the CI log).
