@@ -1,7 +1,6 @@
 name: pages
 
-# Publishes website/ to GitHub Pages. GitHub Pages must be turned on first
-# (repo Settings > Pages > Source: GitHub Actions). Until then this job fails.
+# Publishes website/ to GitHub Pages (repo Settings > Pages > Source: GitHub Actions).
 on:
   push:
     branches: [main]

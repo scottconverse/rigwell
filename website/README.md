@@ -20,7 +20,7 @@ python -m http.server 8765 --directory website
 ## Deploy
 
 `.github/workflows/pages.yml` publishes this folder to GitHub Pages on a push to `main` that changes
-`website/`, or when run by hand. Turn Pages on first: repo Settings > Pages > Source: GitHub Actions.
+`website/`, or when run by hand. Pages is on for this repo (Settings > Pages > Source: GitHub Actions).
 All paths in the page are relative, so it works under `/rigwell/`.
 
 ## Screenshots

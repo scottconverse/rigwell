@@ -41,7 +41,8 @@ Windows test fixtures (332), the re-shown prompt test race (333), Electron tests
 
 ## Done on Nov 2 2026
 - Landing page in `website/` (decision 339), checked at desktop, tablet and phone widths in light and dark mode.
-  `.github/workflows/pages.yml` publishes it, but GitHub Pages is not turned on (owner to decide).
+  `.github/workflows/pages.yml` publishes it. GitHub Pages is on (owner approved, Nov 2 2026, source: GitHub Actions).
+  The site goes live at https://scottconverse.github.io/rigwell/ after the branch is merged to `main`.
 - The root README is now a short entry point that links to the site.
 
 ## Next task
@@ -69,8 +70,7 @@ None assigned. Ask the owner. The spec is built; later phases (hosted parts, Wor
 ## Waiting on the owner (do not decide for them)
 - (Resolved) `create_pr` and PR status (§18.6): approved and built (decisions 321 to 327).
 - License: decided by the owner: AGPL-3.0-only (`LICENSE`, package.json `license`, README, NOTICE).
-- GitHub Pages for `website/`: not turned on. Turn on in repo Settings > Pages > Source: GitHub Actions; the workflow
-  runs on a push to `main` or by hand.
+- Merge to `main`: the site at https://scottconverse.github.io/rigwell/ goes live only after that merge (Pages is on).
 - Declined by the owner: GitHub-event and Slack-message triggers. Spec later phases (not built): hosted parts, §15.10 Workstreams, MCP OAuth.
 
 ## Not verified on real hardware
