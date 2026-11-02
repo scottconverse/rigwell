@@ -9,7 +9,7 @@ import { AUTO_MODEL_ID, type RouterConfig } from "../agent/router.ts";
 import { hasProjectConfig, isFolderTrusted, loadSettings, trustFolder } from "../storage/settings.ts";
 import { findModel, listModelInfo, resolveModels, validateCustomModels } from "../storage/models.ts";
 import { appendCompaction, appendMessage, appendTitle, appendTodoState, appendTurnOutcome, createSession, findSession, loadTranscript, type SessionFiles } from "../storage/transcript.ts";
-import { listSessionEntries } from "../storage/session-list.ts";
+import { listSessionEntries, searchSessions } from "../storage/session-list.ts";
 import { outputFormatFrom, systemPromptFrom, tagsFrom, toolIdUpdates, toolIdsFrom, userMessageFrom } from "./params.ts";
 import { gitRepoOf } from "./gitrepo.ts";
 import { readSessionSettings, updateSessionSettings } from "../storage/session-settings.ts";
@@ -410,6 +410,11 @@ export function createConnection(write: (line: string) => void, opts: Connection
       case "list_sessions": {
         const limit = typeof p.limit === "number" && p.limit > 0 ? Math.floor(p.limit) : undefined;
         return { sessions: listSessionEntries({ cwd: typeof p.cwd === "string" ? resolve(p.cwd) : undefined, includeArchived: p.includeArchived === true, includeBtwForks: p.includeBtwForks === true, limit }) };
+      }
+      case "search_sessions": {
+        if (typeof p.query !== "string" || !p.query.trim()) throw new RpcError(ErrorCodes.INVALID_PARAMS, "query must be a non-empty string");
+        if (p.mode !== undefined && p.mode !== "lexical" && p.mode !== "semantic") throw new RpcError(ErrorCodes.INVALID_PARAMS, "mode must be lexical or semantic");
+        return { hits: await searchSessions(p.query, p.mode ?? "lexical", { cwd: typeof p.cwd === "string" ? resolve(p.cwd) : undefined, includeArchived: p.includeArchived === true, limit: typeof p.limit === "number" ? p.limit : undefined }) };
       }
       case "interrupt_session": need().interrupt(); return {};
       case "close_session": {
