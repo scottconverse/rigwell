@@ -8,6 +8,8 @@
 //   releaseDate: "2026-11-01T00:00:00Z"   optional
 //   releaseNotes: "text"                  optional string
 //   files: [{ url: "rigwell-1.4.0-x64.AppImage", sha512: "...", size: 123 }]   optional; url is relative to the feed or absolute
+//   files[].signature: "<base64>"         optional; Ed25519 signature of the artifact bytes (see update-verify.ts). Without it
+//                                         the signature is fetched from <url>.sig. An unsigned artifact is refused.
 //   path: "rigwell-1.4.0-x64.AppImage"    optional; used when files is absent
 // The feed URL is the updateFeedUrl desktop setting (or RIGWELL_UPDATE_URL). Nothing is checked when it is empty.
 import { load as parseYaml } from "js-yaml";
@@ -15,7 +17,7 @@ import { load as parseYaml } from "js-yaml";
 export type UpdateCheck =
   | { status: "no-feed" }
   | { status: "up-to-date"; version: string }
-  | { status: "available"; version: string; releaseDate?: string; notes?: string; downloadUrl?: string }
+  | { status: "available"; version: string; releaseDate?: string; notes?: string; downloadUrl?: string; signature?: string; sha512?: string; size?: number }
   | { status: "error"; message: string };
 
 export interface CheckOptions {
@@ -74,13 +76,16 @@ export async function checkForUpdate(o: CheckOptions): Promise<UpdateCheck> {
     const version = doc && typeof doc.version === "string" ? doc.version : undefined;
     if (!version) return { status: "error", message: "The update feed has no version." };
     if (compareVersions(version, o.currentVersion) <= 0) return { status: "up-to-date", version: o.currentVersion };
-    const files = Array.isArray(doc!.files) ? (doc!.files as { url?: unknown }[]) : [];
+    const files = Array.isArray(doc!.files) ? (doc!.files as { url?: unknown; signature?: unknown; sha512?: unknown; size?: unknown }[]) : [];
     const rel = typeof files[0]?.url === "string" ? (files[0].url as string) : typeof doc!.path === "string" ? (doc!.path as string) : undefined;
     return {
       status: "available", version,
       releaseDate: typeof doc!.releaseDate === "string" ? doc!.releaseDate : undefined,
       notes: typeof doc!.releaseNotes === "string" ? doc!.releaseNotes : undefined,
       downloadUrl: rel ? new URL(rel, docUrl).toString() : undefined,
+      ...(typeof files[0]?.signature === "string" ? { signature: files[0].signature } : {}),
+      ...(typeof files[0]?.sha512 === "string" ? { sha512: files[0].sha512 } : {}),
+      ...(typeof files[0]?.size === "number" ? { size: files[0].size } : {}),
     };
   } catch (e) {
     return { status: "error", message: `Could not read the update feed: ${e instanceof Error ? e.message : String(e)}` };

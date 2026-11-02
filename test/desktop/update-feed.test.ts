@@ -49,7 +49,7 @@ describe("feed document url", () => {
 describe("checkForUpdate against a local feed", () => {
   test("newer version: available, with notes, date and an absolute download url", async () => {
     const r = await checkForUpdate({ feedUrl: `${base}/newer`, currentVersion: "0.1.0", platform: "linux" });
-    expect(r).toEqual({ status: "available", version: "1.4.0", releaseDate: "2026-11-01T00:00:00.000Z", notes: "Faster startup", downloadUrl: `${base}/newer/rigwell-1.4.0-x86_64.AppImage` });
+    expect(r).toEqual({ status: "available", version: "1.4.0", releaseDate: "2026-11-01T00:00:00.000Z", notes: "Faster startup", sha512: "abc", size: 10, downloadUrl: `${base}/newer/rigwell-1.4.0-x86_64.AppImage` });
     expect(describeCheck(r)).toContain("1.4.0 is available");
     expect(hits).toContain("/newer/latest-linux.yml");
   });
