@@ -61,6 +61,7 @@ describe("SessionStart hook input", () => {
     const proj = join(repo, ".rigwell");
     Bun.spawnSync(["mkdir", "-p", proj]);
     writeFileSync(join(proj, "hooks.json"), JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command: `cat > ${dumps}` }] }] } }));
+    const prevTrust = process.env.RIGWELL_TRUST_CWD;
     process.env.RIGWELL_TRUST_CWD = "1";
     try {
       const d = driver({ canPrompt: false });
@@ -74,7 +75,7 @@ describe("SessionStart hook input", () => {
       await e.until(() => e.completed().length > 0);
       expect(JSON.parse(readFileSync(dumps, "utf8"))).toMatchObject({ source: "resume", previous_session_id: init.sessionId, calling_session_id: "orchestrator-9" });
       await e.call("close_session", {});
-    } finally { delete process.env.RIGWELL_TRUST_CWD; }
+    } finally { if (prevTrust === undefined) delete process.env.RIGWELL_TRUST_CWD; else process.env.RIGWELL_TRUST_CWD = prevTrust; } // restore: later files in the same bun process inherit it
     void model;
   }, 30_000);
 });
