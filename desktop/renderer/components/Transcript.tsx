@@ -1,18 +1,31 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { bridge } from "../lib/rpc.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
+import { enhance } from "../lib/enhance.ts";
 import { mainArg, toolIcon, type Item } from "../lib/transcript.ts";
 
 export function Markdown({ text }: { text: string }) {
   const html = useMemo(() => renderMarkdown(text), [text]);
+  const ref = useRef<HTMLDivElement>(null);
+  // The HTML is written here, not with dangerouslySetInnerHTML: React rewrites that on every render, which would throw away the
+  // upgraded nodes (shiki, KaTeX, mermaid). It is written only when the text changes, then upgraded after paint.
+  // `stale` stops upgrades for text that has since changed (streaming).
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.innerHTML = html;
+    let stale = false;
+    if (/data-lang=|data-tex=/.test(html)) void enhance(el, () => stale).catch(() => {});
+    return () => { stale = true; };
+  }, [html]);
   return (
     <div
+      ref={ref}
       className="md"
       onClick={(e) => {
         const a = (e.target as HTMLElement).closest("a[data-ext]") as HTMLAnchorElement | null;
         if (a) { e.preventDefault(); void bridge().shell.openExternal(a.href); }
       }}
-      dangerouslySetInnerHTML={{ __html: html }}
     />
   );
 }

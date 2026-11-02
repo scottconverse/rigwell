@@ -1,7 +1,8 @@
 // Files tab (spec §17.1): tree with search, viewer (code, markdown, images), editing with a stale-write guard.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { bridge, RpcFailure } from "../lib/rpc.ts";
-import { highlight } from "../lib/highlight.ts";
+import { highlight, languageOf } from "../lib/highlight.ts";
+import { highlightCode } from "../lib/enhance.ts";
 import type { SessionController } from "../lib/session.ts";
 import { Markdown } from "./Transcript.tsx";
 
@@ -33,6 +34,19 @@ function Tree({ files, dirs, open, toggle, pick, current }: { files: string[]; d
       })}
     </ul>
   );
+}
+
+/** File contents: the small built-in highlighter paints first, then shiki replaces it when it has the language. */
+function CodeView({ code, path }: { code: string; path: string }) {
+  const [rich, setRich] = useState<string | null>(null);
+  useEffect(() => {
+    let stale = false;
+    setRich(null);
+    if (code.length < 300_000) void highlightCode(code, languageOf(path)).then((h) => { if (!stale) setRich(h); });
+    return () => { stale = true; };
+  }, [code, path]);
+  const plain = useMemo(() => highlight(code, path), [code, path]);
+  return rich ? <div className="code shiki-wrap" data-testid="shiki-code" dangerouslySetInnerHTML={{ __html: rich }} /> : <pre className="code" dangerouslySetInnerHTML={{ __html: plain }} />;
 }
 
 export function FilesTab({ ctl, autoOpen, requestOpen, refreshKey }: { ctl: SessionController; autoOpen: boolean; requestOpen?: string; refreshKey: number }) {
@@ -119,7 +133,7 @@ export function FilesTab({ ctl, autoOpen, requestOpen, refreshKey }: { ctl: Sess
               {file.isBinary && !isImage && <div className="empty">Binary file, {file.byteLength} bytes</div>}
               {isImage && <img alt={file.filePath} src={`data:${file.mimeType};base64,${file.content}`} className="preview-img" />}
               {!file.isBinary && !isImage && draft !== null && <textarea className="editor" value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false} aria-label="Edit file" />}
-              {!file.isBinary && !isImage && draft === null && (isMd && markdownView ? <div className="pad"><Markdown text={file.content ?? ""} /></div> : <pre className="code" dangerouslySetInnerHTML={{ __html: highlight(file.content ?? "", file.filePath) }} />)}
+              {!file.isBinary && !isImage && draft === null && (isMd && markdownView ? <div className="pad"><Markdown text={file.content ?? ""} /></div> : <CodeView code={file.content ?? ""} path={file.filePath} />)}
             </div>
           </>
         )}

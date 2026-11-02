@@ -128,3 +128,18 @@ describe("sounds and settings", () => {
     expect(loadDesktopSettings(home).notifications.finished).toBe(false);
   });
 });
+
+describe("markdown math and diagrams (spec 14.7)", () => {
+  test("inline and block math become data-tex nodes, escaped; prices stay text", () => {
+    const html = renderMarkdown("Euler $e^{i\\pi}+1=0$ costs $5 and $6.\n\n$$\n\\frac{a}{b}\n$$\n\n$$x<y$$");
+    expect(html).toContain('<span class="math" data-tex="e^{i\\pi}+1=0">');
+    expect(html).toContain("costs $5 and $6.");
+    expect(html).toContain('<div class="math-block" data-tex="\\frac{a}{b}">');
+    expect(html).toContain('data-tex="x&lt;y"');
+    expect(html).not.toContain("<y");
+  });
+  test("math is not taken from code, and mermaid fences keep their language for the renderer", () => {
+    expect(renderMarkdown("`$a$ and $b$`")).not.toContain("data-tex");
+    expect(renderMarkdown("```mermaid\ngraph TD\n A-->B\n```")).toContain('<code data-lang="mermaid">graph TD\n A--&gt;B</code>');
+  });
+});

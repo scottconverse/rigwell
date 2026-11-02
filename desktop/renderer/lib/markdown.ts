@@ -9,6 +9,9 @@ const safeHref = (h: string) => (/^(https?:\/\/|mailto:)/i.test(h.trim()) ? esca
 function inline(src: string): string {
   const codes: string[] = [];
   let s = src.replace(/`([^`\n]+)`/g, (_m, c: string) => { codes.push(`<code>${escapeHtml(c)}</code>`); return `\u0000${codes.length - 1}\u0000`; });
+  // Inline math $x^2$: no space just inside the dollars and no digit right after the closing one, so prices ("$5 and $6") stay text.
+  // The TeX is kept escaped in data-tex; the renderer turns it into KaTeX output (see enhance.ts).
+  s = s.replace(/(^|[^\\$\w])\$(?=\S)([^$\n]*?\S)\$(?!\d)/g, (_m, pre: string, tex: string) => { codes.push(`<span class="math" data-tex="${escapeHtml(tex)}">${escapeHtml(tex)}</span>`); return `${pre}\u0000${codes.length - 1}\u0000`; });
   s = escapeHtml(s);
   s = s.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (_m, text: string, href: string) => {
     const h = safeHref(href.replace(/&amp;/g, "&"));
@@ -35,6 +38,22 @@ export function renderMarkdown(md: string): string {
       while (i < lines.length && !/^```\s*$/.test(lines[i])) body.push(lines[i++]);
       i++;
       out.push(`<pre><code${fence[1] ? ` data-lang="${escapeHtml(fence[1])}"` : ""}>${escapeHtml(body.join("\n"))}</code></pre>`);
+      continue;
+    }
+    const mathBlock = /^\s*\$\$(.*)$/.exec(line);
+    if (mathBlock) {
+      const body: string[] = [];
+      let rest = mathBlock[1];
+      const one = /^(.*)\$\$\s*$/.exec(rest);
+      if (one) { body.push(one[1]); i++; }
+      else {
+        if (rest.trim()) body.push(rest);
+        i++;
+        while (i < lines.length && !/\$\$\s*$/.test(lines[i])) body.push(lines[i++]);
+        if (i < lines.length) body.push(lines[i++].replace(/\$\$\s*$/, ""));
+      }
+      const tex = body.join("\n").trim();
+      out.push(`<div class="math-block" data-tex="${escapeHtml(tex)}">${escapeHtml(tex)}</div>`);
       continue;
     }
     const h = /^(#{1,6})\s+(.*)$/.exec(line);
@@ -71,7 +90,7 @@ export function renderMarkdown(md: string): string {
     }
     if (!line.trim()) { i++; continue; }
     const para: string[] = [];
-    while (i < lines.length && lines[i].trim() && !/^(```|#{1,6}\s|\s*>|\s*([-*+]|\d+[.)])\s+)/.test(lines[i]) && !(lines[i].includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1]))) para.push(lines[i++]);
+    while (i < lines.length && lines[i].trim() && !/^(```|\s*\$\$|#{1,6}\s|\s*>|\s*([-*+]|\d+[.)])\s+)/.test(lines[i]) && !(lines[i].includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1]))) para.push(lines[i++]);
     out.push(`<p>${inline(para.join("\n")).replace(/\n/g, "<br>")}</p>`);
   }
   return out.join("\n");

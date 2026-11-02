@@ -57,6 +57,7 @@ maybe("desktop app end to end", () => {
       const userTexts = body.messages.filter((m: any) => m.role === "user").map(textOf).filter(Boolean);
       const lastUser: string = userTexts.at(-1) ?? "";
       if (all.includes("This is a side conversation")) { sideBodies.push(body); return { text: "side answer: the agent is waiting on a gate file" }; }
+      if (lastUser.includes("RICH")) return { text: "Rich reply\n\n```ts\nconst answer: number = 42;\n```\n\nEuler: $e^{i\\pi}+1=0$ and\n\n$$\\frac{a}{b}$$\n\n```mermaid\ngraph TD\n  A[Start] --> B[End]\n```\n" };
       if (lastUser.includes("browse")) return toolResult ? { text: "browser done" } : { toolCalls: [{ name: "Browser", input: { action: "navigate", url: `http://127.0.0.1:${web.port}/` } }] };
       if (lastUser.includes("LONG")) return toolResult ? { text: "long finished" } : { toolCalls: [{ name: "Execute", input: { command: `while [ ! -f ${gate} ]; do sleep 0.05; done; echo released`, riskLevel: "low", riskReason: "waits for a file" } }] };
       return { text: "hi there" };
@@ -133,6 +134,18 @@ maybe("desktop app end to end", () => {
     let titles: string[] = [];
     for (let i = 0; i < 300; i++) { titles = await readTitles(); if (titles.includes("Tasks")) break; await sleep(200); }
     expect(titles).toContain("Tasks");
+  }, 240_000);
+
+  test("markdown renders shiki code, KaTeX math and a mermaid diagram", async () => {
+    await composerSend("RICH please");
+    const reply = page.locator(".assistant", { hasText: "Rich reply" }).first();
+    await reply.waitFor({ timeout: LOAD_WAIT });
+    await reply.locator("pre.shiki").first().waitFor({ timeout: LOAD_WAIT });
+    expect(await reply.locator("pre.shiki span[style*='--shiki-light']").count()).toBeGreaterThan(3);
+    await reply.locator(".math .katex").first().waitFor({ timeout: LOAD_WAIT });
+    await reply.locator(".math-block .katex").first().waitFor({ timeout: LOAD_WAIT });
+    await reply.locator(".mermaid-diagram svg").first().waitFor({ timeout: LOAD_WAIT });
+    expect(await reply.locator(".mermaid-diagram svg").first().innerHTML()).toContain("Start");
   }, 240_000);
 
   test("a side chat question is answered while the main agent works", async () => {

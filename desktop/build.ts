@@ -23,10 +23,13 @@ await build({
 });
 await build({
   entrypoints: [join(root, "renderer/App.tsx")], outdir: join(dist, "renderer"), naming: "app.[ext]", target: "browser", format: "esm",
-  define: { "process.env.NODE_ENV": '"production"' },
+  define: { "process.env.NODE_ENV": '"production"' }, splitting: true, minify: true,
 });
 await build({
   entrypoints: [join(root, "renderer/boot.ts")], outdir: join(dist, "renderer"), naming: "boot.js", target: "browser", format: "iife",
 });
+// KaTeX stylesheet and fonts ship with the app (the CSP allows only our own files).
+cpSync(join(root, "node_modules/katex/dist/katex.min.css"), join(dist, "renderer/katex.min.css"));
+cpSync(join(root, "node_modules/katex/dist/fonts"), join(dist, "renderer/fonts"), { recursive: true });
 cpSync(join(root, "renderer/index.html"), join(dist, "renderer/index.html"));
 console.log("built", dist);
