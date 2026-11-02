@@ -41,15 +41,17 @@ Windows test fixtures (332), the re-shown prompt test race (333), Electron tests
 None assigned. Ask the owner. The spec is built; later phases (hosted parts, Workstreams, MCP OAuth) need the owner's go-ahead.
 
 ## Open issues
-1. The `test/desktop/electron-final.test.ts` flake ("side chat: the writes switch", "Archive Project") seen once locally
-   under load did not come back: 4 of 4 runs passed on the Windows PC under load. Not fixed, because not reproduced.
+1. `test/desktop/electron-final.test.ts` flake: after side chat Promote, the sidebar row did not show in 20 s.
+   Seen once locally earlier, and once on Windows CI (the pull_request run of commit d18300f; the push run passed).
+   8 of 8 local Windows runs under load passed. Root cause not found. The index theory was checked and is wrong
+   (a guard test in test/storage/session-index.test.ts). The test now prints each layer's state on failure.
+   Read the "promote failure details" line in the CI log the next time it fails.
 2. On a Windows PC without the symlink right, tests that create symlinks fail with `EPERM` (decision 319). CI has the right.
 3. Found in the Windows walkthrough, not fixed (outside the agreed scope, owner to decide):
    - "Create PR" on a worktree with only uncommitted edits makes a PR from the "init" commit with no change in it.
    - The cookie import dialog on Windows says only after the click that import is not supported (decision 294).
    - `rigwell sessions search` shows sessions made by `exec` with the title "New Session".
    - `rigwell exec` prints no line break before a "[tool]" line.
-   - The Electron UI tests do not run on Windows CI (decision 334). They pass locally on Windows.
 
 ## Waiting on the owner (do not decide for them)
 - (Resolved) `create_pr` and PR status (§18.6): approved and built (decisions 321 to 327).
