@@ -21,17 +21,26 @@ export function makeRepo(): string {
   return dir;
 }
 
-export function makeHome(models: { provider: "anthropic" | "openai" | "generic-chat-completion-api"; url: string; displayName: string }[]): string {
+export function makeHome(models: { provider: "anthropic" | "openai" | "generic-chat-completion-api" | "google" | "bedrock-converse"; url: string; displayName: string; extra?: Record<string, unknown> }[]): string {
   const home = mkdtempSync(join(tmpdir(), "rigwell-e2e-home-"));
   mkdirSync(home, { recursive: true });
   writeFileSync(join(home, "settings.json"), JSON.stringify({
-    customModels: models.map((m) => ({ model: `fake-${m.provider}`, displayName: m.displayName, provider: m.provider, baseUrl: m.url, apiKey: "test-key-not-real" })),
+    customModels: models.map((m) => ({ model: `fake-${m.provider}`, displayName: m.displayName, provider: m.provider, baseUrl: m.url, apiKey: "test-key-not-real", ...(m.extra ?? {}) })),
   }, null, 2));
   return home;
 }
 
 /** Text of the last tool result the model was sent, for either provider's request body. */
 export function lastToolResult(body: any): string {
+  // Gemini: contents[].parts[].functionResponse
+  if (Array.isArray(body.contents)) {
+    const parts = (body.contents.at(-1)?.parts ?? []).filter((p: any) => p.functionResponse);
+    return parts.map((p: any) => p.functionResponse.response?.output ?? p.functionResponse.response?.error ?? "").join("\n");
+  }
+  // Bedrock Converse: messages[].content[].toolResult
+  if (Array.isArray(body.messages) && body.messages.at(-1)?.content?.some?.((b: any) => b.toolResult)) {
+    return body.messages.at(-1).content.filter((b: any) => b.toolResult).map((b: any) => b.toolResult.content.map((c: any) => c.text ?? "").join("")).join("\n");
+  }
   if (Array.isArray(body.messages) && body.messages.at(-1)?.role === "tool") {
     const outs = body.messages.filter((m: any, i: number, a: any[]) => m.role === "tool" && a.slice(i + 1).every((x: any) => x.role === "tool"));
     return outs.map((m: any) => m.content).join("\n");

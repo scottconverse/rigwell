@@ -150,7 +150,7 @@ describe("exec modes", () => {
     await c.turnCompleted();
     await c.close();
     const names = ctx.server.requests[0].tools.map((t: any) => t.name).sort();
-    expect(names).toEqual(["AskUser", "Execute", "FetchUrl", "Glob", "Grep", "LS", "Read", "Script", "TaskOutput", "TaskStop", "TodoWrite", "call_tool", "load_tools", "script_job"]);
+    expect(names).toEqual(["AskUser", "Execute", "FetchUrl", "Glob", "Grep", "LS", "Read", "Script", "Skill", "TaskOutput", "TaskStop", "TodoWrite", "call_tool", "load_tools", "script_job"]);
   }, 30000);
 
   test("resume: load_session restores messages and the model sees turn 1 in turn 2", async () => {

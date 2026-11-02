@@ -1,10 +1,11 @@
 import { PrefixCache, sse, splitChunks, startFake, type FakeOptions, type FakeServer, type FakeTurn, type FakeTurnSpec, type PrefixModel } from "./types.ts";
 export type { FakeServer, FakeTurn } from "./types.ts";
 
-function render(turn: FakeTurnSpec, idx: number): string[] {
-  const f: string[] = [];
+/** The Responses events of one scripted turn, as objects (the WebSocket fake sends them as frames). */
+export function openaiEvents(turn: FakeTurnSpec, idx: number): any[] {
+  const f: any[] = [];
   let seq = 0;
-  const ev = (type: string, data: Record<string, unknown>) => f.push(sse(type, { type, sequence_number: seq++, ...data }));
+  const ev = (type: string, data: Record<string, unknown>) => f.push({ type, sequence_number: seq++, ...data });
   const u = turn.usage ?? {};
   const resp = (status: string, extra: Record<string, unknown> = {}) => ({ id: `resp_fake_${idx}`, object: "response", status, output: [], ...extra });
   ev("response.created", { response: resp("in_progress") });
@@ -54,6 +55,10 @@ function render(turn: FakeTurnSpec, idx: number): string[] {
     }),
   });
   return f;
+}
+
+function render(turn: FakeTurnSpec, idx: number): string[] {
+  return openaiEvents(turn, idx).map((e) => sse(e.type, e));
 }
 
 /** Responses order: tools, instructions, input items. Caching is automatic (no breakpoints). */

@@ -17,6 +17,8 @@ export interface CustomModelEntry {
   displayName?: string;
   provider?: string;
   baseUrl?: string;
+  /** AWS settings (spec 12.2), checked in models.ts. */
+  bedrock?: unknown;
   apiKey?: string;
   extraHeaders?: Record<string, string>;
   extraArgs?: Record<string, unknown>;
@@ -42,6 +44,8 @@ export interface RigwellSettings {
   commandDenylist?: string[];
   commandBlocklist?: string[];
   customModels?: CustomModelEntry[];
+  /** OAuth provider entries a custom model can name in `credentialSource` (src/auth/config.ts, docs/auth.md). */
+  oauthProviders?: Record<string, Record<string, unknown>>;
   /** Models (custom model id or API name) that run Script-only; all others run direct (spec §4.1). */
   scriptToolModels?: string[];
   /** Script limits: foregroundMs, sliceMs, totalMs, memoryBytes. */
