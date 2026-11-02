@@ -47,12 +47,11 @@ const BOOTSTRAP = `(function (call, print, image, notify, toolNames) {
 
 const out = (m: Record<string, unknown>) => { process.stdout.write(JSON.stringify(m) + "\n"); };
 
-/**
- * Exit once everything written to stdout has been handed to the pipe. A bare process.exit(0) right after a large
- * burst of output (the pipe is full while the host is busy) drops the tail and the final "done" message.
+/*
+ * The runner never exits on its own after the program ends: the parent kills it when it reads "done" (or when its
+ * stdin closes, below). Exiting here would race the stdout pipe: process.exit() can drop buffered output, and the
+ * write callback of an empty write does not wait for earlier chunks, so the tail and "done" were sometimes lost.
  */
-const exitAfterFlush = () => { process.stdout.write("", () => process.exit(0)); setTimeout(() => process.exit(0), 5000).unref(); };
-
 interface RunMsg {
   type: "run"; code: string; inputs: Record<string, string>; toolNames: string[];
   memoryBytes: number; stackBytes: number; sliceMs: number;
@@ -132,8 +131,8 @@ process.stdin.on("data", (chunk: string) => {
     if (m.type === "run" && !started) {
       started = true;
       run(m).then(
-        () => exitAfterFlush(),
-        (e) => { out({ type: "done", ok: false, error: { name: "Error", message: String(e?.message ?? e) } }); exitAfterFlush(); },
+        () => {},
+        (e) => { out({ type: "done", ok: false, error: { name: "Error", message: String(e?.message ?? e) } }); },
       );
     } else if (m.type === "reply") {
       const d = pending.get(m.id);
