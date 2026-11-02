@@ -4,6 +4,7 @@
 import { createElement, useCallback, useEffect, useRef, useState } from "react";
 import { bridge } from "../lib/rpc.ts";
 import { moveTab, pushClosed, stepTab } from "../lib/tabs.ts";
+import { CookieImportDialog } from "./CookieImport.tsx";
 
 interface Tab { key: string; url: string; title: string; requestId?: string; wcId?: number; canBack: boolean; canForward: boolean; loading: boolean }
 const PARTITION = "persist:browserpanel";
@@ -58,6 +59,7 @@ export function BrowserTab({ visible, onWantVisible }: { visible: boolean; onWan
   }), []);
   const reopen = () => setClosed((c) => { const url = c.at(-1); if (url) setTimeout(() => open(url)); return c.slice(0, -1); });
   const [shot, setShot] = useState("");
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
     const b = bridge().browser;
@@ -99,11 +101,13 @@ export function BrowserTab({ visible, onWantVisible }: { visible: boolean; onWan
         <input value={address} onChange={(e) => setAddress(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { const u = normalize(address); nav((w) => w.loadURL(u)); } }} aria-label="Address" placeholder="Enter a URL or search" />
         <button disabled={cur?.wcId == null} onClick={() => cur?.wcId != null && void bridge().browser.screenshot(cur.wcId).then(setShot).catch(() => {})} title="Take a screenshot of this tab">Screenshot</button>
         <button onClick={() => void bridge().browser.clearData()} title="Clear cache and cookies">Clear data</button>
+        <button onClick={() => setImporting(true)} title="Copy cookies of chosen sites from Chrome into this pane">Import cookies</button>
       </div>
       <div className="webviews">
         {tabs.map((t) => <div key={t.key} className="webview-slot" data-key={t.key} style={{ display: t.key === active ? "flex" : "none" }}><WebviewTab tab={t} onState={patch} onGone={close} /></div>)}
         {!tabs.length && <div className="empty">No tabs</div>}
       </div>
+      {importing && <CookieImportDialog onClose={() => setImporting(false)} />}
       {shot && <div className="overlay" onClick={() => setShot("")}><div className="dialog wide" role="dialog" aria-label="Screenshot" onClick={(e) => e.stopPropagation()}><img src={shot} alt="Screenshot of the tab" style={{ maxWidth: "100%" }} /><div className="dialog-actions"><a href={shot} download="screenshot.png">Save</a><button onClick={() => setShot("")}>Close</button></div></div></div>}
     </div>
   );

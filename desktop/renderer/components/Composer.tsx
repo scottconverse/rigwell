@@ -8,6 +8,7 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import type { SessionController } from "../lib/session.ts";
 import { ConnectorsDialog, SkillsDialog } from "./Dialogs.tsx";
 import { ModelPicker } from "./ModelPicker.tsx";
+import { DictateButton } from "./DictateButton.tsx";
 import { MAX_ATTACHMENTS, defaultText, readAttachment, sizeLabel, type Attachment } from "../lib/attachments.ts";
 
 const MODES = [
@@ -161,6 +162,7 @@ export function Composer(props: {
         <button className="chip" title="Reasoning (Tab)" onClick={() => props.onChange({ reasoningEffort: cycle(REASONING, s.reasoningEffort) })}>Reasoning: {s.reasoningEffort ?? "high"}</button>
         {props.session && <button className="chip" onClick={() => setDialog("connectors")} title="MCP servers">Connectors</button>}
         <button className="chip" onClick={() => setDialog("skills")} title="Skills">Skills</button>
+        <DictateButton shortcut={!off("dictation")} disabled={props.disabled} onText={(t) => { editor?.chain().focus().insertContent(t).run(); setText(editor?.getText({ blockSeparator: "\n" }) ?? t); }} />
         <button className="chip" aria-label="Attach files" title="Attach images, PDFs or text files (you can also paste or drop them)" onClick={() => picker.current?.click()}>Attach</button>
         {props.extra}
         <span className="spacer" />

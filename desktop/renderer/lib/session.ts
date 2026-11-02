@@ -3,6 +3,7 @@ import { DaemonConn, RpcFailure, bridge } from "./rpc.ts";
 import { normalizeModel } from "./models.ts";
 import { actionCall } from "./sessions.ts";
 import { fromMessages, reduce, type Item } from "./transcript.ts";
+import { nextHandoff, type HandoffState } from "./handoff.ts";
 
 export class Store<S> {
   protected state: S;
@@ -61,11 +62,17 @@ export type CreateOptions = {
   cwd: string; title?: string; modelId?: string; autonomyLevel?: string; interactionMode?: string; reasoningEffort?: string;
   /** Run the session in its own git worktree (spec §18.1). */
   worktree?: boolean | { enabled: true; lifecycle?: "ephemeral" | "persistent"; setupProfile?: string };
+  /** Start from an approved spec handoff (the id of the spec_handoff notification). */
+  specHandoffId?: string;
 };
+
+export type SetupOptions = CreateOptions & { templateId?: string; templateParameters?: Record<string, string> };
 
 export class SessionController extends Store<SessionState> {
   conn?: DaemonConn;
   private terminalListeners = new Set<(n: any) => void>();
+  private handoff: HandoffState = {};
+  private handoffListeners = new Set<(specHandoffId: string) => void>();
 
   constructor(cwd: string) { super(empty(cwd)); }
 
@@ -73,6 +80,14 @@ export class SessionController extends Store<SessionState> {
   static async create(o: CreateOptions): Promise<SessionController> {
     const c = new SessionController(o.cwd);
     await c.connect((conn) => conn.request("initialize_session", { ...o }));
+    return c;
+  }
+
+  /** "Create by chatting" (docs/automations.md): a session whose agent interviews the user and proposes an automation. */
+  static async createSetup(o: SetupOptions): Promise<SessionController> {
+    const c = new SessionController(o.cwd);
+    c.set({ title: "Automation setup" });
+    await c.connect((conn) => conn.request("start_automation_setup", { ...o }));
     return c;
   }
 
@@ -118,7 +133,10 @@ export class SessionController extends Store<SessionState> {
       case "session_title_updated": if (typeof n.title === "string" && n.title) this.set({ title: n.title }); return;
       case "session_token_usage_changed": this.set({ tokens: { input: n.tokenUsage?.inputTokens ?? 0, output: n.tokenUsage?.outputTokens ?? 0 } }); return;
       case "permission_resolved": this.set({ prompts: this.state.prompts.filter((x) => x.requestId !== n.requestId) }); return;
+      case "spec_handoff":
+        this.followHandoff(n); return;
       case "agent_turn_completed":
+        this.followHandoff(n);
         this.resolveAllPrompts();
         this.set({ items: reduce(this.state.items, n), working: "idle" });
         return;
@@ -126,6 +144,14 @@ export class SessionController extends Store<SessionState> {
     const items = reduce(this.state.items, n);
     if (items !== this.state.items) this.set({ items });
   }
+
+  /** An approved spec handoff: once the notification and the ending turn were both seen, the new session is opened by the listener. */
+  private followHandoff(n: Record<string, any>) {
+    const r = nextHandoff(this.handoff, n);
+    this.handoff = r.state;
+    if (r.start) for (const l of [...this.handoffListeners]) l(r.start);
+  }
+  onHandoff(cb: (specHandoffId: string) => void) { this.handoffListeners.add(cb); return () => { this.handoffListeners.delete(cb); }; }
 
   /** Prompts a reattached session still waits on (load_session pendingPermissions / pendingAskUserRequests). */
   private reshowPending(conn: DaemonConn, r: any) {

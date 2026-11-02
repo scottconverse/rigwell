@@ -3,15 +3,18 @@ import type { DesktopSettings, SoundValue, ThemePref } from "../../main/settings
 import { app, useApp } from "../lib/app-model.ts";
 import { applyAppearance } from "../lib/appearance.ts";
 import { bridge } from "../lib/rpc.ts";
+import { Accounts, ApiKeys, Environments, VoiceSettings } from "./SettingsAccess.tsx";
 import { ConnectorSettings, CustomModels, MissionSettings, SessionDefaults, SessionManagement, UsagePage, WorktreeSettings } from "./SettingsAgent.tsx";
 
 const PAGES = [
   ["general", "General"], ["appearance", "Appearance"], ["notifications", "Notifications and sounds"], ["session-defaults", "Session Defaults"], ["missions", "Missions"],
-  ["custom-models", "Custom Models"], ["worktrees", "Worktrees"], ["connectors", "Connectors"], ["session-management", "Session Management"], ["usage", "Usage"], ["support", "Support"],
+  ["custom-models", "Custom Models"], ["worktrees", "Worktrees"], ["connectors", "Connectors"], ["session-management", "Session Management"], ["usage", "Usage"],
+  ["api-keys", "API keys"], ["environments", "Environments"], ["accounts", "Accounts"], ["voice", "Voice dictation"], ["support", "Support"],
 ] as const;
-const AGENT_PAGES: Record<string, () => React.ReactElement> = {
+const AGENT_PAGES: Record<string, () => React.ReactElement | null> = {
   "session-defaults": SessionDefaults, missions: MissionSettings, "custom-models": CustomModels, worktrees: WorktreeSettings,
   connectors: ConnectorSettings, "session-management": SessionManagement, usage: UsagePage,
+  "api-keys": ApiKeys, environments: Environments, accounts: Accounts, voice: VoiceSettings,
 };
 
 export function Settings({ page, go }: { page: string; go(r: string): void }) {
@@ -33,7 +36,7 @@ const Row = ({ label, hint, children }: { label: string; hint?: string; children
   <div className="row"><div className="row-label"><div>{label}</div>{hint && <div className="muted small">{hint}</div>}</div><div className="row-ctl">{children}</div></div>
 );
 
-const SHORTCUTS = [["spec", "Toggle Spec mode (Shift+Tab)"], ["reasoning", "Cycle reasoning (Tab)"], ["autonomy", "Cycle autonomy (Ctrl+L)"], ["files", "Files (Ctrl+P)"], ["terminal", "Terminal (Ctrl+J)"], ["browser", "Browser (Shift+Ctrl+B)"], ["sidechat", "Side chat (Alt+Ctrl+S)"]] as const;
+const SHORTCUTS = [["spec", "Toggle Spec mode (Shift+Tab)"], ["reasoning", "Cycle reasoning (Tab)"], ["autonomy", "Cycle autonomy (Ctrl+L)"], ["files", "Files (Ctrl+P)"], ["terminal", "Terminal (Ctrl+J)"], ["browser", "Browser (Shift+Ctrl+B)"], ["sidechat", "Side chat (Alt+Ctrl+S)"], ["dictation", "Voice dictation (Ctrl+Shift+D)"]] as const;
 
 function General({ s }: { s: DesktopSettings }) {
   const toggleShortcut = (id: string) => void app.updateSettings({ disabledShortcuts: s.disabledShortcuts.includes(id) ? s.disabledShortcuts.filter((x) => x !== id) : [...s.disabledShortcuts, id] });
@@ -45,6 +48,8 @@ function General({ s }: { s: DesktopSettings }) {
       <Row label="Keep running with the screen off" hint="Stops the computer from sleeping while the app is open"><input type="checkbox" checked={s.keepAwakeEnabled} onChange={(e) => void app.updateSettings({ keepAwakeEnabled: e.target.checked })} /></Row>
       <Row label="Check for updates automatically"><input type="checkbox" checked={s.desktopAutoUpdateEnabled} onChange={(e) => void app.updateSettings({ desktopAutoUpdateEnabled: e.target.checked })} /></Row>
       <Row label="Update feed URL" hint="Folder (or .yml / .json file) that lists the newest version. Empty means no update checks."><input type="url" aria-label="Update feed URL" placeholder="https://example.com/rigwell" defaultValue={s.updateFeedUrl} onBlur={(e) => { if (e.target.value !== s.updateFeedUrl) void app.updateSettings({ updateFeedUrl: e.target.value.trim() }); }} /></Row>
+      <Row label="Update public key" hint="Ed25519 key (PEM, or base64 of the 32 raw bytes) that signed Linux updates must match. Without a key, Linux updates are refused."><input aria-label="Update public key" placeholder="base64 or -----BEGIN PUBLIC KEY-----" defaultValue={s.updatePublicKey} onBlur={(e) => { if (e.target.value.trim() !== s.updatePublicKey) void app.updateSettings({ updatePublicKey: e.target.value.trim() }); }} /></Row>
+      <Row label="Tray icon" hint="Shows Rigwell in the system tray or menu bar with the number of active sessions"><input type="checkbox" aria-label="Tray icon" checked={s.menuBarEnabled} onChange={(e) => void app.updateSettings({ menuBarEnabled: e.target.checked })} /></Row>
       <h3>Shortcuts</h3>
       {SHORTCUTS.map(([id, label]) => <Row key={id} label={label}><input type="checkbox" aria-label={label} checked={!s.disabledShortcuts.includes(id)} onChange={() => toggleShortcut(id)} /></Row>)}
     </>

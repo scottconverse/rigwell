@@ -6,6 +6,7 @@ import { MASK, PROVIDERS, emptyForm, keyHint, toEntry, toForm, validate, type Mo
 import { DaemonConn, bridge } from "../lib/rpc.ts";
 import { bulkRename, managementRows, projectName, type SessionRow } from "../lib/sessions.ts";
 import { addUsage, fmt, percentUsed, total, zero, type TokenUsage } from "../lib/usage.ts";
+import { ManagedNote, OrgCeiling } from "./SettingsAccess.tsx";
 import { AddServerForm, Dialog, ServerList, TextDialog, useMcp } from "./Dialogs.tsx";
 
 const Row = ({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => (
@@ -49,7 +50,8 @@ export function SessionDefaults() {
   const auto = a.userSettings.autoRouter ? [{ id: "auto", label: "Auto" }] : [];
   return (
     <>
-      <h2>Session Defaults {status}</h2>
+      <h2>Session Defaults {status} <ManagedNote keys={["sessionDefaultSettings", "compactionTokenLimit", "compactionModel", "specSaveDir"]} /></h2>
+      <OrgCeiling />
       <Row label="Model" hint="Used for new sessions"><ModelSelect label="Default model" value={d.model} onChange={(v) => set("model", v)} allowNone="First available" extra={auto} /></Row>
       <Row label="Reasoning"><select aria-label="Default reasoning" value={d.reasoningEffort ?? "high"} onChange={(e) => set("reasoningEffort", e.target.value)}>{EFFORTS.map((x) => <option key={x}>{x}</option>)}</select></Row>
       <Row label="Mode"><select aria-label="Default mode" value={d.interactionMode ?? "auto"} onChange={(e) => set("interactionMode", e.target.value)}><option value="auto">Auto</option><option value="spec">Spec</option></select></Row>
@@ -79,7 +81,7 @@ export function MissionSettings() {
   );
   return (
     <>
-      <h2>Missions {status}</h2>
+      <h2>Missions {status} <ManagedNote keys={["missions"]} /></h2>
       <p className="muted">Models for each role. Changes apply to the next mission you enter.</p>
       <h3>Orchestrator</h3>
       <Row label="Model" hint="Used when the current model is not on the allowed list"><ModelSelect label="Orchestrator model" value={m.orchestratorModel} onChange={(v) => set("orchestratorModel", v)} allowNone="Keep current" /></Row>
@@ -123,7 +125,7 @@ export function CustomModels() {
   };
   return (
     <>
-      <h2>Custom Models {status}</h2>
+      <h2>Custom Models {status} <ManagedNote keys={["customModels", "modelPolicy"]} /></h2>
       <p className="muted">Use your own provider keys. Keys are stored in the settings file and are never shown again after saving.</p>
       <ul className="plain-list" aria-label="Custom models">
         {list.map((m, i) => (
@@ -199,7 +201,7 @@ export function WorktreeSettings() {
 
   return (
     <>
-      <h2>Worktrees {status}</h2>
+      <h2>Worktrees {status} <ManagedNote keys={["runInWorktree", "worktrees"]} /></h2>
       <Row label="Run new sessions in a worktree" hint="The default for the Worktree toggle on Home"><input type="checkbox" aria-label="Run in worktree by default" checked={u.runInWorktree === true} onChange={(e) => void save({ runInWorktree: e.target.checked })} /></Row>
       <Row label="Folder" hint="An absolute path. Empty uses the Rigwell folder.">
         <input aria-label="Worktree folder" value={dir} aria-invalid={!dirOk} onChange={(e) => setDir(e.target.value)} onBlur={() => { if (dirOk) void save({ worktreeDirectory: dir.trim() || null }); }} />
@@ -283,7 +285,7 @@ export function ConnectorSettings() {
   const m = useMcp(probe.request);
   return (
     <>
-      <h2>Connectors</h2>
+      <h2>Connectors <ManagedNote keys={["mcpServers", "mcp"]} /></h2>
       <p className="muted">MCP servers the agent can use. Hosted connector catalogs are not part of this build.</p>
       {probe.none && <div className="banner warn" role="status">Start a session first. MCP servers are managed through a session.</div>}
       {probe.error && <div className="banner error" role="alert">{probe.error}</div>}

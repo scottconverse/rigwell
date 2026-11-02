@@ -5,6 +5,8 @@ import { app, useApp } from "../lib/app-model.ts";
 import { SCHEDULE_PRESETS, buildCreate, duration, showQuitWarning, statusLabel, tabMatches, when, type AutomationRow, type CreateForm, type RunRow } from "../lib/automations.ts";
 import { bridge } from "../lib/rpc.ts";
 import { Dialog } from "./Dialogs.tsx";
+import { SetupDialog, TemplateDialog, VisualPanel } from "./AutomationExtras.tsx";
+import type { TemplateRow } from "../lib/templates.ts";
 
 const POLL_MS = 3000;
 
@@ -41,6 +43,8 @@ export function Automations({ go }: { go(r: string): void }) {
   const [tab, setTab] = useState<"Active" | "Paused">("Active");
   const [q, setQ] = useState("");
   const [creating, setCreating] = useState(false);
+  const [templates, setTemplates] = useState(false);
+  const [setup, setSetup] = useState<{ template?: TemplateRow; values?: Record<string, string> } | null>(null);
   const [note, setNote] = useState("");
   const shown = items.filter((x) => tabMatches(x, tab) && `${x.name} ${x.description ?? ""}`.toLowerCase().includes(q.toLowerCase()));
   const act = async (fn: () => Promise<unknown>, ok: string) => { try { await fn(); setNote(ok); } catch (e) { setNote((e as Error).message); } void refresh(); };
@@ -51,6 +55,8 @@ export function Automations({ go }: { go(r: string): void }) {
         <h1>Automations</h1>
         <span className="spacer" />
         <button onClick={() => void refresh()}>Refresh</button>
+        <button onClick={() => setSetup({})}>Set up by chatting</button>
+        <button onClick={() => setTemplates(true)}>From a template</button>
         <button className="primary" onClick={() => setCreating(true)}>New automation</button>
       </header>
       <QuitWarning items={items} />
@@ -79,6 +85,8 @@ export function Automations({ go }: { go(r: string): void }) {
         </tbody>
       </table>
       {loaded && !shown.length && !error && <div className="empty-state">{items.length ? `No ${tab.toLowerCase()} automations match.` : "No automations yet. An automation is a saved prompt that runs on a schedule in its own session."}</div>}
+      {templates && <TemplateDialog onClose={() => setTemplates(false)} onCreated={(id) => { setTemplates(false); void refresh(); go(`/automations/${id}`); }} onChat={(template, values) => { setTemplates(false); setSetup({ template, values }); }} />}
+      {setup && <SetupDialog template={setup.template} values={setup.values} onClose={() => setSetup(null)} go={go} />}
       {creating && <CreateDialog onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); void refresh(); go(`/automations/${id}`); }} />}
     </div>
   );
@@ -166,6 +174,7 @@ export function AutomationDetail({ id, go }: { id: string; go(r: string): void }
         <dt>Runs</dt><dd>{x.runCount}</dd>
         {x.workingDirectory && <><dt>Folder</dt><dd className="mono">{x.workingDirectory}</dd></>}
       </dl>
+      <VisualPanel id={id} runs={runs} />
       <h2>Instructions</h2>
       <pre className="code-block">{x.instructions}</pre>
       <h2>Recent runs</h2>

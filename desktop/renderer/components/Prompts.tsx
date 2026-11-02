@@ -2,12 +2,16 @@
 import { useState } from "react";
 import type { Prompt } from "../lib/session.ts";
 import { OTHER_LABEL, answerText, permissionAnswer, questionOptions } from "../lib/prompts.ts";
+import { specAnswer, specOptions } from "../lib/handoff.ts";
+import { setupCard } from "../lib/templates.ts";
 
 function describe(params: any): { title: string; lines: string[] } {
   const uses: any[] = params.toolUses ?? [];
   if (uses.length > 1) return { title: `Approve ${uses.length} operations`, lines: uses.map((u) => `${u.toolUse?.name}: ${u.details?.filePath ?? u.details?.fullCommand ?? JSON.stringify(u.toolUse?.input ?? {})}`) };
   const u = uses[0] ?? {};
   const d = u.details ?? {};
+  const card = setupCard(u);
+  if (card) return card;
   switch (u.confirmationType) {
     case "exec": return { title: u.toolUse?.name === "Browser" ? "Use the browser pane" : "Command to approve", lines: [String(d.fullCommand ?? d.command ?? JSON.stringify(u.toolUse?.input ?? {})), ...(d.impactLevel ? [`${d.impactLevel} risk`] : []), ...(d.riskLevelReason ? [String(d.riskLevelReason)] : [])] };
     case "edit": return { title: `Edit ${d.fileName ?? ""}`, lines: [String(d.filePath ?? ""), ...diff(d.oldContent, d.newContent)] };
@@ -26,8 +30,8 @@ function diff(a?: string, b?: string): string[] {
 
 function Permission({ p, onAnswer }: { p: Prompt; onAnswer: (r: unknown) => void }) {
   const d = describe(p.params);
-  const options: { label: string; value: string }[] = p.params.options ?? [];
   const spec = p.params.toolUses?.length === 1 && p.params.toolUses[0].confirmationType === "exit_spec_mode" ? p.params.toolUses[0].details ?? {} : null;
+  const options = spec ? specOptions(p.params.options ?? [], spec.contextSavingsPercent) : (p.params.options ?? []) as { label: string; value: string }[];
   const plan = spec ? String(spec.plan ?? spec.specContent ?? spec.content ?? "") : "";
   const [comment, setComment] = useState("");
   const [showComment, setShowComment] = useState(false);
@@ -35,7 +39,7 @@ function Permission({ p, onAnswer }: { p: Prompt; onAnswer: (r: unknown) => void
   const [edited, setEdited] = useState(plan);
   const answer = (value: string) => {
     if (value === "proceed_edit" && spec && !editing) { setEditing(true); return; } // edit the plan first, then approve it
-    onAnswer(permissionAnswer(value, { comment, editedSpec: editing ? edited : undefined }));
+    onAnswer(spec ? specAnswer(value, { comment, editedSpec: editing ? edited : undefined }) : permissionAnswer(value, { comment, editedSpec: editing ? edited : undefined }));
   };
   return (
     <div className="prompt" role="alertdialog" aria-label={d.title}>
