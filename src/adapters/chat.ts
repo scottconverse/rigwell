@@ -126,7 +126,7 @@ export function buildChatBody(req: ModelRequest): Obj {
     stream: true,
     stream_options: { include_usage: true },
     max_tokens: req.maxOutputTokens,
-    prompt_cache_key: req.sessionId,
+    prompt_cache_key: req.cacheKey ?? req.sessionId,
   };
   if (req.tools.length) {
     body.tools = req.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.inputSchema } }));

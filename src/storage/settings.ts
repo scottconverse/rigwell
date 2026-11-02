@@ -15,6 +15,8 @@ export interface CustomModelEntry {
   displayName?: string;
   provider?: string;
   baseUrl?: string;
+  /** AWS settings (spec 12.2), checked in models.ts. */
+  bedrock?: unknown;
   apiKey?: string;
   extraHeaders?: Record<string, string>;
   extraArgs?: Record<string, unknown>;

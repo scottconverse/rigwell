@@ -6,6 +6,8 @@ import {
 } from "../core/types.ts";
 import { midStreamBreak } from "./errors.ts";
 import { DEFAULT_TIMEOUT_MS, apiUrl, safeJson, sseRequest } from "./sse.ts";
+import { bedrockHeaders } from "./bedrock-auth.ts";
+import { openaiWs, wsEligible, wsReport, WsFallback, type WsOptions } from "./openai-ws.ts";
 
 export function mapInput(messages: Message[]): Record<string, unknown>[] {
   const items: Record<string, unknown>[] = [];
@@ -69,13 +71,16 @@ export function buildOpenAIBody(req: ModelRequest): Record<string, unknown> {
     store: false,
     parallel_tool_calls: true,
     tool_choice: "auto",
-    prompt_cache_key: req.sessionId,
+    prompt_cache_key: req.cacheKey ?? req.sessionId,
     max_output_tokens: req.maxOutputTokens,
   };
   const eff = req.reasoningEffort;
   if (eff && eff !== "off" && eff !== "none" && eff !== "dynamic") {
     body.reasoning = { effort: eff.toLowerCase(), summary: "auto" };
     body.include = ["reasoning.encrypted_content"];
+  } else if (eff === "none" && (req.openai?.acceptsNone || req.model.bedrock)) {
+    // Models that accept `none` (profile acceptsNone, and Bedrock OpenAI models) get it sent as is (spec 4.6.2, 4.6.10).
+    body.reasoning = { effort: "none" };
   }
   const o = req.openai;
   if (o?.textVerbosity) body.text = { verbosity: o.textVerbosity };
@@ -111,16 +116,19 @@ function failure(code: string | undefined, message: string | undefined): ModelEr
 }
 
 export class OpenAIResponsesAdapter implements ModelAdapter {
-  constructor(private opts: { timeoutMs?: number } = {}) {}
+  constructor(private opts: { timeoutMs?: number; ws?: WsOptions } = {}) {}
 
   async *stream(req: ModelRequest): AsyncGenerator<StreamEvent> {
     const m = req.model;
-    const headers: Record<string, string> = {
+    let headers: Record<string, string> = {
       "content-type": "application/json",
       ...(m.apiKey ? { authorization: `Bearer ${m.apiKey}` } : {}),
       ...(m.extraHeaders ?? {}),
     };
     const url = apiUrl(m.baseUrl, "responses");
+    const bodyObj = buildOpenAIBody(req);
+    const bodyText = JSON.stringify(bodyObj);
+    if (m.bedrock) headers = await bedrockHeaders(m, "bedrock-mantle", "POST", url, headers, bodyText);
     const items = new Map<number, ItemState>(); // keyed by provider output_index
     const order: ItemState[] = [];
     const reasoning: OpenAIReasoning[] = [];
@@ -141,13 +149,35 @@ export class OpenAIResponsesAdapter implements ModelAdapter {
       return st;
     };
 
-    const events = sseRequest(
-      url, { headers, body: JSON.stringify(buildOpenAIBody(req)) }, req.signal, req.limits?.hardLimitMs ?? this.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, req.limits?.idleTimeoutMs,
-    );
-    outer: for await (const sse of events) {
-      const data = safeJson(sse.data);
-      if (!data) continue;
-      const type: string = data.type ?? sse.event;
+    const http = async function* (self: OpenAIResponsesAdapter): AsyncGenerator<any> {
+      const events = sseRequest(
+        url, { headers, body: bodyText }, req.signal, req.limits?.hardLimitMs ?? self.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, req.limits?.idleTimeoutMs,
+      );
+      for await (const sse of events) {
+        const data = safeJson(sse.data);
+        if (data) yield { ...data, type: data.type ?? sse.event };
+      }
+    };
+    // WebSocket first when allowed (spec 4.6.3); a transport failure before any event falls back to HTTP.
+    const wsOpts = this.opts.ws ?? {};
+    const useWs = wsEligible(m, wsOpts, req.sessionId);
+    let wsTurn: { mode: "ws_chained" | "ws_full" } | undefined;
+    const source = async function* (self: OpenAIResponsesAdapter): AsyncGenerator<any> {
+      if (useWs) {
+        let started = false;
+        try {
+          const run = openaiWs(req, url, headers, bodyObj, wsOpts, req.limits?.hardLimitMs ?? self.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, (t) => { wsTurn = t; });
+          for await (const ev of run) { started = true; yield ev; }
+          return;
+        } catch (e) {
+          if (!(e instanceof WsFallback) || started) throw e instanceof WsFallback ? e.toModelError() : e;
+          wsTurn = undefined;
+        }
+      }
+      yield* http(self);
+    };
+    outer: for await (const data of source(this)) {
+      const type: string = data.type;
       switch (type) {
         case "response.output_item.added": {
           const st = ensure(data.output_index, data.item);
@@ -245,6 +275,11 @@ export class OpenAIResponsesAdapter implements ModelAdapter {
       cacheReadTokens: cached,
       thinkingTokens: u.output_tokens_details?.reasoning_tokens ?? 0,
     };
+    if (wsTurn) {
+      // Remember what the server now holds, so the next turn can send only the new items (ws_chained).
+      const assistant: Message = { id: "", role: "assistant", content, ...(reasoning.length ? { openaiReasoning: reasoning } : {}) };
+      wsReport(req, { input: bodyObj.input as unknown[], responseId: final?.id, assistantItems: mapInput([assistant]) });
+    }
     const stopReason = hasToolCall ? "tool_use" : incompleteReason === "max_output_tokens" ? "max_tokens" : incompleteReason ? "other" : "end_turn";
     yield { type: "message_done", content, stopReason, usage, ...(reasoning.length ? { openaiReasoning: reasoning } : {}) };
   }
