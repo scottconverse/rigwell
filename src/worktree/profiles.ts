@@ -2,6 +2,7 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { canonicalPath } from "./git.ts";
 import { rigwellHome } from "../storage/paths.ts";
 
 export interface SetupProfile {
@@ -19,7 +20,7 @@ const MAX_FILE_BYTES = 256 * 1024;
 const MAX_FIELD = 100_000;
 
 export function localProfilesDir(repoRoot: string): string {
-  return path.join(rigwellHome(), "worktree-setups", createHash("sha256").update(repoRoot).digest("hex"));
+  return path.join(rigwellHome(), "worktree-setups", createHash("sha256").update(canonicalPath(repoRoot)).digest("hex"));
 }
 export function repoProfilesDir(repoRoot: string): string {
   return path.join(repoRoot, ".rigwell", "worktree-setups");
