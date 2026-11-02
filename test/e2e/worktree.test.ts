@@ -28,13 +28,15 @@ const editScript = (newText: string): FakeTurn[] => [
 ];
 const idleScript = (): FakeTurn[] => [{ text: "Nothing to change." }];
 
-/** Starts an exec session in a worktree, runs one prompt to completion, closes. */
+/** Pins RIGWELL_TRUST_CWD=1 for the child so a repo with .rigwell/ never sends rigwell.request_trust (RpcChild does not answer it)
+ *  whatever an earlier test file left in the shared bun process environment.
+ *  Starts an exec session in a worktree, runs one prompt to completion, closes. */
 async function runSession(repo: string, root: string, script: FakeTurn[], worktree: Record<string, unknown>, env: Record<string, string> = {}, extraSettings: Record<string, unknown> = {}) {
   const server = await startFakeAnthropic(script);
   servers.push(server);
   const home = makeHome([{ provider: "anthropic", url: server.url, displayName: "Fake Anthropic" }]);
   patchSettings(home, { worktreeDirectory: root, ...extraSettings });
-  const c = new RpcChild(["exec", "--input-format", "stream-jsonrpc", "--output-format", "stream-jsonrpc", "--auto", "low"], { cwd: repo, env: { RIGWELL_HOME: home, ...env } });
+  const c = new RpcChild(["exec", "--input-format", "stream-jsonrpc", "--output-format", "stream-jsonrpc", "--auto", "low"], { cwd: repo, env: { RIGWELL_HOME: home, RIGWELL_TRUST_CWD: "1", ...env } });
   const init = await c.call("initialize_session", { machineId: "default", cwd: repo, modelId: MODEL, worktree: { enabled: true, ...worktree } });
   return { c, init, home, server };
 }
