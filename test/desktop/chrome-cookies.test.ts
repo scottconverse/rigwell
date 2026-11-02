@@ -1,37 +1,14 @@
 // Chrome cookie import: decryption per OS against a synthetic cookies database and known keys. No real browser data.
 import { afterEach, expect, test } from "bun:test";
-import { createCipheriv, createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { encrypt, makeCookieDb } from "./cookie-fixture.ts";
 import { decryptCookieValue, deriveKey, domainMatches, importFromProfile, listChromeProfiles, listCookieDomains, readCookies, safeStoragePassword, toElectronCookie } from "../../src/sidepane/chrome-cookies.ts";
 
 const dirs: string[] = [];
 afterEach(() => { while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true }); });
 const tmp = () => { const d = mkdtempSync(join(tmpdir(), "rigwell-cc-")); dirs.push(d); return d; };
-
-function encrypt(plain: string | Buffer, key: Buffer, tag = "v10") {
-  const c = createCipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
-  return Buffer.concat([Buffer.from(tag), c.update(plain), c.final()]);
-}
-
-/** Builds a Chrome-shaped cookies database. `hashed` mimics database version 24 (host hash before the value). */
-export function makeCookieDb(file: string, key: Buffer, hashed: boolean) {
-  const db = new DatabaseSync(file);
-  db.exec("CREATE TABLE meta (key TEXT UNIQUE NOT NULL, value TEXT)");
-  db.exec("CREATE TABLE cookies (creation_utc INTEGER, host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER, samesite INTEGER)");
-  db.prepare("INSERT INTO meta VALUES ('version', ?)").run(hashed ? "24" : "20");
-  const ins = db.prepare("INSERT INTO cookies VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-  const wrap = (host: string, v: string) => encrypt(hashed ? Buffer.concat([createHash("sha256").update(host).digest(), Buffer.from(v)]) : Buffer.from(v), key);
-  const expires = (1_900_000_000 + 11_644_473_600) * 1_000_000;
-  ins.run(".example.com", "sid", "", wrap(".example.com", "secret-session-1"), "/", expires, 1, 1, 1);
-  ins.run("app.example.com", "pref", "", wrap("app.example.com", "dark"), "/", 0, 0, 0, -1);
-  ins.run("plain.example.com", "legacy", "plain-value", Buffer.alloc(0), "/", 0, 0, 0, 0);
-  ins.run(".other.org", "tracker", "", wrap(".other.org", "not-selected"), "/", 0, 1, 0, 2);
-  ins.run(".example.com", "broken", "", Buffer.concat([Buffer.from("v10"), Buffer.alloc(16, 7)]), "/", 0, 0, 0, 0);
-  db.close();
-}
 
 test("key derivation differs per OS and matches the well-known Linux key", () => {
   expect(deriveKey("peanuts", "linux").toString("hex")).toBe("fd621fe5a2b402539dfa147ca9272778");
@@ -112,4 +89,6 @@ test("domain matching and the Electron cookie shape", () => {
   const c = toElectronCookie({ name: "n", value: "v", domain: ".example.com", path: "/p", secure: true, httpOnly: false, expirationDate: 5, sameSite: "lax" });
   expect(c).toMatchObject({ url: "https://example.com/p", domain: ".example.com", secure: true, expirationDate: 5 });
   expect(toElectronCookie({ name: "n", value: "v", domain: "h.test", path: "/", secure: false, httpOnly: false, sameSite: "unspecified" }).url).toBe("http://h.test/");
+  expect(toElectronCookie({ name: "n", value: "v", domain: "h.test", path: "/", secure: false, httpOnly: false, sameSite: "no_restriction" }).sameSite).toBe("unspecified");
+  expect(toElectronCookie({ name: "n", value: "v", domain: "h.test", path: "/", secure: true, httpOnly: false, sameSite: "no_restriction" }).sameSite).toBe("no_restriction");
 });

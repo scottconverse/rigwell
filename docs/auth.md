@@ -113,3 +113,7 @@ environment's name, and `load_session` applies it again by name.
 Redaction: the exact secret values of the environment are replaced by `[secret:<name>]` in tool results (so a command
 that prints one does not put it into the transcript or the model's context) and in every outgoing notification. This
 matches the value as written; an encoded or split copy (base64, one character per line) is not caught.
+
+## Sign-in from the desktop app and the terminal
+
+Desktop: Settings > Accounts lists the providers from `auth_list`, starts the browser or device-code sign-in, polls the status and signs out. Terminal: `/login [provider] [--device]` and `/logout [provider]`. Settings > API keys and Environments edit the secrets and environments below; stored values are never displayed.

@@ -78,3 +78,45 @@ React 19, xterm.js, tiptap (composer), shiki (code), KaTeX (math) and mermaid (d
 ## Tests
 
 `bun test test/desktop`. The Electron and Chromium tests skip (printing the cause) when Electron, Playwright, Chromium or Xvfb is missing. `packaging.test.ts` needs a built Linux package (`RIGWELL_BUILD_PACKAGE=1` builds one).
+
+## Wave 4 features (owner approved)
+
+| Feature | Where | Notes |
+|---|---|---|
+| Voice dictation | composer microphone button, Ctrl+Shift+D, Settings > Voice dictation | offline first, see below |
+| API keys, environments, accounts | Settings > API keys, Environments, Accounts | secrets are write-only; sign-in uses `auth_*` |
+| Tray icon | Settings > General > Tray icon | Show/Hide, active sessions, attention, Quit |
+| Chrome cookie import | Browser tab > Import cookies | explicit, per site, never logged |
+| Automation templates, overview, guided setup | Automations page | uses `docs/automations.md` methods |
+| Spec handoff | Spec prompt | "Hand off to a new session" options with context savings |
+| `[managed by org]` labels | settings headings | org file from `RIGWELL_ORG_MANAGED_SETTINGS_LOCAL_PATH` |
+
+### Voice dictation
+
+By default nothing is configured, and the microphone button explains how to enable it. Recording happens in the window; the audio goes only to the backend you choose.
+
+- Local command: install whisper.cpp (`whisper-cli`) and a ggml model, then Settings > Voice dictation > Local command, and set the model path. Or give a full command line with `{file}` for the recording: `whisper-cli -m /models/ggml-base.en.bin -f {file} -nt -np`. The Python `whisper` CLI works too (`whisper {file} --model base`).
+- Remote endpoint: an OpenAI-compatible `.../audio/transcriptions` URL. The recording is sent to that server. The API key is read from the environment variable you name; it is not stored in a file.
+
+### Signed Linux updates (spec 14.5)
+
+Linux updates are installed only if their Ed25519 signature verifies against a public key you configure. No key ships with the app, so out of the box Linux updates are refused with a message saying so.
+
+```
+bun desktop/packaging/sign-update.ts keygen ~/rigwell-keys        # writes update-private.pem, prints the public key
+bun desktop/packaging/sign-update.ts sign ~/rigwell-keys/update-private.pem rigwell-1.4.0-x86_64.AppImage   # writes <file>.sig
+```
+
+Put the printed public key in Settings > General > Update public key (or set `RIGWELL_UPDATE_PUBLIC_KEY`), publish the `.sig` next to the artifact (or add `signature: <base64>` to its entry under `files:` in `latest-linux.yml`), and keep the private key off the feed host. A bad signature, a changed file, a missing signature or a wrong `sha512` / `size` refuses the update and leaves nothing on disk.
+
+### Chrome cookie import
+
+Browser tab > Import cookies. Pick a Chrome or Chromium profile, press Show sites (only host names and counts are read), tick the sites and Import. Only those sites' cookies are copied into the browser pane. On macOS the system may ask for access to "Chrome Safe Storage"; on Linux the key comes from libsecret (`secret-tool`) or Chrome's fixed fallback. Windows is not supported. `RIGWELL_CHROME_USER_DATA_DIR` selects another Chrome folder.
+
+### Icons and the tray
+
+`desktop/assets/icon.svg` is the source. `cd desktop && bun run packaging/build-icons.ts` regenerates `assets/icons/*.png`, `icon.ico`, `icon.icns` and `assets/tray/*.png` (needs the Playwright Chromium). The generated files are committed.
+
+### Tests for these features
+
+`bun test test/desktop/electron-wave4.test.ts` drives the real app: dictation with a fake speech-to-text program, secrets, OAuth against `test/fakes/fake-oauth.ts`, org labels, templates, overview and guided setup, tray (through the `RIGWELL_TEST_HOOKS=1` hook), spec handoff and cookie import with a synthetic database. Unit tests: `chrome-cookies`, `update-verify`, `dictation`, `tray`, `wave4-lib` in `test/desktop`, `test/tui/login.test.ts`.
