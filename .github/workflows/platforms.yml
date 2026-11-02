@@ -15,7 +15,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
+      # evidence/ holds reference captures with paths too long for Windows; Rigwell never reads it, so leave it out.
       - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            /*
+            !/evidence/
+          sparse-checkout-cone-mode: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
