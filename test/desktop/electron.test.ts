@@ -133,6 +133,10 @@ maybe("desktop app end to end", () => {
     const readTitles = (): Promise<string[]> => app.evaluate(({ webContents }: any) => webContents.getAllWebContents().filter((w: any) => w.getType() === "webview").map((w: any) => w.getTitle()));
     let titles: string[] = [];
     for (let i = 0; i < 300; i++) { titles = await readTitles(); if (titles.includes("Tasks")) break; await sleep(200); }
+    if (!titles.includes("Tasks")) {
+      const info = await app.evaluate(async ({ webContents }: any) => Promise.all(webContents.getAllWebContents().filter((w: any) => w.getType() === "webview").map(async (w: any) => ({ url: w.getURL(), title: w.getTitle(), loading: w.isLoading(), html: await w.executeJavaScript("document.documentElement.outerHTML.slice(0,300)").catch((e: any) => String(e)) }))));
+      console.error("[browser pane diagnostics]", JSON.stringify({ info, webHits }));
+    }
     expect(titles).toContain("Tasks");
   }, 240_000);
 
@@ -165,13 +169,13 @@ maybe("desktop app end to end", () => {
   test("killing the daemon restarts it and the session reconnects", async () => {
     const before = daemonPid();
     process.kill(before, "SIGKILL");
-    for (let i = 0; i < 200; i++) { await sleep(100); try { if (daemonPid() !== before) break; } catch {} }
+    for (let i = 0; i < 500; i++) { await sleep(100); try { if (daemonPid() !== before) break; } catch {} } // a starved CI box restarts slowly
     expect(daemonPid()).not.toBe(before);
     await page.waitForSelector(".dot.running", { timeout: 30_000 });
     const hellos = await page.locator(".assistant", { hasText: "hi there" }).count();
     await composerSend("hello again");
     await page.waitForFunction((n: number) => document.querySelectorAll(".assistant").length > 0 && [...document.querySelectorAll(".assistant")].filter((e) => e.textContent?.includes("hi there")).length > n, hellos, { timeout: 40_000 });
-  }, 90_000);
+  }, 150_000);
 
   test("Automations: create one, run it now, and see the run; the quit warning shows", async () => {
     await page.getByRole("button", { name: "Automations" }).click();

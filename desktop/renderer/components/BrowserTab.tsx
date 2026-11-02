@@ -6,7 +6,7 @@ import { bridge } from "../lib/rpc.ts";
 import { moveTab, pushClosed, stepTab } from "../lib/tabs.ts";
 import { CookieImportDialog } from "./CookieImport.tsx";
 
-interface Tab { key: string; url: string; title: string; requestId?: string; wcId?: number; canBack: boolean; canForward: boolean; loading: boolean }
+interface Tab { key: string; /** the address the webview was created with; never changes, so state updates cannot re-navigate it */ src: string; url: string; title: string; requestId?: string; wcId?: number; canBack: boolean; canForward: boolean; loading: boolean }
 const PARTITION = "persist:browserpanel";
 
 function normalize(input: string): string {
@@ -33,7 +33,7 @@ function WebviewTab({ tab, onState, onGone }: { tab: Tab; onState(key: string, p
     for (const [n, h] of handlers) wv.addEventListener(n, h);
     return () => { for (const [n, h] of handlers) wv.removeEventListener(n, h); };
   }, [tab.key]); // eslint-disable-line react-hooks/exhaustive-deps
-  return createElement("webview", { ref, src: tab.url, partition: PARTITION, className: "webview" });
+  return createElement("webview", { ref, src: tab.src, partition: PARTITION, className: "webview" });
 }
 
 export function BrowserTab({ visible, onWantVisible }: { visible: boolean; onWantVisible(): void }) {
@@ -44,7 +44,7 @@ export function BrowserTab({ visible, onWantVisible }: { visible: boolean; onWan
 
   const open = useCallback((url: string, requestId?: string) => {
     const key = `tab-${++counter.current}`;
-    setTabs((t) => [...t, { key, url: normalize(url), title: "", requestId, canBack: false, canForward: false, loading: true }]);
+    setTabs((t) => [...t, { key, src: normalize(url), url: normalize(url), title: "", requestId, canBack: false, canForward: false, loading: true }]);
     setActive(key);
     return key;
   }, []);
