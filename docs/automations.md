@@ -2,7 +2,7 @@
 
 Everything here is a protocol method (prefix `rigwell.`) on the daemon connection. The automation list, create, update, pause,
 resume, run, history and cron methods are described in `src/automations/index.ts`; this page covers the Wave 3 extras
-that a client UI needs (decisions 249 to 251).
+that a client UI needs (decisions 255 to 257).
 
 ## Templates
 
