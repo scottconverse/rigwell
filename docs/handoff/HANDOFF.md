@@ -43,14 +43,12 @@ Windows test fixtures (332), the re-shown prompt test race (333), Electron tests
 None assigned. Ask the owner. The spec is built; later phases (hosted parts, Workstreams, MCP OAuth) need the owner's go-ahead.
 
 ## Open issues
-1. `test/desktop/electron-final.test.ts` flake: after side chat Promote, the sidebar row did not show in 20 s.
-   Seen once locally earlier, and once on Windows CI (the pull_request run of commit d18300f; the push run passed).
-   8 of 8 local Windows runs under load passed. Root cause not found. The index theory was checked and is wrong
-   (a guard test in test/storage/session-index.test.ts). The test now prints each layer's state on failure.
-   Read the "promote failure details" line in the CI log the next time it fails.
+1. Fixed (decision 338): the `test/desktop/electron-final.test.ts` Promote flake (the sidebar row did not show in 20 s).
+   The side chat title held the late "About this" text, so the test waited for the wrong title. The failure-details
+   print stays in the test.
    Fixed (decision 335): the writes switch step before Promote ("Clicking the checkbox did not change its state",
    ci push run 41403866649). The "Archive Project" failure in that run probably came from it: the side chat stopped
-   before Promote, so its file was not archived (likely, not proven). The Promote sidebar step is still open.
+   before Promote, so its file was not archived (likely, not proven). The Promote sidebar step is fixed too (decision 338).
    Fixed (decision 336): the file save flake in `test/desktop/electron.test.ts`. The test's loose "Saved" match also
    matched the editor's button row ("SaveDiscard"), so it did not wait for the save. The app code was correct.
    Another flake: `test/tui/gaps.test.ts` afterAll failed on Windows CI with EBUSY when it deleted its temp folder

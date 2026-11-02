@@ -205,6 +205,8 @@ maybe("desktop app: final gaps", () => {
     const before = page.url().split("#/sessions/")[1];
     await page.getByRole("button", { name: "Side chat", exact: true }).first().click();
     const ta = page.getByLabel("Side question");
+    // The button puts "About this: ..." in the box one render later. Wait for it, or it lands in front of the typed text.
+    await page.waitForFunction(() => (document.querySelector('textarea[aria-label="Side question"]') as HTMLTextAreaElement | null)?.value.startsWith('About this: "you chose rust and zig"'), undefined, { timeout: 20_000 });
     await ta.fill("SIDEQ what is going on?");
     await ta.press("Enter");
     await page.locator(".sc-entry .assistant", { hasText: "side answer: all quiet" }).waitFor({ timeout: 40_000 });
