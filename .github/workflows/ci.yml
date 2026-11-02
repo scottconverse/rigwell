@@ -63,6 +63,9 @@ jobs:
       - name: Install the Electron binary
         run: test -x node_modules/electron/dist/electron || node node_modules/electron/install.js
         working-directory: desktop
+      - name: Typecheck the desktop app
+        run: npx tsc -p .
+        working-directory: desktop
       - name: Install Chromium for the CDP and browser pane tests
         run: npx playwright install --with-deps chromium
         working-directory: desktop
