@@ -49,10 +49,9 @@ None assigned. Ask the owner. The spec is built; later phases (hosted parts, Wor
    Fixed (decision 335): the writes switch step before Promote ("Clicking the checkbox did not change its state",
    ci push run 41403866649). The "Archive Project" failure in that run probably came from it: the side chat stopped
    before Promote, so its file was not archived (likely, not proven). The Promote sidebar step is still open.
-   A second flake: in `test/desktop/electron.test.ts` the file save step showed "Saved" but the file kept its old text.
-   Seen once on Linux CI (ci pull_request run 41401628274, commit a341f7b). Root cause not found. The test now prints
-   the editor view and the disk text on failure ("save failure details" in the CI log).
-   A third flake: `test/tui/gaps.test.ts` afterAll failed on Windows CI with EBUSY when it deleted its temp folder
+   Fixed (decision 336): the file save flake in `test/desktop/electron.test.ts`. The test's loose "Saved" match also
+   matched the editor's button row ("SaveDiscard"), so it did not wait for the save. The app code was correct.
+   Another flake: `test/tui/gaps.test.ts` afterAll failed on Windows CI with EBUSY when it deleted its temp folder
    (platforms pull_request run 41403041082, commit a002f25; the push run of the same commit passed). Not reproduced,
    root cause not found. The file opens no watcher or database; the /statusline test runs a shell with cwd in that folder.
 2. On a Windows PC without the symlink right, tests that create symlinks fail with `EPERM` (decision 319). CI has the right.

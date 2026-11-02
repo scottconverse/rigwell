@@ -3,7 +3,7 @@
 // Electron, Playwright or an X server are not available.
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -95,14 +95,9 @@ maybe("desktop app end to end", () => {
     await page.getByRole("button", { name: "Edit", exact: true }).click();
     await page.getByLabel("Edit file").fill('export function greet(name) {\n  return "Hello, " + name + "!";\n}\n');
     await page.getByRole("button", { name: "Save" }).click();
-    await page.getByText("Saved").waitFor();
-    const onDisk = readFileSync(join(repo, "greet.js"), "utf8");
-    if (!onDisk.includes('"Hello, "')) {
-      // This failed once on Linux CI and never locally. The view shows what the app sent, so this tells a stale editor
-      // value (the view shows "Helo") from a disk write that did not stick (the view shows "Hello").
-      console.log("save failure details " + JSON.stringify({ onDisk, view: await page.locator(".files-view").innerText(), dir: readdirSync(repo) }));
-    }
-    expect(onDisk).toContain('"Hello, "');
+    // Exact and in the files view: a loose "Saved" also matched the button row ("Save" + "Discard" reads "SaveDiscard").
+    await page.locator(".files-view").getByText("Saved", { exact: true }).waitFor();
+    expect(readFileSync(join(repo, "greet.js"), "utf8")).toContain('"Hello, "');
 
     // The file changes behind the editor's back: the next save is refused and the disk keeps the other writer's text.
     await page.getByRole("button", { name: "Edit", exact: true }).click();
