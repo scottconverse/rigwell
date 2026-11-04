@@ -26,6 +26,8 @@ with the old history and the old PR #1. Commit IDs in this file are from that ol
   if `node_modules/electron/dist` is missing, before the desktop tests; build the Linux package with
   `cd desktop && bun run package:linux` for the packaging tests). `bunx tsc --noEmit -p .` and `cd desktop && npx tsc -p .` clean.
 - CI (`.github/workflows/ci.yml`, `.github/workflows/platforms.yml`): Linux `test` green; macOS tests + app package green.
+- Release targets (decision 341): Windows is the only platform a release needs. macOS and Linux ship when they build,
+  and never block or delay a release. `.github/workflows/release.yml` builds the installers for a `v*` tag.
 
 ## Done in the last session (Windows PC)
 - Windows worktree e2e hang: fixed (decision 319, commit 1aba96a). Root cause was the test's `expect(c.call(...)).rejects` wait on Windows.
@@ -75,7 +77,7 @@ None assigned. Ask the owner. The spec is built; later phases (hosted parts, Wor
 - Declined by the owner: GitHub-event and Slack-message triggers. Spec later phases (not built): hosted parts, §15.10 Workstreams, MCP OAuth.
 
 ## Not verified on real hardware
-macOS and Windows beyond CI, real OS keychains, real clipboards and terminals, signed and notarized installers, and the
+macOS and Linux are not release targets (decision 341). Not verified: Windows beyond CI and the Nov 1 walkthrough, real OS keychains, real clipboards and terminals, signed and notarized installers, and the
 electron-updater install path.
 
 ## Working rules used so far

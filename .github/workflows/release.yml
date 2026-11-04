@@ -1,0 +1,130 @@
+name: release
+
+# Builds the desktop installers for a version tag (v*) and attaches them to that tag's GitHub release.
+# Windows is the only platform a release needs (decision 341). macOS and Linux build in their own jobs at the
+# same time. They do not hold up Windows, and if one of them fails the Windows files still ship.
+# Tag only a commit whose ci and platforms runs are green; this workflow builds and uploads, it does not test.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.ref_name }}
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  # Makes a draft release for the tag if there is none yet. The Windows job publishes it.
+  draft:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Create the draft release
+        run: gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --verify-tag --title "Rigwell $TAG" --notes "Installers for $TAG."
+
+  windows:
+    needs: draft
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            /*
+            !/evidence/
+          sparse-checkout-cone-mode: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Install the Electron binary
+        working-directory: desktop
+        shell: bash
+        run: test -f node_modules/electron/dist/electron.exe || node node_modules/electron/install.js
+      - name: Build the installer (unsigned)
+        working-directory: desktop
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: RIGWELL_BUN_BIN="$(command -v bun).exe" bun run package:win --publish never || RIGWELL_BUN_BIN="$(command -v bun)" bun run package:win --publish never
+      - name: Upload to the release and publish it
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(desktop/release/*.exe desktop/release/*.blockmap desktop/release/latest.yml)
+          ls -la "${files[@]}"
+          gh release upload "$TAG" "${files[@]}" --clobber
+          gh release edit "$TAG" --draft=false --latest
+
+  macos:
+    needs: draft
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Install the Electron binary
+        working-directory: desktop
+        run: test -d node_modules/electron/dist/Electron.app/Contents/MacOS || node node_modules/electron/install.js
+      - name: Build the app (unsigned, not notarized)
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: bun run package:mac --publish never
+      - name: Upload to the release
+        run: |
+          shopt -s nullglob
+          files=(desktop/release/*.dmg desktop/release/*.zip desktop/release/*.blockmap desktop/release/latest-mac.yml)
+          ls -la "${files[@]}"
+          gh release upload "$TAG" "${files[@]}" --clobber
+
+  linux:
+    needs: draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Install the Electron binary
+        working-directory: desktop
+        run: test -x node_modules/electron/dist/electron || node node_modules/electron/install.js
+      - name: Build the AppImage and deb
+        working-directory: desktop
+        run: bun run package:linux --publish never
+      - name: Upload to the release
+        run: |
+          shopt -s nullglob
+          files=(desktop/release/*.AppImage desktop/release/*.deb desktop/release/latest-linux.yml)
+          ls -la "${files[@]}"
+          gh release upload "$TAG" "${files[@]}" --clobber
