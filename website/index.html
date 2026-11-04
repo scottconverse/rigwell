@@ -170,7 +170,7 @@
           </article>
           <article class="card">
             <h3>SDK</h3>
-            <p>A TypeScript SDK with handlers for permissions, questions and folder trust. See <a href="https://github.com/scottconverse/rigwell/blob/phase-1-core-loop/examples/sdk-multi-turn.ts">the example</a>.</p>
+            <p>A TypeScript SDK with handlers for permissions, questions and folder trust. See <a href="https://github.com/scottconverse/rigwell/blob/main/examples/sdk-multi-turn.ts">the example</a>.</p>
           </article>
         </div>
         <div class="code-card code-wide">
@@ -250,7 +250,7 @@
             <code>rigwell eval report</code> compares them per model and per model family and recommends ship or do not ship.
             A person makes the call. A weekly automation can run it for you.
           </p>
-          <p><a href="https://github.com/scottconverse/rigwell/blob/phase-1-core-loop/docs/eval.md">How the eval loop works</a></p>
+          <p><a href="https://github.com/scottconverse/rigwell/blob/main/docs/eval.md">How the eval loop works</a></p>
         </div>
         <div class="code-card">
           <div class="code-head"><span>Terminal</span></div>
@@ -265,17 +265,15 @@
       <div class="wrap">
         <p class="kicker">Quick start</p>
         <h2 id="qs-h">Build it from source.</h2>
-        <p class="section-lede">There is no packaged release yet. You need <a href="https://bun.sh">Bun</a> 1.4 or later, <code>git</code> and <code>rg</code> (ripgrep) on your PATH.</p>
+        <p class="section-lede">Download the installer from the <a href="https://github.com/scottconverse/rigwell/releases/latest">latest release</a>. Windows is the release target; the macOS and Linux builds are extras. To run from source you need <a href="https://bun.sh">Bun</a> 1.4 or later, <code>git</code> and <code>rg</code> (ripgrep) on your PATH.</p>
         <ol class="steps">
           <li>
             <h3>Clone and install</h3>
             <div class="code-card"><button class="copy" type="button" data-copy="git clone https://github.com/scottconverse/rigwell
 cd rigwell
-git checkout phase-1-core-loop
 bun install">Copy</button>
 <pre><code>git clone https://github.com/scottconverse/rigwell
 cd rigwell
-git checkout phase-1-core-loop
 bun install</code></pre></div>
           </li>
           <li>
@@ -295,7 +293,7 @@ bun src/cli/main.ts exec --auto low &quot;Fix the failing test&quot;">Copy</butt
 bun src/cli/main.ts
 <span class="tk-c"># one-shot, edits allowed without asking</span>
 bun src/cli/main.ts exec --auto low <span class="tk-s">"Fix the failing test"</span></code></pre></div>
-            <p class="small">For the desktop app: <code>cd desktop &amp;&amp; npm install &amp;&amp; bun run build.ts &amp;&amp; npx electron .</code> (see <a href="https://github.com/scottconverse/rigwell/blob/phase-1-core-loop/docs/desktop.md">docs/desktop.md</a>).</p>
+            <p class="small">For the desktop app: <code>cd desktop &amp;&amp; npm install &amp;&amp; bun run build.ts &amp;&amp; npx electron .</code> (see <a href="https://github.com/scottconverse/rigwell/blob/main/docs/desktop.md">docs/desktop.md</a>).</p>
           </li>
         </ol>
       </div>
@@ -306,7 +304,7 @@ bun src/cli/main.ts exec --auto low <span class="tk-s">"Fix the failing test"</s
         <p class="kicker">Project status</p>
         <h2 id="status-h">Early, and honest about it.</h2>
         <p class="section-lede">
-          Every part of the local build spec is written and tested. It has not had a public release or wide real-world use.
+          Every part of the local build spec is written and tested. Version 0.1.0 is the first release. It has not had wide real-world use.
         </p>
         <div class="grid-3">
           <article class="card status-card status-ok">
@@ -322,8 +320,8 @@ bun src/cli/main.ts exec --auto low <span class="tk-s">"Fix the failing test"</s
           <article class="card status-card status-warn">
             <h3>Not proven yet</h3>
             <ul>
-              <li>No packaged installers or release builds published</li>
-              <li>macOS and Windows checked in CI only, not on real machines</li>
+              <li>The installers are not signed</li>
+              <li>Run by hand on Windows only; macOS and Linux checked in CI only</li>
               <li>Real OS keychains and clipboards, signed installers and auto-update</li>
               <li>No command sandbox on Windows</li>
             </ul>
@@ -338,9 +336,9 @@ bun src/cli/main.ts exec --auto low <span class="tk-s">"Fix the failing test"</s
           </article>
         </div>
         <p class="small status-links">
-          Known issues and design choices: <a href="https://github.com/scottconverse/rigwell/blob/phase-1-core-loop/docs/handoff/HANDOFF.md">HANDOFF.md</a>
-          &middot; <a href="https://github.com/scottconverse/rigwell/blob/phase-1-core-loop/docs/decisions.md">decisions.md</a>
-          &middot; <a href="https://github.com/scottconverse/rigwell/blob/phase-1-core-loop/spec/harness-spec.md">the build spec</a>
+          Known issues and design choices: <a href="https://github.com/scottconverse/rigwell/blob/main/docs/handoff/HANDOFF.md">HANDOFF.md</a>
+          &middot; <a href="https://github.com/scottconverse/rigwell/blob/main/docs/decisions.md">decisions.md</a>
+          &middot; <a href="https://github.com/scottconverse/rigwell/blob/main/spec/harness-spec.md">the build spec</a>
         </p>
       </div>
     </section>
@@ -360,11 +358,11 @@ bun src/cli/main.ts exec --auto low <span class="tk-s">"Fix the failing test"</s
 
   <footer class="site-footer">
     <div class="wrap footer-inner">
-      <span>Rigwell &middot; <a href="https://github.com/scottconverse/rigwell/blob/phase-1-core-loop/LICENSE">AGPL-3.0-only</a></span>
+      <span>Rigwell &middot; <a href="https://github.com/scottconverse/rigwell/blob/main/LICENSE">AGPL-3.0-only</a></span>
       <span>
         <a href="https://github.com/scottconverse/rigwell">Source</a> &middot;
         <a href="https://github.com/scottconverse/rigwell/issues">Issues</a> &middot;
-        <a href="https://github.com/scottconverse/rigwell/blob/phase-1-core-loop/NOTICE">Notices</a>
+        <a href="https://github.com/scottconverse/rigwell/blob/main/NOTICE">Notices</a>
       </span>
     </div>
   </footer>

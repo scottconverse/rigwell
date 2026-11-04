@@ -21,12 +21,14 @@ repo, and commands above the autonomy level you set wait for your approval.
 
 ## Quick start
 
-There is no packaged release yet. You need Bun 1.4 or later, `git` and `rg` (ripgrep) on your PATH.
+Download the installer from the [latest release](https://github.com/scottconverse/rigwell/releases/latest). Windows is the release target; the macOS and Linux
+builds are extras. The installers are not signed.
+
+To run from source you need Bun 1.4 or later, `git` and `rg` (ripgrep) on your PATH.
 
 ```bash
 git clone https://github.com/scottconverse/rigwell
 cd rigwell
-git checkout phase-1-core-loop
 bun install
 ```
 
@@ -63,7 +65,7 @@ The desktop app is in `desktop/`. See [docs/desktop.md](docs/desktop.md).
 ## Project status
 
 Early. Every part of the local build spec is written and tested, and CI runs the tests on Linux, macOS and
-Windows. There is no packaged release yet, and the app has not had wide real-world use. Hosted parts,
+Windows. Version 0.1.0 is the first release. It has not had wide real-world use. Hosted parts,
 Workstreams for Missions and OAuth sign-in for MCP servers are planned, not built. Known issues are in
 [docs/handoff/HANDOFF.md](docs/handoff/HANDOFF.md).
 
