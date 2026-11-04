@@ -1,0 +1,58 @@
+# Packaging config (spec 14.5, 14.7). Build with: bun run package   (Linux here; mac and Windows targets need those hosts).
+appId: dev.rigwell.desktop
+productName: Rigwell
+executableName: rigwell
+copyright: Rigwell contributors
+directories:
+  output: release
+  buildResources: packaging
+# Reuse the Electron already installed by npm (no download at build time).
+electronDist: node_modules/electron/dist
+electronVersion: 42.3.3
+asar: true
+npmRebuild: false
+nodeGypRebuild: false
+buildDependenciesFromSource: false
+# Everything is bundled into dist/ by build.ts, so no node_modules ship inside the asar.
+files:
+  - dist/**
+  - assets/icon.png
+  - assets/tray/**
+  - package.json
+  - "!node_modules/**"
+# Outside the asar: the bun runtime and the daemon sources (resources/bun, resources/daemon).
+extraResources:
+  - from: build/stage/bun
+    to: bun
+  - from: build/stage/daemon
+    to: daemon
+afterPack: packaging/fuses.cjs
+protocols:
+  - name: Rigwell
+    schemes: [rigwell]
+publish:
+  provider: generic
+  url: https://updates.invalid/rigwell   # replaced at run time by the updateFeedUrl setting; no hosted feed exists
+linux:
+  icon: assets/icons
+  target: [AppImage, deb]
+  category: Development
+  maintainer: Rigwell contributors <rigwell@users.noreply.invalid>
+  synopsis: Local coding agent
+  artifactName: rigwell-${version}-${arch}.${ext}
+mac:
+  icon: assets/icon.icns
+  target: [dmg, zip]
+  category: public.app-category.developer-tools
+  artifactName: rigwell-${version}-${arch}.${ext}
+  hardenedRuntime: true
+dmg:
+  title: Rigwell ${version}
+win:
+  icon: assets/icon.ico
+  target: [nsis]
+  artifactName: rigwell-setup-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true

@@ -1,0 +1,65 @@
+name: platforms
+
+# Runs the suite and the desktop package build on macOS and Windows, which the Linux CI job cannot cover:
+# the sandbox-exec sandbox, the macOS keychain backend, the PowerShell worktree runner, and the packaged apps.
+# Non-code changes (docs, spec, website, notices) start no CI run.
+on:
+  push:
+    paths-ignore: ["**.md", "docs/**", "spec/**", "website/**", "LICENSE", "NOTICE", ".github/workflows/pages.yml"]
+  pull_request:
+    paths-ignore: ["**.md", "docs/**", "spec/**", "website/**", "LICENSE", "NOTICE", ".github/workflows/pages.yml"]
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      # evidence/ holds reference captures with paths too long for Windows; Rigwell never reads it, so leave it out.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            /*
+            !/evidence/
+          sparse-checkout-cone-mode: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install ripgrep (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ripgrep
+      - name: Install ripgrep (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ripgrep -y
+      - run: bun install --frozen-lockfile
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+      # npm ci does not always fetch the Electron binary; run its installer when the app bundle is missing.
+      - name: Install the Electron binary
+        working-directory: desktop
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then test -d node_modules/electron/dist/Electron.app/Contents/MacOS || node node_modules/electron/install.js; \
+          else test -f node_modules/electron/dist/electron.exe || node node_modules/electron/install.js; fi
+          ls node_modules/electron/dist | head
+      - name: Typecheck
+        run: bunx tsc --noEmit -p .
+      - name: Tests
+        run: bun test
+      - name: Build the desktop package for this platform (unsigned)
+        working-directory: desktop
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then bun run package:mac; else RIGWELL_BUN_BIN="$(command -v bun).exe" bun run package:win || RIGWELL_BUN_BIN="$(command -v bun)" bun run package:win; fi
+      - name: List built artifacts
+        shell: bash
+        run: ls -la desktop/release || true

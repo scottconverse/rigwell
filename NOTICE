@@ -1,0 +1,8 @@
+Rigwell
+Copyright the Rigwell authors. Licensed under the GNU Affero General Public License v3.0 only (see LICENSE).
+
+Rigwell
+This product includes protocol message shapes adapted from the type definitions of
+`@factory/droid-sdk` version 0.10.0, which is licensed under the Apache License, Version 2.0
+(https://www.apache.org/licenses/LICENSE-2.0). The shapes were read and adapted; the SDK code
+is not redistributed here.

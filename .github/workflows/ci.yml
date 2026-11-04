@@ -1,0 +1,84 @@
+name: ci
+
+# Non-code changes (docs, spec, website, notices) start no CI run.
+on:
+  push:
+    branches: [main, "phase-*"]
+    paths-ignore: ["**.md", "docs/**", "spec/**", "website/**", "LICENSE", "NOTICE", ".github/workflows/pages.yml"]
+  pull_request:
+    paths-ignore: ["**.md", "docs/**", "spec/**", "website/**", "LICENSE", "NOTICE", ".github/workflows/pages.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Install ripgrep, bubblewrap and socat
+        run: sudo apt-get update && sudo apt-get install -y ripgrep bubblewrap socat
+      - name: Allow unprivileged user namespaces for the bubblewrap sandbox tests (approved by the repo owner)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Install desktop type dependencies (no Electron binary)
+        run: cd desktop && npm ci --ignore-scripts
+      - name: Typecheck
+        run: bunx tsc --noEmit -p .
+      - name: Tests
+        run: bun test
+      # Spec section 7 / phase 7: fails when first-keystroke p95 regresses past perf/baseline.json (or the 250 ms cap)
+      # or when the first request grows past the base-prompt budget in src/agent/budget.ts. The Markdown report goes
+      # to the job summary.
+      - name: Perf gate
+        run: bun perf/gate.ts
+
+  # Electron and Chromium tests. Each skipping test prints the exact cause ("[... skipped: ...]") in this job's log.
+  desktop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install system packages
+        run: sudo apt-get update && sudo apt-get install -y ripgrep xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1
+      - name: Allow unprivileged user namespaces (Chromium sandbox on Ubuntu 24.04)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: bun install --frozen-lockfile
+      # npm ci runs the electron postinstall, which downloads the Electron binary; playwright is a devDependency here.
+      - run: npm ci
+        working-directory: desktop
+      # npm ci does not always fetch the Electron binary (seen on the runner and locally); run its installer explicitly.
+      - name: Install the Electron binary
+        run: test -x node_modules/electron/dist/electron || node node_modules/electron/install.js
+        working-directory: desktop
+      - name: Typecheck the desktop app
+        run: npx tsc -p .
+        working-directory: desktop
+      - name: Install Chromium for the CDP and browser pane tests
+        run: npx playwright install --with-deps chromium
+        working-directory: desktop
+      - name: Show what the desktop tests will find
+        run: |
+          ls -l desktop/node_modules/electron/dist/electron
+          cd desktop && node -e "console.log('playwright', require('playwright/package.json').version, require('playwright').chromium.executablePath())"
+      - name: Desktop tests under Xvfb
+        run: |
+          set -o pipefail
+          xvfb-run -a bun test test/desktop 2>&1 | tee /tmp/desktop.log
+      - name: Fail if tests skipped for a missing tool
+        run: "! grep -E 'skipped: (playwright|chromium|electron binary|no X server)' /tmp/desktop.log"

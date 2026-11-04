@@ -1,0 +1,236 @@
+import { spawn } from "node:child_process";
+import * as fs from "node:fs";
+import { StringDecoder } from "node:string_decoder";
+import type { Tool, ToolContext, ToolOutput } from "../core/types.ts";
+import { killProcessTree } from "../platform/shell.ts";
+import { prepareSandbox } from "../sandbox/controller.ts";
+import { fail, intArg, ok, promptDesc, promptSchema, resolvePath, strArg } from "./util.ts";
+
+export const EXECUTE_OUTPUT_CAP = 30_000;
+export const EXECUTE_DEFAULT_TIMEOUT_MS = 120_000;
+export const EXECUTE_MAX_TIMEOUT_MS = 600_000;
+
+export interface ShellInfo {
+  path: string;
+  name: string;
+  /** Arguments that run one command string. */
+  args: (command: string) => string[];
+}
+
+const dashC = (command: string) => ["-c", command];
+
+/**
+ * The shell Execute uses. Linux and macOS: bash if present, else sh.
+ * Windows: Git Bash when it is installed (so the model writes the same POSIX commands everywhere), found on PATH
+ * or next to git; the WSL launcher in System32 does not count (it runs a different machine). Without Git Bash:
+ * PowerShell (pwsh, then Windows PowerShell), and as a last resort cmd.exe.
+ */
+export function pickShell(
+  platform: NodeJS.Platform = process.platform,
+  which: (name: string) => string | null | undefined = (n) => Bun.which(n),
+  exists: (p: string) => boolean = fs.existsSync,
+  env: NodeJS.ProcessEnv = process.env,
+): ShellInfo {
+  if (platform !== "win32") {
+    const bash = which("bash");
+    return bash ? { path: bash, name: "bash", args: dashC } : { path: which("sh") ?? "/bin/sh", name: "/bin/sh", args: dashC };
+  }
+  const notWsl = (p: string | null | undefined) => (p && !/[\\/](system32|windowsapps)[\\/]bash\.exe$/i.test(p) ? p : undefined);
+  const gitExe = which("git");
+  const gitRoot = gitExe?.replace(/[\\/](?:cmd|bin|mingw64[\\/]bin|usr[\\/]bin)[\\/]git(?:\.exe)?$/i, "");
+  const fromGit = gitExe && gitRoot !== gitExe ? [gitRoot!] : [];
+  const gitBashes = [
+    ...fromGit.map((root) => `${root}\\bin\\bash.exe`),
+    ...[env.ProgramFiles, env["ProgramFiles(x86)"], env.LOCALAPPDATA && `${env.LOCALAPPDATA}\\Programs`].filter(Boolean).map((b) => `${b}\\Git\\bin\\bash.exe`),
+  ];
+  const bash = notWsl(which("bash")) ?? gitBashes.find((p) => exists(p));
+  if (bash) return { path: bash, name: "bash", args: dashC };
+  const ps = which("pwsh") ?? which("powershell");
+  if (ps) return { path: ps, name: "PowerShell", args: (c) => ["-NoProfile", "-NonInteractive", "-Command", c] };
+  return { path: env.ComSpec || "C:\\Windows\\System32\\cmd.exe", name: "cmd.exe", args: (c) => ["/d", "/s", "/c", c] };
+}
+
+let shellCache: ShellInfo | undefined;
+export function resolveShell(): ShellInfo {
+  return (shellCache ??= pickShell());
+}
+
+/** Keeps the head and tail of a stream, dropping the middle once over the cap. */
+export class CappedText {
+  private head = "";
+  private tail = "";
+  total = 0;
+  constructor(private cap: number) {}
+  push(s: string): void {
+    this.total += s.length;
+    const half = Math.floor(this.cap / 2);
+    if (this.head.length < half) {
+      const room = half - this.head.length;
+      this.head += s.slice(0, room);
+      s = s.slice(room);
+    }
+    if (s) {
+      this.tail += s;
+      if (this.tail.length > half) this.tail = this.tail.slice(this.tail.length - half);
+    }
+  }
+  toString(): string {
+    const kept = this.head.length + this.tail.length;
+    if (this.total <= kept) return this.head + this.tail;
+    return `${this.head}\n[... ${this.total - kept} characters cut ...]\n${this.tail}`;
+  }
+}
+
+/** Strips the risk paragraphs from the description when risk is not asked for. */
+function withoutRisk(desc: string): string {
+  const lines = desc.split("\n");
+  const start = lines.findIndex((l) => l.startsWith("riskLevel (required)"));
+  const end = lines.findIndex((l) => l.startsWith("riskReason (required)"));
+  if (start === -1 || end === -1) return desc;
+  lines.splice(start, end - start + 1);
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+export function createExecuteTool(opts: { skipPermissions?: boolean } = {}): Tool {
+  const shell = resolveShell();
+  let description = promptDesc("Execute", {
+    SHELL: shell.name,
+    EXECUTE_OUTPUT_CAP: "30,000 characters",
+  });
+  const inputSchema = promptSchema("Execute");
+  if (opts.skipPermissions) {
+    delete inputSchema.properties.riskLevel;
+    delete inputSchema.properties.riskReason;
+    inputSchema.required = (inputSchema.required as string[]).filter((k) => k !== "riskLevel" && k !== "riskReason");
+    description = withoutRisk(description);
+  }
+  return {
+    name: "Execute",
+    description,
+    inputSchema,
+    category: "execute",
+    run: (input, ctx) => runExecute(input, ctx),
+  };
+}
+
+function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
+  killProcessTree(pid, sig); // process group on POSIX, taskkill /T on Windows
+}
+
+async function runExecute(input: Record<string, unknown>, ctx: ToolContext, background = false): Promise<ToolOutput> {
+  const command = strArg(input, "command");
+  if (!command || !command.trim()) return fail("command is required.");
+  const cwdIn = strArg(input, "cwd");
+  const cwd = cwdIn ? resolvePath(cwdIn, ctx.cwd) : ctx.cwd;
+  try {
+    if (!fs.statSync(cwd).isDirectory()) return fail(`cwd ${cwd} is not a directory.`);
+  } catch {
+    return fail(`cwd ${cwd} does not exist.`);
+  }
+  if (input.background === true && !background) {
+    if (!ctx.jobs) return fail("Background execution is not available here; run the command in the foreground.");
+    const jobs = ctx.jobs;
+    const foreground = { ...input, background: false };
+    const jobId = jobs.startBackground({
+      kind: "execute",
+      title: command.length > 80 ? `${command.slice(0, 80)}...` : command,
+      run: (signal) => runExecute(foreground, { ...ctx, signal, jobs: undefined, onProgress: undefined }, true),
+    });
+    return ok(JSON.stringify({ status: "running", job_id: jobId, note: "You will be woken with the result when it exits. Check or stop it with script_job." }));
+  }
+  // A background command has no default time limit; it runs until it exits or is stopped.
+  const requested = intArg(input, "timeoutMs");
+  const timeoutMs = background && requested === undefined
+    ? 0
+    : Math.min(EXECUTE_MAX_TIMEOUT_MS, Math.max(1, requested ?? EXECUTE_DEFAULT_TIMEOUT_MS));
+  if (ctx.signal.aborted) return fail("Command was cancelled before it started.");
+
+  const shell = resolveShell();
+  const started = Date.now();
+  const out = new CappedText(EXECUTE_OUTPUT_CAP);
+  const err = new CappedText(EXECUTE_OUTPUT_CAP);
+  const both = new CappedText(EXECUTE_OUTPUT_CAP);
+
+  const sbx = await prepareSandbox(ctx, { shell: shell.path, shellArgs: shell.args(command), command, cwd, input });
+  if (sbx.error) return fail(sbx.error);
+  return await new Promise<ToolOutput>((resolveRaw) => {
+    const resolve = (o: ToolOutput) => void sbx.finalize(o, err.toString()).then(resolveRaw).finally(() => sbx.cleanup());
+    const child = spawn(sbx.file, sbx.args, {
+      cwd,
+      detached: true,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...ctx.env, ...sbx.env, CI: process.env.CI ?? "1", GIT_PAGER: "cat", PAGER: "cat", GIT_TERMINAL_PROMPT: "0" },
+    });
+    let timedOut = false;
+    let aborted = false;
+    let settled = false;
+    const dec = { o: new StringDecoder("utf8"), e: new StringDecoder("utf8") };
+
+    const finish = (exitCode: number | null, signal: string | null, spawnError?: string) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      ctx.signal.removeEventListener("abort", onAbort);
+      out.push(dec.o.end());
+      err.push(dec.e.end());
+      ctx.onProgress?.({ type: "status", exitCode, signal, fullOutput: both.toString() });
+      const durationMs = Date.now() - started;
+      const parts: string[] = [];
+      if (spawnError) parts.push(`Failed to start the shell: ${spawnError}`);
+      if (timedOut) parts.push(`Timed out after ${timeoutMs} ms; the command was killed.`);
+      else if (aborted) parts.push("The command was cancelled and killed.");
+      parts.push(`exit code: ${exitCode ?? "none"}${signal ? ` (signal ${signal})` : ""}; duration ${durationMs} ms`);
+      const so = out.toString();
+      const se = err.toString();
+      parts.push(`--- stdout ---\n${so === "" ? "(empty)" : so}`);
+      parts.push(`--- stderr ---\n${se === "" ? "(empty)" : se}`);
+      const ran = !timedOut && !aborted && !spawnError;
+      resolve({
+        content: parts.join("\n"),
+        isError: exitCode !== 0 || timedOut || aborted || !!spawnError,
+        ...(ran ? { data: { exitCode, stdout: so, stderr: se, durationMs, truncated: out.total > EXECUTE_OUTPUT_CAP || err.total > EXECUTE_OUTPUT_CAP } } : {}),
+      });
+    };
+
+    const onAbort = () => {
+      aborted = true;
+      killGroup(child.pid, "SIGKILL");
+    };
+    ctx.signal.addEventListener("abort", onAbort, { once: true });
+    const timer = timeoutMs > 0
+      ? setTimeout(() => {
+        timedOut = true;
+        killGroup(child.pid, "SIGKILL");
+      }, timeoutMs)
+      : undefined;
+
+    child.stdout!.on("data", (b: Buffer) => {
+      const t = dec.o.write(b);
+      if (!t) return;
+      out.push(t);
+      both.push(t);
+      ctx.onProgress?.({ type: "status", text: t, fullOutput: both.toString() });
+    });
+    child.stderr!.on("data", (b: Buffer) => {
+      const t = dec.e.write(b);
+      if (!t) return;
+      err.push(t);
+      both.push(t);
+      ctx.onProgress?.({ type: "status", text: t, fullOutput: both.toString() });
+    });
+    child.on("error", (e) => finish(null, null, e.message));
+    child.on("exit", (code, signal) => {
+      // Pipes may stay open if a background child inherited them; do not wait forever.
+      const grace = setTimeout(() => {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        finish(code, signal);
+      }, 300);
+      child.on("close", () => {
+        clearTimeout(grace);
+        finish(code, signal);
+      });
+    });
+  });
+}
