@@ -84,6 +84,57 @@ Names carry the `rigwell.` prefix. No result ever contains a token.
 - `auth_login_status { loginId }` returns the same object with `state` `pending`, `complete`, `failed` (with `error`) or `cancelled`. Poll it every second or two.
 - `auth_logout { name }` returns `{ loggedOut: boolean }`.
 
+## MCP server sign-in (OAuth)
+
+An http or sse MCP server can require OAuth sign-in (MCP authorization, protocol version `2025-06-18`). When such a
+server answers 401, Rigwell shows it as failed with "Sign-in needed: run `rigwell mcp login <name>`". Nothing is
+registered and no browser opens until you ask.
+
+```
+rigwell mcp login acme    # finds the sign-in server, prints a URL, waits for the redirect on 127.0.0.1
+rigwell mcp status        # signed in / not signed in / OAuth off, per http and sse server in mcp.json
+rigwell mcp logout acme   # removes the stored token
+```
+
+What `login` does:
+
+1. Reads the protected resource metadata (RFC 9728): the `resource_metadata` URL in the 401 `WWW-Authenticate`
+   header, else `/.well-known/oauth-protected-resource<path>`, else the same at the root.
+2. Reads the authorization server metadata (RFC 8414, else OpenID discovery) of the first listed authorization server.
+   Every endpoint must be https (http only on 127.0.0.1 or localhost). If the server lists its PKCE methods and S256
+   is not one of them, sign-in is refused.
+3. Picks a client: `oauth.clientId` from `mcp.json`; else `oauth.clientMetadataUrl` when the server supports client
+   metadata documents; else the app Rigwell registered before for this server; else a new dynamic client
+   registration (RFC 7591) with a `http://127.0.0.1:<port>/callback` redirect and no client secret.
+4. Runs the browser sign-in (authorization code with PKCE S256, as above). Every authorization and token request
+   carries the server as the RFC 8707 `resource`.
+
+After a sign-in started with `mcp_auth_start`, that session reconnects the server. After `rigwell mcp login` in a
+terminal, a session that is already open connects the server at its next start. Tokens are stored under `oauth:mcp.<name>`, the
+discovery result and the client under `mcp-oauth:<name>` (both in the credential store). A token is refreshed before
+it expires; when the refresh is refused, the server shows "The sign-in expired" again. `logout` removes the token and
+keeps the registered app, so the next `login` does not register again.
+
+Options in the server's `mcp.json` entry:
+
+```json
+{ "mcpServers": { "acme": { "type": "http", "url": "https://mcp.acme.example/mcp",
+  "oauth": { "scopes": ["tools.read"], "clientId": "my-app" } } } }
+```
+
+- `oauth: false` turns OAuth off for the server. An `Authorization` header in `headers` also turns it off (the header
+  is sent as it is), and a 401 is then a plain error.
+- `oauth.scopes` (default: the header's `scope`, else the metadata's `scopes_supported`), `oauth.resource` (default:
+  the metadata's `resource`, else the server URL), `oauth.authorizationServerIssuer` (for a server that publishes no
+  metadata), `oauth.clientId`, `oauth.clientSecret` (only for a confidential client; it is stored in `mcp.json` as
+  written), `oauth.clientMetadataUrl`.
+- A 403 is a plain error, not a sign-in request.
+
+Protocol methods: `mcp_auth_start { serverName }` returns the same login status as `auth_login_start` (open `url`,
+then poll `auth_login_status { loginId }`); `mcp_auth_logout { serverName }` returns `{ success }`. `list_mcp_servers`
+shows `requiresAuth` and `hasAuthTokens` for servers with OAuth on. No result contains a token. The desktop app and the
+TUI have no sign-in button yet: their MCP lists show the "Sign-in needed" error, and you run the terminal command.
+
 ## Secrets
 
 Named secrets (API keys, tokens). Values live only in the credential store under `secret:<name>`; a custom model can

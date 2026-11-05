@@ -11,7 +11,7 @@ export interface McpServerConfig {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
-  /** OAuth is not built (spec lists it as later); kept so the field round-trips. */
+  /** OAuth sign-in options (src/mcp/oauth.ts); false turns OAuth off for this server. */
   oauth?: false | Record<string, unknown>;
   disabled?: boolean;
   source: McpSource;

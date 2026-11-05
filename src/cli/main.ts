@@ -20,6 +20,7 @@ const USAGE = `Usage:
   rigwell eval <run|report|tasks> [options]   (see rigwell eval --help)
 
 Sign in with an account plan (OAuth, see docs/auth.md): rigwell auth login <name> [--device] | logout <name> | status
+Sign in to an http or sse MCP server (OAuth, see docs/auth.md): rigwell mcp login <name> | logout <name> | status
 Credentials: rigwell credential set <name> (value on stdin) | delete <name>; use apiKey "keychain:<name>" in customModels.
 
 Options for exec:
@@ -258,6 +259,7 @@ async function main() {
     process.exit(0);
   }
   if (cmd === "auth") process.exit(await (await import("../auth/cli.ts")).authMain(argv));
+  if (cmd === "mcp") process.exit(await (await import("../mcp/cli.ts")).mcpMain(argv));
   if (cmd === "sessions") {
     const [sub, ...rest] = argv;
     if (sub !== "search") fail("usage: rigwell sessions search <query> [--semantic] [--limit <n>] [--cwd <dir>] [--json]");
