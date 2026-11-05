@@ -16,8 +16,19 @@ export function CookieImportDialog({ onClose }: { onClose(): void }) {
   const [error, setError] = useState("");
   const [result, setResult] = useState("");
   const [busy, setBusy] = useState(false);
+  // Set when import cannot run on this computer (Windows). Then the dialog says so at once and offers no picker.
+  const [blocked, setBlocked] = useState<string | null>(null);
 
-  useEffect(() => { void bridge().cookies.profiles().then((p) => { setProfiles(p); if (p[0]) setProfile(p[0].key); }, (e) => setError((e as Error).message)); }, []);
+  useEffect(() => {
+    void (async () => {
+      try {
+        const why = await bridge().cookies.blocked();
+        if (why) { setBlocked(why); return; }
+        const p = await bridge().cookies.profiles();
+        setProfiles(p); if (p[0]) setProfile(p[0].key);
+      } catch (e) { setError((e as Error).message); }
+    })();
+  }, []);
 
   const load = async () => {
     setError(""); setBusy(true);
@@ -33,6 +44,7 @@ export function CookieImportDialog({ onClose }: { onClose(): void }) {
   return (
     <Dialog title="Import cookies from Chrome" onClose={onClose} wide>
       <p className="muted small">Copies the cookies of the sites you choose from a Chrome or Chromium profile into this browser pane, so you stay signed in. Only the chosen sites are read, nothing is sent anywhere, and cookie values are never shown or logged. On macOS the system may ask to allow access to "Chrome Safe Storage".</p>
+      {blocked && <div className="banner small" role="status">{blocked}</div>}
       {error && <div className="error-text" role="alert">{error}</div>}
       {result ? <div className="banner small" role="status">{result}</div> : null}
       {profiles && !profiles.length && <div className="muted">No Chrome or Chromium profile was found on this computer.</div>}
@@ -55,7 +67,7 @@ export function CookieImportDialog({ onClose }: { onClose(): void }) {
       )}
       <div className="dialog-actions">
         <button onClick={onClose}>Close</button>
-        <button className="primary" disabled={busy || !picked.size} onClick={() => void run()}>Import {picked.size ? `${picked.size} site${picked.size === 1 ? "" : "s"}` : "cookies"}</button>
+        {!blocked && <button className="primary" disabled={busy || !picked.size} onClick={() => void run()}>Import {picked.size ? `${picked.size} site${picked.size === 1 ? "" : "s"}` : "cookies"}</button>}
       </div>
     </Dialog>
   );

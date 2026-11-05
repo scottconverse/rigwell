@@ -32,6 +32,10 @@ describe("create_pr over the protocol", () => {
       const init = await c.call("initialize_session", { machineId: "default", cwd: repo, modelId: MODEL, worktree: { enabled: true, prompt: "fix greeting" } });
       const wt = init.worktree;
       const remoteHas = () => git(bare, "branch", "--list", wt.branch).includes(wt.branch);
+      // A pull request needs a commit past the base (an empty branch is refused).
+      writeFileSync(join(wt.path, "greeting.txt"), "hello\n");
+      git(wt.path, "add", "greeting.txt");
+      git(wt.path, "commit", "-qm", "Fix the greeting");
 
       const cancelled = await c.call("create_pr", { title: "Fix the greeting", body: "Typo." });
       expect(cancelled).toEqual({ created: false, cancelled: true });

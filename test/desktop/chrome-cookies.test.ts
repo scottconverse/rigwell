@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encrypt, makeCookieDb } from "./cookie-fixture.ts";
-import { decryptCookieValue, deriveKey, domainMatches, importFromProfile, listChromeProfiles, listCookieDomains, readCookies, safeStoragePassword, toElectronCookie } from "../../src/sidepane/chrome-cookies.ts";
+import { cookieImportBlocked, decryptCookieValue, deriveKey, domainMatches, importFromProfile, listChromeProfiles, listCookieDomains, readCookies, safeStoragePassword, toElectronCookie } from "../../src/sidepane/chrome-cookies.ts";
 
 const dirs: string[] = [];
 afterEach(() => { while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true }); });
@@ -64,6 +64,9 @@ test("Linux password: libsecret when available, peanuts otherwise", () => {
   expect(safeStoragePassword("chrome", "linux", () => "from-libsecret\n")).toEqual({ password: "from-libsecret", source: "libsecret" });
   expect(safeStoragePassword("chrome", "linux", () => { throw new Error("no secret-tool"); })).toEqual({ password: "peanuts", source: "peanuts" });
   expect(() => safeStoragePassword("chrome", "win32")).toThrow(/Windows/);
+  expect(cookieImportBlocked("win32")).toMatch(/not supported on Windows/);
+  expect(cookieImportBlocked("linux")).toBeNull();
+  expect(cookieImportBlocked("darwin")).toBeNull();
 });
 
 test("profiles are listed with their names and domains are counted without decrypting", () => {

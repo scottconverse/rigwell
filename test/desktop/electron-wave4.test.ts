@@ -269,6 +269,16 @@ maybe("desktop app: wave 4 features", () => {
     await page.keyboard.press("Control+Shift+B");
     await page.getByRole("button", { name: "Import cookies" }).click();
     const dlg = page.getByRole("dialog", { name: "Import cookies from Chrome" });
+    if (process.platform === "win32") {
+      // Windows Chrome protects cookies with DPAPI, which is not supported (decision 294). The dialog says so when it
+      // opens, before any profile or site is picked, and offers no picker and no Import button. Nothing is copied.
+      await why("windows refusal", () => dlg.getByRole("status").getByText(/not supported on Windows/).waitFor({ timeout: 30_000 }));
+      expect(await dlg.getByLabel("Chrome profile").count()).toBe(0);
+      expect(await dlg.getByRole("button", { name: /^Import/ }).count()).toBe(0);
+      const winJar = await app.evaluate(async ({ session }: any) => (await session.fromPartition("persist:browserpanel").cookies.get({})).map((c: any) => c.name));
+      expect(winJar).not.toContain("sid");
+      return;
+    }
     await dlg.getByLabel("Chrome profile").selectOption({ label: "Chrome: Work" });
     await dlg.getByRole("button", { name: "Show sites" }).click();
     await why("sites list", () => dlg.getByText("other.org").waitFor({ timeout: 20_000 }));
@@ -278,13 +288,6 @@ maybe("desktop app: wave 4 features", () => {
     expect(await dlg.getByRole("group", { name: "Sites" }).getByText("other.org").count()).toBe(0);
     for (const d of ["example.com", "app.example.com", "plain.example.com"]) await dlg.getByRole("group", { name: "Sites" }).getByLabel(new RegExp(`^${d.replace(/\./g, "\\.")}`)).check();
     await dlg.getByRole("button", { name: /^Import 3 sites/ }).click();
-    if (process.platform === "win32") {
-      // Windows Chrome protects cookies with DPAPI, which is not supported (decision 294): the import is refused and nothing is copied.
-      await why("windows refusal", () => dlg.getByRole("alert").getByText(/not supported on Windows/).waitFor({ timeout: 30_000 }));
-      const winJar = await app.evaluate(async ({ session }: any) => (await session.fromPartition("persist:browserpanel").cookies.get({})).map((c: any) => c.name));
-      expect(winJar).not.toContain("sid");
-      return;
-    }
     await why("import summary", () => dlg.getByText(/Imported 3 cookies/).waitFor({ timeout: 30_000 }));
     expect(await dlg.textContent()).toContain("1 could not be decrypted");
 

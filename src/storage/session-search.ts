@@ -5,7 +5,7 @@ import type { Database } from "bun:sqlite";
 import { projectSlug } from "./paths.ts";
 import { type Embedder, HashingEmbedder, quantize } from "./embedder.ts";
 import { bloomMayContain, sha256, tokenize } from "./search-text.ts";
-import { refreshIndex } from "./session-index.ts";
+import { displayTitle, refreshIndex } from "./session-index.ts";
 
 export interface SearchHit {
   sessionId: string; title: string; cwd: string;
@@ -44,8 +44,8 @@ export function lexicalSearch(db: Database, query: string, o: SearchOptions = {}
   if (!terms.length) return [];
   const scope = scopeWhere(o);
   const sessions = db.query(
-    `SELECT s.session_id, s.title, s.cwd, s.last_event_at, f.filter FROM sessions s JOIN session_term_filters f ON f.session_id = s.session_id WHERE 1=1${scope.sql}`,
-  ).all(...scope.args) as { session_id: string; title: string | null; cwd: string | null; last_event_at: number | null; filter: Uint8Array }[];
+    `SELECT s.session_id, s.title, s.cwd, s.preview, s.last_event_at, f.filter FROM sessions s JOIN session_term_filters f ON f.session_id = s.session_id WHERE 1=1${scope.sql}`,
+  ).all(...scope.args) as { session_id: string; title: string | null; cwd: string | null; preview: string | null; last_event_at: number | null; filter: Uint8Array }[];
   const res = terms.map((t) => ({ prefix: new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRe(t)}`, "giu"), exact: new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRe(t)}(?![\\p{L}\\p{N}_])`, "giu") }));
   const spansOf = db.query("SELECT span_index, line_start, line_end, text, first_event_id, last_event_id FROM session_spans WHERE session_id = ?");
   const hits: (SearchHit & { recent: number })[] = [];
@@ -67,7 +67,7 @@ export function lexicalSearch(db: Database, query: string, o: SearchOptions = {}
       if (!ok) continue;
       if (!best || score > best.score) {
         best = {
-          sessionId: s.session_id, title: s.title ?? "New Session", cwd: s.cwd ?? "", spanIndex: sp.span_index, lineStart: sp.line_start, lineEnd: sp.line_end,
+          sessionId: s.session_id, title: displayTitle(s.title ?? "New Session", s.preview ?? ""), cwd: s.cwd ?? "", spanIndex: sp.span_index, lineStart: sp.line_start, lineEnd: sp.line_end,
           firstEventId: sp.first_event_id, lastEventId: sp.last_event_id, snippet: snippetOf(sp.text, first), score,
         };
       }
@@ -107,7 +107,7 @@ export async function semanticSearch(db: Database, query: string, o: SearchOptio
   if (!qv || qv.length !== embedder.dims) return [];
   const scope = scopeWhere(o);
   const rows = db.query(
-    `SELECT sp.session_id, sp.span_index, sp.line_start, sp.line_end, sp.text, sp.first_event_id, sp.last_event_id, sp.scale, sp.vector, s.title, s.cwd
+    `SELECT sp.session_id, sp.span_index, sp.line_start, sp.line_end, sp.text, sp.first_event_id, sp.last_event_id, sp.scale, sp.vector, s.title, s.preview, s.cwd
        FROM session_spans sp JOIN sessions s ON s.session_id = sp.session_id
       WHERE sp.embedding_space = ? AND sp.vector IS NOT NULL AND COALESCE(json_extract(s.tags, '$.subagent'), 0) = 0${scope.sql}`,
   ).all(embedder.space, ...scope.args) as any[];
@@ -122,7 +122,7 @@ export async function semanticSearch(db: Database, query: string, o: SearchOptio
     const cur = best.get(r.session_id);
     if (!cur || score > cur.score) {
       best.set(r.session_id, {
-        sessionId: r.session_id, title: r.title ?? "New Session", cwd: r.cwd ?? "", spanIndex: r.span_index, lineStart: r.line_start, lineEnd: r.line_end,
+        sessionId: r.session_id, title: displayTitle(r.title ?? "New Session", r.preview ?? ""), cwd: r.cwd ?? "", spanIndex: r.span_index, lineStart: r.line_start, lineEnd: r.line_end,
         firstEventId: r.first_event_id, lastEventId: r.last_event_id, snippet: snippetOf(r.text, 0), score: Math.round(score * 1e4) / 1e4,
       });
     }
