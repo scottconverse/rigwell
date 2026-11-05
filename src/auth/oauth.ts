@@ -146,7 +146,7 @@ export class AuthManager {
 
   /** POST to the token endpoint. Errors carry the OAuth error code and description only, never the request. */
   private async tokenRequest(cfg: OAuthProviderConfig, params: Record<string, string>): Promise<Record<string, unknown>> {
-    const body = new URLSearchParams(params);
+    const body = new URLSearchParams({ ...(cfg.tokenParams ?? {}), ...params });
     const headers: Record<string, string> = { "content-type": "application/x-www-form-urlencoded", accept: "application/json" };
     if (cfg.tokenAuthMethod === "client_secret_basic" && cfg.clientSecret !== undefined) {
       headers.authorization = `Basic ${Buffer.from(`${encodeURIComponent(cfg.clientId)}:${encodeURIComponent(cfg.clientSecret)}`).toString("base64")}`;

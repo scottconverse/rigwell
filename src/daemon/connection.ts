@@ -520,6 +520,14 @@ export function createConnection(write: (line: string) => void, opts: Connection
         if (p.settingsLevel !== undefined && p.settingsLevel !== "user") throw new RpcError(ErrorCodes.INVALID_PARAMS, 'settingsLevel must be "user"');
         try { return await s.removeMcpServer(p.serverName, "user"); } catch (e) { throw new RpcError(ErrorCodes.INVALID_PARAMS, (e as Error).message); }
       }
+      case "mcp_auth_start":
+      case "mcp_auth_logout": {
+        const s = need();
+        if (typeof p.serverName !== "string" || !p.serverName) throw new RpcError(ErrorCodes.INVALID_PARAMS, "serverName is required");
+        try { return method === "mcp_auth_start" ? await s.mcpLogin(p.serverName) : await s.mcpLogout(p.serverName); } catch (e) {
+          throw new RpcError(ErrorCodes.INVALID_PARAMS, (e as Error).message);
+        }
+      }
       case "fork_session": {
         const s = need();
         if (s.isRunning) throw new RpcError(ErrorCodes.CONFLICT, "A turn is running; wait for it to finish before forking.");

@@ -65,8 +65,9 @@ The desktop app is in `desktop/`. See [docs/desktop.md](docs/desktop.md).
 ## Project status
 
 Early. Every part of the local build spec is written and tested, and CI runs the tests on Linux, macOS and
-Windows. Version 0.1.0 is the first release. It has not had wide real-world use. Hosted parts,
-Workstreams for Missions and OAuth sign-in for MCP servers are planned, not built. Known issues are in
+Windows. Version 0.1.0 is the first release. It has not had wide real-world use. Hosted parts and
+Workstreams for Missions are planned, not built. OAuth sign-in for MCP servers is new and was tested only
+against a local fake server. Known issues are in
 [docs/handoff/HANDOFF.md](docs/handoff/HANDOFF.md).
 
 ## Contributing

@@ -2011,6 +2011,8 @@ export class Session {
   listMcpServers() { return this.needMcp().listServers(); }
   addMcpServer(p: Parameters<McpManager["addServer"]>[0]) { return this.needMcp().addServer(p); }
   removeMcpServer(name: string, level: "user" = "user") { return this.needMcp().removeServer(name, level); }
+  mcpLogin(name: string) { return this.needMcp().login(name); }
+  mcpLogout(name: string) { return this.needMcp().logout(name); }
 
   // ---------- spec mode (spec 5.5.7) ----------
 

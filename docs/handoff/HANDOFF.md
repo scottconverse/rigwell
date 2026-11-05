@@ -49,7 +49,7 @@ Windows test fixtures (332), the re-shown prompt test race (333), Electron tests
 - The root README is now a short entry point that links to the site.
 
 ## Next task
-None assigned. Ask the owner. The spec is built; later phases (hosted parts, Workstreams, MCP OAuth) need the owner's go-ahead.
+None assigned. Ask the owner. The spec is built; later phases (hosted parts, Workstreams) need the owner's go-ahead.
 
 ## Open issues
 1. Fixed (decision 338): the `test/desktop/electron-final.test.ts` Promote flake (the sidebar row did not show in 20 s).
@@ -74,7 +74,7 @@ None assigned. Ask the owner. The spec is built; later phases (hosted parts, Wor
 - (Resolved) `create_pr` and PR status (§18.6): approved and built (decisions 321 to 327).
 - License: decided by the owner: AGPL-3.0-only (`LICENSE`, package.json `license`, README, NOTICE).
 - Merge to `main`: the site at https://scottconverse.github.io/rigwell/ goes live only after that merge (Pages is on).
-- Declined by the owner: GitHub-event and Slack-message triggers. Spec later phases (not built): hosted parts, §15.10 Workstreams, MCP OAuth.
+- Declined by the owner: GitHub-event and Slack-message triggers. Spec later phases (not built): hosted parts, §15.10 Workstreams. MCP OAuth sign-in is built (decision 346, `rigwell mcp login <name>`), tested only against a local fake server.
 
 ## Not verified on real hardware
 macOS and Linux are not release targets (decision 341). Not verified: Windows beyond CI and the Nov 1 walkthrough, real OS keychains, real clipboards and terminals, signed and notarized installers, and the

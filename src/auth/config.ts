@@ -22,6 +22,8 @@ export interface OAuthProviderConfig {
   redirectPath: string;
   /** Extra query parameters on the authorization request (e.g. audience). */
   authParams: Record<string, string>;
+  /** Extra form fields on every token request (MCP sign-in sends the RFC 8707 `resource` here). */
+  tokenParams?: Record<string, string>;
   /** Where the model API lives; used when the custom model has no baseUrl. */
   apiBaseUrl?: string;
   /** How the access token is sent. Defaults: header "authorization", scheme "Bearer" (scheme "" sends the bare token). */

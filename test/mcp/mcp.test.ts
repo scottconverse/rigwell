@@ -78,7 +78,7 @@ test("http json, http sse, legacy sse, headers", async () => {
     expect(st.s.status).toBe("connected");
     expect(st.l.status).toBe("connected");
     expect(st.noauth.status).toBe("failed");
-    expect(st.noauth.error).toContain("authorization");
+    expect(st.noauth.error).toContain("Sign-in needed");
     expect((await mgr.callTool("j__echo", { text: "J" })).text).toBe("J");
     expect((await mgr.callTool("s__echo", { text: "S" })).text).toBe("S");
     expect((await mgr.callTool("l__echo", { text: "L" })).text).toBe("L");

@@ -1,4 +1,5 @@
 // One MCP client: initialize, tools/list, tools/call over a Connection.
+import { McpAuthRequiredError } from "./oauth.ts";
 import { createConnection, McpRpcError, type Connection } from "./transport.ts";
 import type { McpCallResult, McpServerConfig, McpToolDef } from "./types.ts";
 
@@ -50,6 +51,7 @@ export class McpClient {
     } catch (e) {
       const tail = this.conn.stderrTail?.();
       await this.conn.close().catch(() => {});
+      if (e instanceof McpAuthRequiredError) throw e; // the manager shows "sign-in needed" for it
       const msg = (e as Error).message;
       throw new McpRpcError(tail && !msg.includes(tail) ? `${msg}: ${tail}` : msg);
     }

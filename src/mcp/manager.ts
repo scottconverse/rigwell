@@ -1,6 +1,8 @@
 // MCP manager: parallel server startup, status tracking, tool naming, drop suppression (spec §5.7, §6.2).
 import { McpClient } from "./client.ts";
 import { fromAddParams, loadMcpConfig, removeUserServer, saveUserServer } from "./config.ts";
+import { authManager, type LoginStatus } from "../auth/oauth.ts";
+import { McpAuthRequiredError, mcpHasToken, mcpLoginStart, mcpLogout, oauthEnabled } from "./oauth.ts";
 import type {
   AddMcpServerParams, McpCallResult, McpServerConfig, McpServerStatusInfo, McpStatus, McpStatusSummary, McpToolDef, McpToolInfo,
 } from "./types.ts";
@@ -27,6 +29,12 @@ interface Entry {
   /** Bumped on remove/restart so stale async work is ignored. */
   epoch: number;
   reconnectTimer?: ReturnType<typeof setTimeout>;
+  /** The last connect failed with a 401: the user must sign in. */
+  needsAuth?: boolean;
+  /** WWW-Authenticate of that 401 (points discovery at the resource metadata). */
+  wwwAuthenticate?: string;
+  /** A sign-in token is stored (read once per connect, not per status call). */
+  hasToken?: boolean;
 }
 
 export interface McpManagerOptions {
@@ -91,17 +99,20 @@ export class McpManager {
   private async connect(e: Entry): Promise<void> {
     const epoch = e.epoch;
     const client = this.o.clientCtor ? this.o.clientCtor(e.cfg, this.o.cwd) : new McpClient(e.cfg, { cwd: this.o.cwd });
+    e.hasToken = oauthEnabled(e.cfg) ? mcpHasToken(e.cfg) : undefined;
     try {
       await client.connect(this.o.connectTimeoutMs ?? 30000);
       const defs = await client.listTools(this.o.connectTimeoutMs ?? 30000);
       if (e.epoch !== epoch) { void client.close(); return; }
-      e.client = client; e.defs = defs;
+      e.client = client; e.defs = defs; e.needsAuth = false; e.wwwAuthenticate = undefined;
       client.onClose = (reason) => this.onDrop(e, epoch, reason);
       this.set(e, "connected");
     } catch (err) {
       void client.close().catch(() => {});
       if (e.epoch !== epoch) return;
       e.defs = [];
+      e.needsAuth = err instanceof McpAuthRequiredError;
+      e.wwwAuthenticate = err instanceof McpAuthRequiredError ? err.wwwAuthenticate : undefined;
       this.set(e, "failed", (err as Error).message);
     }
   }
@@ -137,6 +148,7 @@ export class McpManager {
     };
     if (e.error) i.error = e.error;
     if (e.status === "connected") i.toolCount = e.defs.length;
+    if (oauthEnabled(e.cfg)) { i.requiresAuth = !!e.needsAuth; i.hasAuthTokens = !!e.hasToken; }
     return i;
   }
 
@@ -197,6 +209,26 @@ export class McpManager {
     const existed = removeUserServer(serverName);
     if (e) { await this.stopEntry(e); this.entries.delete(serverName); }
     return { success: existed || !!e };
+  }
+
+  // ---------------------------------------------------------------- OAuth sign-in (mcp_auth_start, mcp_auth_logout)
+  /** Start the browser sign-in for a server. When it completes, the server reconnects with the new token. */
+  async login(serverName: string): Promise<LoginStatus> {
+    const e = this.entries.get(serverName);
+    if (!e) throw new Error(`No MCP server named ${JSON.stringify(serverName)}`);
+    const st = await mcpLoginStart(e.cfg, { wwwAuthenticate: e.wwwAuthenticate });
+    void authManager().waitLogin(st.loginId).then((end) => {
+      if (end.state === "complete" && this.entries.get(serverName) === e) void this.startOne(e.cfg);
+    }).catch(() => {});
+    return st;
+  }
+
+  /** Remove the stored sign-in and reconnect (the server then reports that sign-in is needed). */
+  async logout(serverName: string): Promise<{ success: boolean }> {
+    const e = this.entries.get(serverName);
+    const removed = mcpLogout(serverName);
+    if (e && !e.cfg.disabled) await this.startOne(e.cfg);
+    return { success: removed };
   }
 
   async shutdown(): Promise<void> {
