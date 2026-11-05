@@ -13,7 +13,7 @@ import { downloadAndVerify, installAppImage, UpdateRefused } from "./update-veri
 import { dictationStatus, DictationError, transcribe as transcribeSpeech } from "./dictation.ts";
 import { readOrgManaged } from "./org-managed.ts";
 import { trayModel, type TrayModel } from "./tray.ts";
-import { importFromProfile, listChromeProfiles, listCookieDomains, toElectronCookie, userDataDirs, type ChromeProfile } from "../../src/sidepane/chrome-cookies.ts";
+import { cookieImportBlocked, importFromProfile, listChromeProfiles, listCookieDomains, toElectronCookie, userDataDirs, type ChromeProfile } from "../../src/sidepane/chrome-cookies.ts";
 import { startCdpProxy, type CdpProxy, type PaneHost, type PaneTarget } from "./cdp-proxy.ts";
 import { browserPermission, buildCsp, isAllowedExternal, isTrustedSender, parseDeepLink } from "./security.ts";
 import { loadDesktopSettings, updateDesktopSettings, type DesktopSettings } from "./settings.ts";
@@ -360,6 +360,7 @@ function registerIpc() {
     if (!p) throw new Error("That browser profile was not found");
     return p;
   };
+  ipcMain.handle("cookies:blocked", guard(() => cookieImportBlocked()));
   ipcMain.handle("cookies:profiles", guard(() => listChromeProfiles(chromeRoots()).map((p) => ({ key: `${p.browser}:${p.dir}`, browser: p.browser, name: p.name, dir: p.dir }))));
   ipcMain.handle("cookies:domains", guard((_e, key: unknown) => listCookieDomains(chromeProfile(key).cookiesFile)));
   // Explicit user action only: the page calls this from the Import button. Only the chosen domains are read, values are never logged.

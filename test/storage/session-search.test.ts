@@ -80,6 +80,8 @@ test("lexical search skips sessions by bloom filter, then scans spans; prefix an
   expect(hits.map((h) => h.sessionId)).toEqual(["a1"]);
   expect(hits[0]).toMatchObject({ spanIndex: 0, firstEventId: "a1-m0" });
   expect(hits[0]!.snippet).toContain("kubernetes");
+  // An untitled session (for example one started by `rigwell exec`) shows its first message, as the picker does.
+  expect(hits[0]!.title).toBe("how do I configure kubernetes ingress");
   expect(lexicalSearch(db, "kuber").map((h) => h.sessionId)).toEqual(["a1"]); // prefix
   expect(lexicalSearch(db, "kubernetes autumn")).toEqual([]); // words in different sessions
   expect(lexicalSearch(db, "nothingmatches")).toEqual([]);
@@ -185,6 +187,8 @@ test("rigwell sessions search CLI", async () => {
   const r = run("command", "line");
   expect(r.exitCode).toBe(0);
   expect(r.stdout.toString()).toContain("c1");
+  expect(r.stdout.toString()).toContain("searching with the command line tool works"); // not "New Session"
+  expect(r.stdout.toString()).not.toContain("New Session");
   const j = JSON.parse(run("tool", "--json", "--semantic").stdout.toString());
   expect(j[0].sessionId).toBe("c1");
   expect(run("zzzzz").stdout.toString()).toContain("No matches");

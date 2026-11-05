@@ -68,6 +68,7 @@ const api = {
     transcribe: (audio: Uint8Array): Promise<{ text?: string; error?: string; code?: string }> => ipcRenderer.invoke("dictation:transcribe", audio),
   },
   cookies: {
+    blocked: (): Promise<string | null> => ipcRenderer.invoke("cookies:blocked"),
     profiles: (): Promise<{ key: string; browser: string; name: string; dir: string }[]> => ipcRenderer.invoke("cookies:profiles"),
     domains: (key: string): Promise<{ domain: string; count: number }[]> => ipcRenderer.invoke("cookies:domains", key),
     import: (key: string, domains: string[]): Promise<{ imported: number; skipped: number; keySource: string }> => ipcRenderer.invoke("cookies:import", key, domains),

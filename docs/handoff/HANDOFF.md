@@ -64,11 +64,11 @@ None assigned. Ask the owner. The spec is built; later phases (hosted parts, Wor
    (platforms pull_request run 41403041082, commit a002f25; the push run of the same commit passed). Not reproduced,
    root cause not found. The file opens no watcher or database; the /statusline test runs a shell with cwd in that folder.
 2. On a Windows PC without the symlink right, tests that create symlinks fail with `EPERM` (decision 319). CI has the right.
-3. Found in the Windows walkthrough, not fixed (outside the agreed scope, owner to decide):
-   - "Create PR" on a worktree with only uncommitted edits makes a PR from the "init" commit with no change in it.
-   - The cookie import dialog on Windows says only after the click that import is not supported (decision 294).
-   - `rigwell sessions search` shows sessions made by `exec` with the title "New Session".
-   - `rigwell exec` prints no line break before a "[tool]" line.
+3. Found in the Windows walkthrough. Fixed after v0.1.0 (owner approved, Nov 5 2026):
+   - "Create PR" with no new commits is refused before it asks or pushes (decision 342).
+   - The cookie import dialog on Windows says "not supported" when it opens (decision 343).
+   - `rigwell sessions search` shows the first message for an untitled session (decision 344).
+   - `rigwell exec` starts a "[tool]" line on a new line (decision 345).
 
 ## Waiting on the owner (do not decide for them)
 - (Resolved) `create_pr` and PR status (§18.6): approved and built (decisions 321 to 327).

@@ -150,6 +150,10 @@ async function execPrompt(a: ExecArgs) {
   const finished = new Promise<string>((r) => (turnDone = r));
   let lastMessageId = "";
   let lastReason = "";
+  // True while the last text on stdout did not end a line. A [tool] or error line then starts on a new line,
+  // because stdout and stderr usually share one terminal.
+  let midLine = false;
+  const endLine = () => { if (midLine) { process.stdout.write("\n"); midLine = false; } };
   const opts: ConnectionOptions = {
     canPrompt: false, runtimeSettingsPath: a.settings, log,
     forced: { autonomyLevel: a.auto ?? "off", skipPermissions: a.skip || undefined, modelId: a.model },
@@ -160,14 +164,17 @@ async function execPrompt(a: ExecArgs) {
     const n = m.params?.notification;
     if (!n) return;
     if (n.type === "assistant_text_delta") {
-      if (lastMessageId && n.messageId !== lastMessageId) process.stdout.write("\n");
+      if (lastMessageId && n.messageId !== lastMessageId) endLine();
       lastMessageId = n.messageId;
       process.stdout.write(n.textDelta);
+      if (n.textDelta) midLine = !n.textDelta.endsWith("\n");
     } else if (n.type === "tool_call" && n.toolUse?.input && Object.keys(n.toolUse.input).length) {
       // shown once per call when complete input arrives in the final message
     } else if (n.type === "tool_result") {
+      endLine();
       log(`[tool] ${n.isError ? "error" : "ok"} ${n.toolUseId}`);
     } else if (n.type === "error") {
+      endLine();
       log(`rigwell: ${n.message}`);
     } else if (n.type === "agent_turn_completed") {
       lastReason = n.reason;

@@ -88,6 +88,19 @@ export async function planPr(cwd: string, req: { title?: string; body?: string; 
     base = head ? head.slice(remote.length + 1) : fallbackBase && fallbackBase !== branch ? fallbackBase : "main";
   }
   if (base === branch) throw new Error(`The branch ${branch} is the base branch; a pull request needs a different base`);
+  // A pull request holds only commits. Refuse a branch with no commits past the base, before anything is asked or pushed.
+  const baseRef = [`${remote}/${base}`, base];
+  for (const ref of baseRef) {
+    if ((await git(cwd, ["rev-parse", "--verify", "-q", `${ref}^{commit}`])).code !== 0) continue;
+    const ahead = Number((await git(cwd, ["rev-list", "--count", `${ref}..HEAD`])).stdout.trim());
+    if (ahead === 0) {
+      const dirty = (await git(cwd, ["status", "--porcelain"])).stdout.trim() !== "";
+      throw new Error(dirty
+        ? `The branch ${branch} has edits that are not committed. Commit them first; a pull request holds only commits. Nothing was pushed.`
+        : `The branch ${branch} has no commits that are not on ${base}. Nothing was pushed.`);
+    }
+    break;
+  }
   const title = req.title?.trim() || (await git(cwd, ["log", "-1", "--format=%s"])).stdout.trim() || branch;
   let body = req.body;
   if (body === undefined) {
