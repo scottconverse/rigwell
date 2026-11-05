@@ -293,3 +293,10 @@ export function queryPicker(db: Database, o: { cwd?: string; includeArchived?: b
     pinned: r.pinned === 1, archivedAt: r.archived_at ?? null, tags: JSON.parse(r.tags || "{}"), messagesCount: r.messages_count ?? 0,
   }));
 }
+
+/** An untitled session shows the start of its first message (the picker and search both use this). */
+export function displayTitle(title: string, first: string): string {
+  if (title !== "New Session" || !first.trim()) return title;
+  const one = first.trim().replace(/\s+/g, " ");
+  return one.length > 80 ? one.slice(0, 79) + "..." : one;
+}

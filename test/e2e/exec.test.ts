@@ -1,7 +1,7 @@
 // Phase 1 done-when test: a scripted prompt edits a repo end to end via `rigwell exec`,
 // and the same task passes on both providers (against local fake servers).
 import { afterAll, describe, expect, test } from "bun:test";
-import { readFileSync, readdirSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
@@ -96,5 +96,22 @@ describe.each(PROVIDERS)("exec end to end: $label", ({ provider, start, modelId,
     expect(code).toBe(0);
     expect(out).toContain("Fixed the typo in greet.js");
     expect(execFileSync("node", ["check.js"], { cwd: repo, encoding: "utf8" })).toContain("PASS");
+  }, 30000);
+
+  test("prompt mode: a [tool] line starts on its own line when stdout and stderr share one terminal", async () => {
+    const server = await start(fixBugScript());
+    servers.push(server);
+    const repo = makeRepo();
+    const home = makeHome([{ provider, url: server.url, displayName: name, extra }]);
+    const outFile = join(repo, "..", `exec-out-${Date.now()}.txt`);
+    const fd = openSync(outFile, "w");
+    try {
+      const p = Bun.spawn(["bun", CLI, "exec", "--auto", "low", "check.js fails. Fix the bug."], { cwd: repo, env: { ...process.env, RIGWELL_HOME: home, ...(env ?? {}) }, stdout: fd, stderr: fd });
+      expect(await p.exited).toBe(0);
+    } finally { closeSync(fd); }
+    const lines = readFileSync(outFile, "utf8").split(/\r?\n/);
+    expect(lines).toContain("I'll look at the code.");
+    expect(lines.some((l) => l.startsWith("[tool] ok "))).toBe(true);
+    expect(lines.filter((l) => l.includes("[tool]")).every((l) => l.startsWith("[tool]"))).toBe(true);
   }, 30000);
 });

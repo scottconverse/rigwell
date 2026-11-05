@@ -64,6 +64,11 @@ export function deriveKey(password: string, platform: string = process.platform)
 type Exec = (file: string, args: string[]) => string;
 const defaultExec: Exec = (file, args) => execFileSync(file, args, { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "ignore"] });
 
+/** Why cookie import cannot run on this platform, or null when it can. Windows Chrome protects cookies with DPAPI (decision 294). */
+export function cookieImportBlocked(platform: string = process.platform): string | null {
+  return platform === "win32" ? "Cookie import is not supported on Windows (cookies are protected with DPAPI)." : null;
+}
+
 /** The Safe Storage password. Linux: libsecret through secret-tool, else the fixed fallback. macOS: Keychain (may show a system prompt). */
 export function safeStoragePassword(browser: Browser, platform: string = process.platform, exec: Exec = defaultExec): { password: string; source: "keychain" | "libsecret" | "peanuts" } {
   if (platform === "darwin") {
@@ -73,7 +78,8 @@ export function safeStoragePassword(browser: Browser, platform: string = process
     if (!out) throw new Error("The Keychain item for Chrome Safe Storage was not found or access was denied.");
     return { password: out, source: "keychain" };
   }
-  if (platform === "win32") throw new Error("Cookie import is not supported on Windows (cookies are protected with DPAPI).");
+  const blocked = cookieImportBlocked(platform);
+  if (blocked) throw new Error(blocked);
   try {
     const out = exec("secret-tool", ["lookup", "application", browser === "chromium" ? "chromium" : "chrome"]).replace(/\r?\n$/, "");
     if (out) return { password: out, source: "libsecret" };

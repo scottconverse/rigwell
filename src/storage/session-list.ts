@@ -3,7 +3,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { listSessions } from "./transcript.ts";
 import { readSessionSettings } from "./session-settings.ts";
-import { indexDbPath, openSessionIndex, queryPicker, refreshIndex } from "./session-index.ts";
+import { displayTitle, indexDbPath, openSessionIndex, queryPicker, refreshIndex } from "./session-index.ts";
 import { projectSlug } from "./paths.ts";
 import type { Database } from "bun:sqlite";
 import { type SearchHit, searchSessionIndex } from "./session-search.ts";
@@ -44,12 +44,6 @@ function firstVisibleUserMessage(file: string, mtimeMs: number): { value: boolea
   return { value, first };
 }
 
-/** An untitled session shows the start of its first message. */
-function displayTitle(title: string, first: string): string {
-  if (title !== "New Session" || !first.trim()) return title;
-  const one = first.trim().replace(/\s+/g, " ");
-  return one.length > 80 ? one.slice(0, 79) + "..." : one;
-}
 
 const indexes = new Map<string, Database>();
 

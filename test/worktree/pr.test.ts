@@ -158,6 +158,24 @@ describe("create_pr", () => {
     }
   });
 
+  test("a branch with only uncommitted edits is refused before asking; nothing pushed", async () => {
+    const { repo, bare } = featureRepo();
+    sh(repo, "checkout", "-q", "-b", "rigwell/empty", "main");
+    writeFileSync(join(repo, "a.txt"), "edited, not committed\n");
+    let asked = false;
+    const ask = async () => { asked = true; return { selectedOption: "proceed_once" }; };
+    await expect(createPr(repo, {}, ask, { deps: { gh: ghCmd } })).rejects.toThrow(/not committed\. Commit them first/);
+    expect(asked).toBe(false);
+    expect(remoteHas(bare, "rigwell/empty")).toBe(false);
+    expect(ghCalls()).toEqual([]);
+  });
+
+  test("a clean branch with no new commits is refused", async () => {
+    const { repo } = featureRepo();
+    sh(repo, "checkout", "-q", "-b", "rigwell/nothing", "main");
+    await expect(createPr(repo, {}, yes, { deps: { gh: ghCmd } })).rejects.toThrow(/no commits that are not on main/);
+  });
+
   test("a detached HEAD is refused", async () => {
     const { repo } = featureRepo();
     sh(repo, "checkout", "-q", "--detach");
