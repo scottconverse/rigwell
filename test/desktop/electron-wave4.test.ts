@@ -8,6 +8,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import { startFakeOAuth, type FakeOAuth } from "../fakes/fake-oauth.ts";
+import { startFakeMcpOAuth } from "../fakes/fake-mcp-oauth.ts";
 import type { FakeServer, FakeTurn } from "../fakes/types.ts";
 import { CLI, makeHome, makeRepo } from "../e2e/helpers.ts";
 import { deriveKey } from "../../src/sidepane/chrome-cookies.ts";
@@ -23,7 +24,7 @@ const textOf = (m: any) => (typeof m.content === "string" ? m.content : (m.conte
 const SECRET_VALUE = "sk-test-0123456789abcdef";
 
 maybe("desktop app: wave 4 features", () => {
-  let fake: FakeServer, idp: FakeOAuth, xvfb: ChildProcess | undefined, app: any, page: any;
+  let fake: FakeServer, idp: FakeOAuth, mcpIdp: ReturnType<typeof startFakeMcpOAuth>, xvfb: ChildProcess | undefined, app: any, page: any;
   let repo: string, home: string, display: string, chromeDir: string, sttDir: string, sttProgram: string;
   let stderr = "";
 
@@ -62,6 +63,9 @@ maybe("desktop app: wave 4 features", () => {
     const settings = JSON.parse(readFileSync(settingsFile, "utf8"));
     settings.oauthProviders = { acme: { clientId: "own-client", authorizationEndpoint: `${idp.url}/authorize`, tokenEndpoint: `${idp.url}/token`, deviceAuthorizationEndpoint: `${idp.url}/device`, scopes: ["models.read"] } };
     writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
+    // An http MCP server that needs OAuth sign-in (decision 347: the Sign in button).
+    mcpIdp = startFakeMcpOAuth();
+    writeFileSync(join(home, "mcp.json"), JSON.stringify({ mcpServers: { acmemcp: { type: "http", url: mcpIdp.url } } }));
 
     // A fake speech-to-text program and a synthetic Chrome profile.
     sttDir = join(home, "stt");
@@ -100,7 +104,7 @@ maybe("desktop app: wave 4 features", () => {
   afterAll(async () => {
     await app?.close().catch(() => {});
     xvfb?.kill();
-    fake?.stop(); idp?.stop();
+    fake?.stop(); idp?.stop(); mcpIdp?.stop();
   });
 
   test("dictation: the button explains how to enable it, then a fake backend turns a recording into text", async () => {
@@ -183,6 +187,32 @@ maybe("desktop app: wave 4 features", () => {
     await why("browser flow done", () => page.locator('tr[data-provider="acme"] [data-testid="provider-status"]', { hasText: "Signed in" }).waitFor({ timeout: 40_000 }));
     await row.getByRole("button", { name: "Sign out of acme" }).click();
     await page.locator('tr[data-provider="acme"] [data-testid="provider-status"]', { hasText: "Signed out" }).waitFor({ timeout: 20_000 });
+  }, 150_000);
+
+  test("connectors: Sign in to an MCP server that needs OAuth, then Sign out", async () => {
+    await newSession();
+    await send("hello connectors");
+    await why("reply", () => page.getByText("hi there").first().waitFor({ timeout: 30_000 }));
+    await page.getByRole("button", { name: "Connectors", exact: true }).click();
+    const dlg = page.getByRole("dialog", { name: "Connectors" });
+    const row = dlg.locator("li.srv", { hasText: "acmemcp" });
+    await why("needs sign-in", () => row.getByText("needs sign-in").waitFor({ timeout: 30_000 }));
+    const before = (await hook<string[]>("opened")).length;
+    await row.getByRole("button", { name: "Sign in to acmemcp" }).click();
+    await why("mcp login panel", () => dlg.locator('[data-testid="mcp-login-url"]').waitFor({ timeout: 20_000 }));
+    await why("opened mcp url", async () => { for (let i = 0; i < 50; i++) { if ((await hook<string[]>("opened")).length > before) return; await sleep(100); } throw new Error("no URL was opened"); });
+    const url = (await hook<string[]>("opened")).at(-1)!;
+    expect(url).toStartWith(`${mcpIdp.origin}/authorize`);
+    const r1 = await fetch(url, { redirect: "manual" }); // plays the browser: authorize, then the loopback callback
+    expect(r1.status).toBe(302);
+    expect((await fetch(r1.headers.get("location")!)).status).toBe(200);
+    await why("connected", () => row.getByText(/connected/).waitFor({ timeout: 40_000 }));
+    await dlg.locator('[data-testid="mcp-login-panel"]').waitFor({ state: "detached", timeout: 20_000 });
+    expect(await row.getByRole("button", { name: "Sign in to acmemcp" }).count()).toBe(0);
+    expect(await page.locator("body").innerText()).not.toMatch(/mcp-access-|mcp-refresh-/); // no token reaches the page
+    await row.getByRole("button", { name: "Sign out of acmemcp" }).click();
+    await why("signed out", () => row.getByRole("button", { name: "Sign in to acmemcp" }).waitFor({ timeout: 20_000 }));
+    await dlg.getByRole("button", { name: "Close" }).click();
   }, 150_000);
 
   test("automations: create from a template, view the overview page, start guided setup", async () => {
