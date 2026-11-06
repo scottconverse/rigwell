@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { DaemonBroker } from "../../desktop/main/broker.ts";
 import { readOrgManaged } from "../../desktop/main/org-managed.ts";
 import { loadDesktopSettings, updateDesktopSettings } from "../../desktop/main/settings.ts";
-import { DEFAULT_ENV_ROW, defaultMode, deleteWarning, filterDomains, importSummary, pollLogin, providerStatus, validateSecret, varsToParam, type LoginStatus } from "../../desktop/renderer/lib/access.ts";
+import { DEFAULT_ENV_ROW, defaultMode, deleteWarning, filterDomains, importSummary, mcpAuthButtons, pollLogin, providerStatus, validateSecret, varsToParam, type LoginStatus } from "../../desktop/renderer/lib/access.ts";
 import { isHandoffOption, nextHandoff, specAnswer, specOptions } from "../../desktop/renderer/lib/handoff.ts";
 import { groupTemplates, previewInstructions, setupCard, templateCreate, visualStale, type TemplateRow } from "../../desktop/renderer/lib/templates.ts";
 import { downmix, encodeWav, resample, toSpeechWav } from "../../desktop/renderer/lib/wav.ts";
@@ -91,6 +91,12 @@ describe("secrets, environments and sign-in", () => {
     expect((await pollLogin(async () => ({ ...base, state: "failed", error: "denied" }), { sleep })).error).toBe("denied");
     expect((await pollLogin(async () => base, { sleep, cancelled: () => true })).state).toBe("cancelled");
     expect((await pollLogin(async () => base, { sleep, intervalMs: 10, maxMs: 30 })).error).toMatch(/Timed out/);
+  });
+  test("mcpAuthButtons: Sign in when the server needs sign-in, Sign out when a token is stored", () => {
+    expect(mcpAuthButtons({})).toEqual({ signIn: false, signOut: false }); // stdio, or OAuth off
+    expect(mcpAuthButtons({ requiresAuth: true, hasAuthTokens: false })).toEqual({ signIn: true, signOut: false });
+    expect(mcpAuthButtons({ requiresAuth: false, hasAuthTokens: true })).toEqual({ signIn: false, signOut: true });
+    expect(mcpAuthButtons({ requiresAuth: true, hasAuthTokens: true })).toEqual({ signIn: true, signOut: true }); // the sign-in expired
   });
   test("cookie site filter and summary", () => {
     const l = [{ domain: "a.example.com", count: 1 }, { domain: "b.org", count: 2 }];

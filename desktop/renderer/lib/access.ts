@@ -71,6 +71,9 @@ export async function pollLogin(get: () => Promise<LoginStatus>, o: { sleep?: (m
   }
 }
 
+/** Which sign-in buttons an MCP server row shows (from list_mcp_servers). */
+export const mcpAuthButtons = (s: { requiresAuth?: boolean; hasAuthTokens?: boolean }) => ({ signIn: !!s.requiresAuth, signOut: !!s.hasAuthTokens });
+
 // ---- Chrome cookie import
 
 export function filterDomains(list: { domain: string; count: number }[], q: string): { domain: string; count: number }[] {

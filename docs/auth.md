@@ -132,8 +132,13 @@ Options in the server's `mcp.json` entry:
 
 Protocol methods: `mcp_auth_start { serverName }` returns the same login status as `auth_login_start` (open `url`,
 then poll `auth_login_status { loginId }`); `mcp_auth_logout { serverName }` returns `{ success }`. `list_mcp_servers`
-shows `requiresAuth` and `hasAuthTokens` for servers with OAuth on. No result contains a token. The desktop app and the
-TUI have no sign-in button yet: their MCP lists show the "Sign-in needed" error, and you run the terminal command.
+shows `requiresAuth` and `hasAuthTokens` for servers with OAuth on. No result contains a token.
+
+Desktop app: the Connectors dialog (the Connectors chip in the message box) and Settings > Connectors show a "Sign in"
+button for a server that needs sign-in, and "Sign out" for a server with a stored token. Sign in opens the sign-in page
+in your browser and waits. From the Connectors dialog, the open session connects the server when you finish. From
+Settings > Connectors, other open sessions connect it at their next start. The TUI has no button: run the terminal
+command (decision 347).
 
 ## Secrets
 

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { bridge } from "../lib/rpc.ts";
 import { app, useStore } from "../lib/app-model.ts";
 import { trustAsks, type SessionController } from "../lib/session.ts";
+import { mcpAuthButtons, pollLogin, type LoginStatus } from "../lib/access.ts";
 
 export function Dialog({ title, onClose, children, wide }: { title: string; onClose(): void; children: React.ReactNode; wide?: boolean }) {
   useEffect(() => {
@@ -61,7 +62,7 @@ export function ConfirmDialog({ title, body, action, onConfirm, onCancel }: { ti
 
 // ------------------------------------------------------------------ Connectors
 
-export interface McpServer { name: string; status: string; serverType: string; source?: string; displayName?: string; error?: string; toolCount?: number; requiresAuth?: boolean }
+export interface McpServer { name: string; status: string; serverType: string; source?: string; displayName?: string; error?: string; toolCount?: number; requiresAuth?: boolean; hasAuthTokens?: boolean }
 
 /** MCP server list, refresh, add and remove over any `request` function (a session, or a temporary connection). */
 export function useMcp(request: ((method: string, params?: Record<string, unknown>) => Promise<any>) | undefined) {
@@ -75,11 +76,39 @@ export function useMcp(request: ((method: string, params?: Record<string, unknow
   }, [request]);
   useEffect(() => { void refresh(); }, [refresh]);
   const run = async (fn: () => Promise<unknown>) => { setBusy(true); try { await fn(); setError(""); } catch (e) { setError((e as Error).message); } finally { setBusy(false); await refresh(); } };
+  const [login, setLogin] = useState<{ name: string; status: LoginStatus } | null>(null);
+  /** Browser sign-in (docs/auth.md): the daemon gives a URL, the system browser opens it, the page polls until done. */
+  const signIn = (name: string) => run(async () => {
+    const first: LoginStatus = await request!("mcp_auth_start", { serverName: name });
+    setLogin({ name, status: first });
+    try {
+      if (first.url) void bridge().shell.openExternal(first.url).catch(() => {});
+      const done = await pollLogin(() => request!("auth_login_status", { loginId: first.loginId }), { cancelled: () => mcpCancelled.has(first.loginId) });
+      if (done.state === "failed") throw new Error(done.error ?? "Sign-in failed.");
+    } finally { setLogin(null); }
+  });
   return {
-    servers, summary, error, busy, refresh,
+    servers, summary, error, busy, refresh, login,
     add: (p: Record<string, unknown>) => run(() => request!("add_mcp_server", p)),
     remove: (name: string) => run(() => request!("remove_mcp_server", { serverName: name, settingsLevel: "user" })),
+    signIn,
+    signOut: (name: string) => run(() => request!("mcp_auth_logout", { serverName: name })),
+    stopWaiting: () => { if (login) mcpCancelled.add(login.status.loginId); },
   };
+}
+const mcpCancelled = new Set<string>();
+
+/** Shown while an MCP sign-in waits for the browser. */
+export function McpLoginPanel({ login, onCancel }: { login: { name: string; status: LoginStatus } | null; onCancel(): void }) {
+  if (!login) return null;
+  const u = login.status.url;
+  return (
+    <div className="banner" role="status" aria-label="Sign-in in progress" data-testid="mcp-login-panel">
+      <div>Signing in to <b>{login.name}</b>...</div>
+      <div className="small">A browser window should open. If it did not, <a href={u} data-testid="mcp-login-url" onClick={(e) => { e.preventDefault(); if (u) void bridge().shell.openExternal(u); }}>open the sign-in page</a>.</div>
+      <button onClick={onCancel}>Stop waiting</button>
+    </div>
+  );
 }
 
 export function AddServerForm({ onAdd, busy }: { onAdd(p: Record<string, unknown>): Promise<void>; busy: boolean }) {
@@ -107,7 +136,7 @@ export function AddServerForm({ onAdd, busy }: { onAdd(p: Record<string, unknown
   );
 }
 
-export function ServerList({ servers, onRemove, busy }: { servers: McpServer[]; onRemove(n: string): void; busy: boolean }) {
+export function ServerList({ servers, onRemove, onSignIn, onSignOut, busy }: { servers: McpServer[]; onRemove(n: string): void; onSignIn?(n: string): void; onSignOut?(n: string): void; busy: boolean }) {
   if (!servers.length) return <div className="muted pad">No MCP servers yet.</div>;
   return (
     <ul className="plain-list" aria-label="MCP servers">
@@ -118,6 +147,8 @@ export function ServerList({ servers, onRemove, busy }: { servers: McpServer[]; 
           <span className="muted small">{s.serverType} / {s.status}{s.toolCount != null ? ` / ${s.toolCount} tools` : ""}{s.requiresAuth ? " / needs sign-in" : ""}</span>
           {s.error && <span className="error-text small">{s.error}</span>}
           <span className="spacer" />
+          {onSignIn && mcpAuthButtons(s).signIn && <button className="primary" disabled={busy} aria-label={`Sign in to ${s.name}`} onClick={() => onSignIn(s.name)}>Sign in</button>}
+          {onSignOut && mcpAuthButtons(s).signOut && <button disabled={busy} aria-label={`Sign out of ${s.name}`} onClick={() => onSignOut(s.name)}>Sign out</button>}
           {s.source === "user" || s.source === undefined ? <button disabled={busy} aria-label={`Remove ${s.name}`} onClick={() => onRemove(s.name)}>Remove</button> : <span className="muted small">{s.source}</span>}
         </li>
       ))}
@@ -139,7 +170,8 @@ export function ConnectorsDialog({ ctl, onClose }: { ctl: SessionController; onC
       </div>
       <h4>MCP Servers ({m.servers.length})</h4>
       {m.summary?.configError && <div className="banner warn" role="status">{m.summary.configError.path}: {m.summary.configError.message}</div>}
-      <ServerList servers={shown} busy={m.busy} onRemove={(n) => void m.remove(n)} />
+      <ServerList servers={shown} busy={m.busy} onRemove={(n) => void m.remove(n)} onSignIn={(n) => void m.signIn(n)} onSignOut={(n) => void m.signOut(n)} />
+      <McpLoginPanel login={m.login} onCancel={m.stopWaiting} />
       <AddServerForm busy={m.busy} onAdd={m.add} />
       {m.error && <div className="banner error" role="alert">{m.error}</div>}
       <div className="dialog-actions"><button onClick={onClose}>Close</button></div>
