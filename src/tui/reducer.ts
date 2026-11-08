@@ -4,6 +4,7 @@ import { expandEntry, parseLoop } from "./customcmd.ts";
 import { plainStyler, transcriptLines, transcriptOpts } from "./transcript.ts";
 import { diffBody } from "./diff.ts";
 import { managedLabel } from "../storage/org.ts";
+import { familyTree, groupSessions, sessionLabel } from "./sessiontree.ts";
 import { formatContext, type ContextStats } from "./context.ts";
 import { DEFAULT_DISPLAY, OTHER_LABEL, OTHER_VALUE, type DisplaySettings, type Effect, type Item, type Key, type Panel, type Step, type TuiEvent, type TuiState } from "./types.ts";
 
@@ -527,12 +528,13 @@ function runCommand(s0: TuiState, line: string): Step {
   switch (cmd.name) {
     case "help": return overlay(s, "Help", [
       "Keys", ...KEY_HELP.map(([k, d]) => `  ${k.padEnd(26)} ${d}`), "", "Autonomy levels (Ctrl+L)", ...AUTONOMY_HELP.map(([k, d]) => `  ${k.padEnd(8)} ${d}`),
-      "", "Modes: auto, spec (Shift+Tab). In spec mode the agent researches and plans first.", "", "Commands", ...COMMANDS.map((c) => `  /${c.name}${c.args ? " " + c.args : ""}`.padEnd(30) + c.desc),
+      "", "Modes: auto, spec (Shift+Tab). In spec mode the agent researches and plans first.", "", "Commands", ...COMMANDS.map((c) => `  /${c.name}${c.args ? " " + c.args : ""}`.padEnd(30) + c.desc + (c.aliases?.length ? ` (alias: ${c.aliases.map((a) => "/" + a).join(", ")})` : "")),
     ]);
     case "new": return guard([{ type: "new_session" }], "starts a new session");
     case "sessions":
       if (args) return guard([{ type: "resume", sessionId: args }], `resumes ${args}`);
       return { state: s, effects: [{ type: "list_sessions" }] };
+    case "tree": return guard([{ type: "list_sessions", tree: true }], "shows the session tree");
     case "model": {
       if (!s.models.length) return { state: { ...s, items: [...s.items, info("No models are configured.", "error")] }, effects: [] };
       const panel: Panel = {
@@ -631,6 +633,11 @@ function submit(s0: TuiState, queueOnly: boolean): Step {
   const text = raw.trim();
   if (!text) return { state: s0, effects: [] };
   const cleared: TuiState = { ...remember(s0, raw), input: { text: "", cursor: 0 }, menuDismissed: false, atMenu: null, hint: undefined };
+  if (s0.starting) {
+    // Typeahead during startup: keep the message and send it once the session is ready (see session_ready).
+    const queued = s0.shellMode ? "!" + text : text;
+    return { state: { ...cleared, shellMode: false, hint: "Will send when ready", pending: { ...cleared.pending, queue: [...cleared.pending.queue, queued] } }, effects: [] };
+  }
   if (s0.shellMode) return { state: { ...cleared, shellMode: false, items: [...cleared.items, { kind: "user", text: "! " + text }] }, effects: [{ type: "shell", command: text }] };
   if (text.startsWith("/")) return runCommand(cleared, text);
   return sendText(cleared, text, undefined, queueOnly);
@@ -854,6 +861,22 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
         ...(r.pendingAskUserRequests ?? []).filter((x: any) => typeof x?.requestId === "string").map((x: any) => askPanel(x.requestId, x)),
       ];
       const busy = r.isAgentLoopInProgress === true || reshown.length > 0;
+      if (s.starting) {
+        // Text typed and queued while starting: keep the half-typed input and send the queued messages now.
+        const queued = s.pending.queue;
+        const typed = s.input;
+        let cur: TuiState = {
+          ...base, starting: false, hint: undefined, items: messagesToItems(r.session?.messages ?? []), tokenUsage: r.tokenUsage ?? zeroUsage(), contextUsed: 0,
+          running: busy, runStartedAt: busy ? s.now : undefined, working: reshown.length ? "waiting_for_tool_confirmation" : busy ? (r.workingState ?? "streaming_assistant_message") : "idle",
+          pending: { steer: [], queue: [] }, panels: reshown, overlay: null, turns: 0, atMenu: null, scroll: 0,
+        };
+        const effects: Effect[] = [{ type: "fetch_context", show: false }, { type: "status_line" }, ...(reshown.length ? [{ type: "attention" as const, kind: "awaiting" as const }] : [])];
+        for (const q of queued) {
+          const step = q.startsWith("!") ? submit({ ...cur, input: { text: q.slice(1), cursor: q.length - 1 }, shellMode: true }, false) : submit({ ...cur, input: { text: q, cursor: q.length } }, false);
+          cur = step.state; effects.push(...step.effects);
+        }
+        return { state: { ...cur, input: typed }, effects };
+      }
       return {
         state: {
           ...base, items: messagesToItems(r.session?.messages ?? []), tokenUsage: r.tokenUsage ?? zeroUsage(), contextUsed: 0,
@@ -888,9 +911,11 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
     case "info": return { state: { ...s, items: [...s.items, info(e.text, e.level ?? "info")] }, effects: [] };
     case "sessions": {
       if (!e.sessions.length) return { state: { ...s, items: [...s.items, info("No saved sessions in this folder.")] }, effects: [] };
+      const rows = e.tree ? familyTree(e.sessions.map((x) => ({ ...x })), s.sessionId) : groupSessions(e.sessions.map((x) => ({ ...x })));
+      if (!rows.length) return { state: { ...s, items: [...s.items, info("This session is not saved yet, so it has no tree.")] }, effects: [] };
       const panel: Panel = {
-        id: "resume", kind: "select", action: { type: "resume" }, title: "Resume a session", body: [], selected: 0, checked: [],
-        options: e.sessions.slice(0, 20).map((x) => ({ label: `${x.id.slice(0, 8)}  ${x.pinned ? "* " : ""}${x.title ?? "(untitled)"}${x.updatedAt ? "  " + x.updatedAt.slice(0, 16).replace("T", " ") : ""}`, value: x.id })),
+        id: "resume", kind: "select", action: { type: "resume" }, title: e.tree ? "Session tree" : "Resume a session", body: [], selected: Math.max(0, rows.findIndex((r) => r.row.id === s.sessionId && e.tree)), checked: [],
+        options: rows.slice(0, 20).map((r) => ({ label: sessionLabel(r, e.tree ? s.sessionId : undefined), value: r.row.id })),
       };
       return { state: { ...s, panels: [...s.panels, panel] }, effects: [] };
     }

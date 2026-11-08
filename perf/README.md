@@ -32,3 +32,11 @@ The in-process p95 is a fraction of a millisecond, so the +10 ms slack is what k
 - `bun perf/gate.ts --results file.json` gate saved results (used by `test/perf/gate.test.ts`).
 - Per-session memory is the RSS delta of a daemon over 10 extra `initialize_session` connections (idle sessions, no turns).
 - Not measured: "read only the newest part of session history" (no code path reads history on the hot path yet) and auth checks (there are none).
+
+## Startup with many tools and many models
+
+`bun perf/bench-startup.ts [--quick] [--json]` starts an in-process session with N MCP tools (spread over 5 fake stdio servers
+from `test/fakes/fake-mcp-many.ts`) and M custom models in settings, for N = 0, 100, 500 and M = 0, 50, 200. It prints session
+ready time, time until every server connected, time to the first model request, a later turn, first request size, and the
+`list_tools` RPC. It is not gated; `test/perf/startup.test.ts` holds generous regression bounds (parallel connect, cached tool
+lookup, end-to-end smoke).

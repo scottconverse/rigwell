@@ -18,6 +18,8 @@ const USAGE = `Usage:
   rigwell daemon [--socket <path>] [--ws-port <n>] [--no-ws]
   rigwell [tui] [options]        interactive terminal UI (default when no subcommand is given)
   rigwell eval <run|report|tasks> [options]   (see rigwell eval --help)
+  rigwell doctor [--json]        check git, rg, PATH copies, startup, daemon socket, settings and MCP config; exit 1 on a failure
+  rigwell --version | -v         print the version
 
 Sign in with an account plan (OAuth, see docs/auth.md): rigwell auth login <name> [--device] | logout <name> | status
 Sign in to an http or sse MCP server (OAuth, see docs/auth.md): rigwell mcp login <name> | logout <name> | status
@@ -283,6 +285,8 @@ async function main() {
     else for (const h of hits) process.stdout.write(`${h.sessionId}  ${h.title}  (lines ${h.lineStart}-${h.lineEnd}, score ${h.score})\n    ${h.snippet}\n`);
     process.exit(0);
   }
+  if (cmd === "--version" || cmd === "-v") { process.stdout.write((await import("../../package.json")).default.version + "\n"); process.exit(0); }
+  if (cmd === "doctor") process.exit(await (await import("./doctor.ts")).doctorMain(argv));
   if (cmd === "eval") return (await import("../eval/cli.ts")).evalMain(argv);
   if (cmd === "daemon") {
     const i = argv.indexOf("--socket");

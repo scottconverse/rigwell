@@ -54,6 +54,8 @@ export interface McpManagerOptions {
 export class McpManager {
   private entries = new Map<string, Entry>();
   private pendingStarts: Promise<unknown>[] = [];
+  /** Flattened tool list and lookup maps, rebuilt only after a server's tools or status changed (listToolInfo asks per tool). */
+  private toolCache?: { list: McpToolInfo[]; byName: Map<string, McpToolInfo> };
   configError?: { path: string; message: string };
   warnings: string[] = [];
 
@@ -84,13 +86,14 @@ export class McpManager {
   async settled(): Promise<void> { await Promise.all(this.pendingStarts); }
 
   private emit(e: Entry) { this.o.onStatusChanged?.(this.info(e)); }
-  private set(e: Entry, status: McpStatus, error?: string) { e.status = status; e.error = error; this.emit(e); }
+  private set(e: Entry, status: McpStatus, error?: string) { e.status = status; e.error = error; this.toolCache = undefined; this.emit(e); }
 
   private async startOne(cfg: McpServerConfig): Promise<void> {
     const prev = this.entries.get(cfg.name);
     if (prev) await this.stopEntry(prev);
     const e: Entry = { cfg, status: cfg.disabled ? "disabled" : "connecting", defs: [], drops: 0, epoch: (prev?.epoch ?? 0) + 1 };
     this.entries.set(cfg.name, e);
+    this.toolCache = undefined;
     this.emit(e);
     if (cfg.disabled) return;
     await this.connect(e);
@@ -121,6 +124,7 @@ export class McpManager {
     if (e.epoch !== epoch) return;
     e.drops++;
     e.client = undefined; e.defs = [];
+    this.toolCache = undefined;
     const max = this.o.maxDrops ?? MAX_DROPS;
     if (e.drops >= max) {
       this.set(e, "failed", `suppressed: connected and dropped ${e.drops} times (last: ${reason})`);
@@ -136,6 +140,7 @@ export class McpManager {
 
   private async stopEntry(e: Entry) {
     e.epoch++;
+    this.toolCache = undefined;
     if (e.reconnectTimer) clearTimeout(e.reconnectTimer);
     const c = e.client; e.client = undefined; e.defs = [];
     if (c) { c.onClose = undefined; await c.close().catch(() => {}); }
@@ -166,22 +171,32 @@ export class McpManager {
 
   // ---------------------------------------------------------------- tools
   /** Tools of connected servers (suppressed/failed servers contribute none). */
-  tools(): McpToolInfo[] {
-    const out: McpToolInfo[] = [];
+  tools(): McpToolInfo[] { return [...this.toolIndex().list]; }
+
+  private toolIndex(): { list: McpToolInfo[]; byName: Map<string, McpToolInfo> } {
+    if (this.toolCache) return this.toolCache;
+    const list: McpToolInfo[] = [];
+    const byName = new Map<string, McpToolInfo>();
     for (const e of this.entries.values()) {
       if (e.status !== "connected") continue;
       for (const d of e.defs) {
-        out.push({
+        const info: McpToolInfo = {
           server: e.cfg.name, tool: d.name, llmName: mcpLlmName(e.cfg.name, d.name), bindingName: mcpBindingName(e.cfg.name, d.name),
           description: d.description ?? "", inputSchema: (d.inputSchema as Record<string, unknown>) ?? { type: "object", properties: {} },
-        });
+        };
+        list.push(info);
       }
     }
-    return out;
+    // First tool wins for each spelling, so a lookup returns what a linear find over the list would.
+    for (const t of list) {
+      if (!byName.has(t.llmName)) byName.set(t.llmName, t);
+      if (!byName.has(t.bindingName)) byName.set(t.bindingName, t);
+    }
+    return (this.toolCache = { list, byName });
   }
 
   findTool(llmNameOrBinding: string): McpToolInfo | undefined {
-    return this.tools().find((t) => t.llmName === llmNameOrBinding || t.bindingName === llmNameOrBinding);
+    return this.toolIndex().byName.get(llmNameOrBinding);
   }
 
   /** Call by `server__tool` or `server.tool`. Throws when unknown or the server is not connected. */

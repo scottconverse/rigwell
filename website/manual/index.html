@@ -184,6 +184,12 @@ rigwell daemon                           # background daemon for the desktop app
         <p><code>rigwell exec</code> prints the assistant text on stdout. It prints <code>[session] &lt;id&gt; model=&lt;m&gt; autonomy=&lt;a&gt;</code> and <code>[turn] &lt;reason&gt;</code> on stderr. The exit code is 0 only when the turn reason is <code>completed</code>. exec never prompts. An action that needs approval is refused.</p>
         <h3 id="clients-desktop">Desktop app</h3>
         <p>The app starts its own daemon, checks it is alive, and restarts it if it stops. It adds a side pane with files, terminals, a browser pane and a side chat. It registers the <code>rigwell://</code> URL scheme. Its settings live in <code>desktop-settings.json</code>.</p>
+        <p>Desktop features <span class="tag tag-new">New</span>:</p>
+        <ul>
+          <li><strong>Skills dialog.</strong> Search skills by name and description. Filter by Built-in, User or Project. <strong>Create skill</strong> writes <code>SKILL.md</code> to <code>$RIGWELL_HOME/skills/&lt;name&gt;</code> (user) or <code>&lt;project&gt;/.rigwell/skills/&lt;name&gt;</code> (project). It asks before it replaces a skill.</li>
+          <li><strong>Image preview.</strong> Click an attached image, or an image in a sent message. The toolbar has zoom, Fit, Rotate, Copy, Remove and Close. <kbd>Esc</kbd> closes it.</li>
+          <li><strong>Email drafts.</strong> A fenced <code>email</code> block with a <code>To:</code> or <code>Subject:</code> header shows as a card with <strong>Copy</strong> and <strong>Open in mail app</strong> (a <code>mailto:</code> link).</li>
+        </ul>
       </section>
 
       <section id="models">
@@ -751,6 +757,8 @@ X-Rigwell-Signature: sha256=&lt;hex HMAC-SHA256(secret, raw body)&gt;
             <tr><td><code>rigwell mcp login &lt;name&gt;</code>, <code>logout &lt;name&gt;</code>, <code>status</code> <span class="tag tag-new">0.2.0</span></td><td>MCP server sign-in</td></tr>
             <tr><td><code>rigwell credential set &lt;name&gt;</code> (value on stdin), <code>delete &lt;name&gt;</code></td><td>Credential store</td></tr>
             <tr><td><code>rigwell eval run | report | tasks</code></td><td>Eval loop</td></tr>
+            <tr><td><code>rigwell doctor [--json]</code> <span class="tag tag-new">New</span></td><td>Checks <code>git</code> and <code>rg</code> on PATH, every <code>rigwell</code> copy on PATH and its version, that Rigwell starts (warns over 2 s), the daemon socket (a stale file is a warning), and the settings, models, hooks, skills and MCP config. It starts no MCP server and prints no keys. Exit 1 if a check fails.</td></tr>
+            <tr><td><code>rigwell --version</code>, <code>-v</code> <span class="tag tag-new">New</span></td><td>Print the version</td></tr>
           </tbody>
         </table></div>
         <h3 id="cli-flags">Flags for exec and tui</h3>
@@ -775,7 +783,8 @@ X-Rigwell-Signature: sha256=&lt;hex HMAC-SHA256(secret, raw body)&gt;
 
       <section id="tui">
         <h2>TUI commands and keys</h2>
-        <p><strong>Slash commands:</strong> <code>/help</code>, <code>/new</code>, <code>/sessions</code>, <code>/model</code>, <code>/settings</code>, <code>/context</code>, <code>/cost</code>, <code>/status</code>, <code>/compress</code>, <code>/rewind-conversation</code>, <code>/fork</code>, <code>/rename</code>, <code>/pr</code>, <code>/btw</code>, <code>/copy</code>, <code>/cwd</code>, <code>/mcp</code>, <code>/hooks</code>, <code>/skills</code>, <code>/commands</code>, <code>/agents</code>, <code>/statusline</code>, <code>/vim</code>, <code>/themes</code>, <code>/automations</code>, <code>/loop</code>, <code>/diagnostics</code>, <code>/login</code>, <code>/logout</code>, <code>/quit</code>.</p>
+        <p><strong>Slash commands:</strong> <code>/help</code>, <code>/new</code>, <code>/sessions</code>, <code>/model</code>, <code>/settings</code>, <code>/context</code>, <code>/cost</code>, <code>/status</code>, <code>/compress</code>, <code>/rewind-conversation</code>, <code>/fork</code>, <code>/rename</code>, <code>/pr</code>, <code>/btw</code> (also <code>/side</code>), <code>/tree</code>, <code>/copy</code>, <code>/cwd</code>, <code>/mcp</code>, <code>/hooks</code>, <code>/skills</code>, <code>/commands</code>, <code>/agents</code>, <code>/statusline</code>, <code>/vim</code>, <code>/themes</code>, <code>/automations</code>, <code>/loop</code>, <code>/diagnostics</code>, <code>/login</code>, <code>/logout</code>, <code>/quit</code>.</p>
+        <p><code>/tree</code> shows the forks of the current session as a tree. Pick one to open it. <code>/sessions</code> lists forks under their parent. Text you type while Rigwell starts stays in the box. If you press <kbd>Enter</kbd> before the session is ready, the message is queued ("Will send when ready") and sent when the session is ready.</p>
         <div class="table-wrap"><table>
           <thead><tr><th>Key</th><th>Action</th></tr></thead>
           <tbody>

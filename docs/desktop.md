@@ -41,7 +41,7 @@ Routes: `#/missions`, `#/missions/<sessionId>`, `#/automations`, `#/automations/
 `custom-models`, `worktrees`, `connectors`, `session-management`, `usage`. The sidebar lists Mission Control and Automations, shows pinned
 sessions first and hides archived ones, and has an Add folder button that runs the trust prompt. The session header menu has Pin, Rename and
 Archive (`rigwell.pin_session`, `rename_session`, `archive_session`; `list_sessions` falls back to `daemon.list_sessions` on older daemons).
-The composer has a searchable model picker, a Normal / Spec / Mission mode menu, and Connectors and Skills dialogs. Home has a Worktree toggle
+The composer has a searchable model picker, a Normal / Spec / Mission mode menu, and Connectors and Skills dialogs. The Skills dialog searches skills, filters them by source (Built-in, User, Project) and has a Create skill form (`skills:create` in the main process). Attached images and images in sent messages open a preview with a toolbar (zoom, Fit, Rotate, Copy, Remove, Close). A fenced `email` block renders as a card with Copy and Open in mail app (`mailto:`). Copy buttons use `clipboard:writeText` and `clipboard:writeImage` in the main process, because the page has no clipboard permission. Home has a Worktree toggle
 (defaults to the `runInWorktree` setting). The browser pane can reopen closed tabs, move tabs, step to the next or previous tab and take a screenshot.
 Main process helpers: `desktop/main/user-settings.ts` (masked settings file, trusted folders, setup profiles) and `desktop/main/skills.ts`.
 

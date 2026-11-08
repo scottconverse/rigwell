@@ -9,6 +9,7 @@ import type { SessionController } from "../lib/session.ts";
 import { ConnectorsDialog, SkillsDialog } from "./Dialogs.tsx";
 import { ModelPicker } from "./ModelPicker.tsx";
 import { DictateButton } from "./DictateButton.tsx";
+import { ImagePreview } from "./ImagePreview.tsx";
 import { MAX_ATTACHMENTS, defaultText, readAttachment, sizeLabel, type Attachment } from "../lib/attachments.ts";
 
 const MODES = [
@@ -57,6 +58,8 @@ export function Composer(props: {
   const [atts, setAtts] = useState<Attachment[]>([]);
   const [attachError, setAttachError] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const previewAtt = atts.find((a) => a.id === previewId && a.kind === "image");
   const picker = useRef<HTMLInputElement>(null);
   const lastEsc = useRef(0);
   const keyRef = useRef<(e: KeyboardEvent) => boolean>(() => false);
@@ -131,7 +134,7 @@ export function Composer(props: {
         <div className="attachments" aria-label="Attachments">
           {atts.map((a) => (
             <span key={a.id} className="attachment">
-              {a.kind === "image" && <img alt="" src={`data:${a.mediaType};base64,${a.data}`} />}
+              {a.kind === "image" && <button className="thumb" aria-label={`Preview ${a.name}`} title="Click to preview" onClick={() => setPreviewId(a.id)}><img alt="" src={`data:${a.mediaType};base64,${a.data}`} /></button>}
               <span className="attachment-name" title={a.name}>{a.name}</span><span className="muted small"> {sizeLabel(a.size)}</span>
               <button aria-label={`Remove ${a.name}`} onClick={() => setAtts(atts.filter((x) => x.id !== a.id))}>x</button>
             </span>
@@ -170,6 +173,7 @@ export function Composer(props: {
           ? <button className="send stop" onClick={props.onStop} aria-label="Stop">Stop</button>
           : <button className="send" disabled={(!text.trim() && !atts.length) || props.disabled} onClick={send} aria-label="Send">Send</button>}
       </div>
+      {previewAtt && <ImagePreview src={`data:${previewAtt.mediaType};base64,${previewAtt.data}`} name={previewAtt.name} onClose={() => setPreviewId(null)} onRemove={() => setAtts((cur) => cur.filter((x) => x.id !== previewAtt.id))} />}
       {dialog === "connectors" && props.session && <ConnectorsDialog ctl={props.session} onClose={() => setDialog(null)} />}
       {dialog === "skills" && <SkillsDialog ctl={props.session} cwd={props.cwd ?? ""} onClose={() => setDialog(null)} />}
       {help && (
