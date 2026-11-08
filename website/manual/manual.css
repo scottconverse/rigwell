@@ -1,0 +1,98 @@
+/* Rigwell manual. Uses the tokens from ../styles.css (loaded first). */
+.doc-header .nav { max-width: none; padding: 0 24px; }
+.doc-header .brand small { font-weight: 500; color: rgba(244, 241, 234, 0.6); margin-left: 4px; font-size: 0.9rem; }
+
+.doc { display: grid; grid-template-columns: 264px minmax(0, 1fr); min-height: calc(100vh - 60px); }
+
+/* sidebar */
+.toc {
+  position: sticky; top: 60px; align-self: start; height: calc(100vh - 60px); overflow-y: auto;
+  border-right: 1px solid var(--border); background: var(--panel); padding: 22px 14px 40px;
+  font-size: 0.92rem;
+}
+.toc-search { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--fg); margin-bottom: 14px; }
+.toc-group { margin: 0 0 16px; }
+.toc-group > p { font-family: var(--mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 8px 6px; font-weight: 600; }
+.toc ul { list-style: none; margin: 0; padding: 0; }
+.toc a { display: block; color: var(--fg); text-decoration: none; padding: 5px 8px; border-radius: 6px; line-height: 1.35; border-left: 2px solid transparent; }
+.toc a:hover { background: var(--sunken); color: var(--fg); }
+.toc a.active { color: var(--accent); border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); font-weight: 600; }
+.toc li.hidden { display: none; }
+
+/* content */
+.doc-main { padding: 40px 56px 96px; max-width: 980px; min-width: 0; }
+.doc-main > section { padding-top: 8px; margin-bottom: 56px; }
+.doc-main h1 { font-size: clamp(2rem, 3.6vw, 2.75rem); letter-spacing: -0.03em; }
+.doc-main h2 { font-size: 1.7rem; padding-top: 12px; border-top: 1px solid var(--border); margin-top: 8px; }
+.doc-main > section:first-of-type h2 { border-top: 0; }
+.doc-main h3 { font-size: 1.15rem; margin-top: 1.8em; }
+.doc-main h4 { font-size: 1rem; margin: 1.4em 0 0.4em; }
+.doc-main p, .doc-main li { max-width: 74ch; }
+.doc-main ul, .doc-main ol { padding-left: 1.3em; }
+.doc-main li { margin-bottom: 4px; }
+.doc-main :is(h2, h3, h4) { scroll-margin-top: 76px; }
+.anchor { color: var(--muted); text-decoration: none; margin-left: 8px; opacity: 0; font-weight: 400; }
+:is(h2, h3):hover .anchor, .anchor:focus { opacity: 1; }
+
+.doc-lede { font-size: 1.12rem; color: var(--muted); max-width: 62ch; }
+.meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 28px; }
+.tag { font-family: var(--mono); font-size: 0.78rem; border: 1px solid var(--border); background: var(--panel); border-radius: 999px; padding: 3px 10px; color: var(--muted); }
+.tag-new { border-color: var(--amber); color: #7a4c00; background: color-mix(in srgb, var(--amber) 14%, var(--panel)); }
+
+/* callouts */
+.note { border: 1px solid var(--border); border-left: 4px solid var(--accent); background: var(--panel); border-radius: 8px; padding: 12px 16px; margin: 18px 0; max-width: 74ch; }
+.note p:last-child { margin-bottom: 0; }
+.note strong:first-child { display: block; margin-bottom: 2px; }
+.note-warn { border-left-color: var(--warn); }
+.note-ok { border-left-color: var(--ok); }
+
+/* tables */
+.table-wrap { overflow-x: auto; margin: 16px 0 24px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { background: var(--sunken); font-weight: 650; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td code { white-space: nowrap; }
+td.wrap-code code { white-space: normal; word-break: break-word; }
+.m { font-family: var(--mono); font-size: 0.78rem; font-weight: 700; padding: 1px 7px; border-radius: 5px; white-space: nowrap; }
+.m-get { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.m-post { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.m-ws { background: color-mix(in srgb, var(--amber) 22%, transparent); color: #8a5500; }
+.m-del { background: color-mix(in srgb, #c0392b 16%, transparent); color: #c0392b; }
+
+/* code blocks */
+.doc-main pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font-family: var(--mono); font-size: 0.85rem; line-height: 1.6; margin: 12px 0 20px; }
+.doc-main pre code { background: none; padding: 0; font-size: inherit; }
+
+/* diagrams */
+.diagram { margin: 18px 0 28px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); padding: 18px; overflow-x: auto; }
+.diagram pre.mermaid { background: none; border: 0; margin: 0; padding: 0; text-align: center; font-size: 0.8rem; color: var(--muted); }
+.diagram pre.mermaid[data-processed] { color: inherit; }
+.diagram figcaption { font-size: 0.86rem; color: var(--muted); margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+.diagram svg { max-width: 100%; height: auto; }
+
+.cards-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 16px 0 24px; }
+.cards-2 .card { padding: 16px 18px; }
+.cards-2 .card h4 { margin: 0 0 6px; }
+
+.doc-foot { border-top: 1px solid var(--border); margin-top: 40px; padding-top: 18px; color: var(--muted); font-size: 0.9rem; }
+
+.toc-toggle { display: none; }
+
+@media (max-width: 980px) {
+  .doc { grid-template-columns: minmax(0, 1fr); }
+  .toc { position: fixed; top: 60px; left: 0; bottom: 0; width: min(320px, 86vw); height: auto; z-index: 40; transform: translateX(-100%); transition: transform 0.2s; box-shadow: var(--shadow); }
+  .toc.open { transform: none; }
+  .toc-toggle { display: inline-flex; align-items: center; min-height: 40px; padding: 0 14px; border-radius: 8px; background: transparent; color: var(--cream); border: 1px solid rgba(244, 241, 234, 0.3); font: 600 0.92rem var(--font); cursor: pointer; }
+  .doc-main { padding: 28px 16px 72px; }
+  .cards-2 { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 720px) {
+  .doc-header .nav-links { display: none; }
+}
+@media (prefers-color-scheme: dark) {
+  .tag-new { color: var(--amber); }
+  .m-ws { color: var(--amber); }
+  .m-del { color: #ff8a7a; }
+}
+@media (prefers-reduced-motion: reduce) { .toc { transition: none; } }
