@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Rigwell: a local coding agent for any model</title>
-  <meta name="description" content="Rigwell is an open-source coding agent that runs on your own machine. One daemon serves a terminal UI, a desktop app and an SDK. Bring Anthropic, OpenAI, Gemini, Bedrock or any OpenAI-compatible model.">
+  <meta name="description" content="Rigwell is an open-source coding agent that runs on your own machine. One daemon serves a terminal UI, a desktop app, a headless mode and an SDK. Bring Anthropic, OpenAI, Gemini, Bedrock or any OpenAI-compatible model.">
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#0e2a36">
   <meta property="og:title" content="Rigwell: a local coding agent for any model">
-  <meta property="og:description" content="One daemon on your machine. Terminal UI, desktop app and SDK. Any model. Risky commands wait for your approval.">
+  <meta property="og:description" content="One daemon on your machine. Terminal UI, desktop app, headless mode and SDK. Any model. Risky commands wait for your approval.">
   <meta property="og:type" content="website">
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
@@ -27,9 +27,10 @@
       <ul class="nav-links" id="nav-links">
         <li><a href="#models">Models</a></li>
         <li><a href="#control">Control</a></li>
-        <li><a href="#clients">Clients</a></li>
-        <li><a href="#features">Features</a></li>
+        <li><a href="#architecture">How it works</a></li>
+        <li><a href="#mcp">MCP</a></li>
         <li><a href="#status">Status</a></li>
+        <li><a href="manual/">Manual</a></li>
         <li><a class="nav-gh" href="https://github.com/scottconverse/rigwell">GitHub</a></li>
       </ul>
     </nav>
@@ -39,17 +40,18 @@
     <section class="hero">
       <div class="wrap hero-grid">
         <div class="hero-copy">
-          <p class="eyebrow"><span class="pill">Open source</span> AGPL-3.0 &middot; built from source today</p>
+          <p class="eyebrow"><span class="pill">v0.2.0</span> Open source &middot; AGPL-3.0 &middot; MCP sign-in is new</p>
           <h1>A coding agent that runs on your machine, with the model you choose.</h1>
           <p class="lede">
-            Rigwell is one local daemon with three ways in: a terminal UI, a desktop app and a TypeScript SDK.
+            Rigwell is one local daemon with four ways in: a terminal UI, a desktop app, a headless mode and a TypeScript SDK.
             Point it at Anthropic, OpenAI, Gemini, Bedrock or any OpenAI-compatible server.
             It reads, edits and runs code in your repo, and commands above the autonomy level you set wait for your yes.
           </p>
           <div class="cta-row">
-            <a class="btn btn-primary" href="#quick-start">Build it from source</a>
-            <a class="btn btn-ghost" href="https://github.com/scottconverse/rigwell">View on GitHub</a>
+            <a class="btn btn-primary" href="https://github.com/scottconverse/rigwell/releases/tag/v0.2.0">Download v0.2.0 for Windows</a>
+            <a class="btn btn-ghost" href="manual/">Read the manual</a>
           </div>
+          <p class="hero-note">Linux AppImage and deb builds are on the same page. Or <a href="#quick-start">build it from source</a>.</p>
         </div>
         <figure class="hero-shot">
           <div class="window">
@@ -62,25 +64,36 @@
       </div>
     </section>
 
+    <section class="proof" aria-label="Rigwell in numbers">
+      <div class="wrap proof-grid">
+        <div><strong>5</strong><span>model API adapters</span></div>
+        <div><strong>4</strong><span>clients on one protocol</span></div>
+        <div><strong>0</strong><span>Rigwell accounts or servers</span></div>
+        <div><strong>4</strong><span>autonomy levels</span></div>
+        <div><strong>Off</strong><span>default autonomy: read-only</span></div>
+      </div>
+    </section>
+
     <section class="band" id="models" aria-labelledby="models-h">
       <div class="wrap split">
         <div>
           <p class="kicker">Any model</p>
           <h2 id="models-h">Change the model in settings, not the tools.</h2>
           <p>
-            Models are entries in <code>settings.json</code>. Each one names a provider adapter, a base URL and a key
-            (or an OAuth sign-in you configure). The agent loop, tools and permissions stay the same whichever model you pick,
-            and you can switch per session from the model picker or <code>-m</code>.
+            Models are entries in <code>settings.json</code>. Each one names a provider adapter, a base URL and a key:
+            a literal, an environment variable, or a name in the credential store. The agent loop, tools and permissions
+            stay the same whichever model you pick, and you can switch per session from the model picker or <code>-m</code>.
           </p>
           <p>
             Requests are append-only, so earlier turns stay byte-identical and the provider's prompt cache can reuse them.
             Tools beyond the core set load on demand, which keeps the base prompt small.
           </p>
+          <p><a href="manual/#models">Model settings in the manual</a></p>
         </div>
         <ul class="adapter-list" aria-label="Provider adapters in the code">
           <li><strong>Anthropic</strong><span>Messages API</span></li>
           <li><strong>OpenAI</strong><span>Responses API, over HTTP or WebSocket</span></li>
-          <li><strong>OpenAI-compatible</strong><span>Chat Completions, for local and hosted servers</span></li>
+          <li><strong>OpenAI-compatible</strong><span>Chat Completions, for Ollama and hosted servers</span></li>
           <li><strong>Google</strong><span>Gemini API</span></li>
           <li><strong>Amazon Bedrock</strong><span>Converse API, with AWS signing</span></li>
         </ul>
@@ -98,8 +111,8 @@
             twenty files is one round trip instead of twenty.
           </p>
           <p>
-            Long scripts can run as background jobs that wake the session when they finish, and results go to a
-            searchable log instead of flooding the context.
+            Each tool call inside the script still goes through the same permission check. Long scripts can run as
+            background jobs that wake the session when they finish.
           </p>
         </div>
         <div class="code-card">
@@ -122,18 +135,18 @@
         <h2 id="control-h">You set how far it goes on its own.</h2>
         <p class="section-lede">
           The model labels every command with a risk level and a reason. Your autonomy level decides which ones run
-          and which ones stop and ask.
+          and which ones stop and ask. Allow, deny and block lists apply on top.
         </p>
         <div class="levels" role="list">
-          <div class="level" role="listitem"><span class="level-name">Off</span><p>Asks before every edit and command.</p></div>
-          <div class="level" role="listitem"><span class="level-name">Low</span><p>Edits and read-only commands run without asking.</p></div>
+          <div class="level" role="listitem"><span class="level-name">Off</span><p>The default. Reads and searches only. Every command asks.</p></div>
+          <div class="level" role="listitem"><span class="level-name">Low</span><p>Edits and low-risk commands run without asking.</p></div>
           <div class="level" role="listitem"><span class="level-name">Medium</span><p>Reversible commands run without asking.</p></div>
-          <div class="level" role="listitem"><span class="level-name">High</span><p>All commands run without asking.</p></div>
+          <div class="level" role="listitem"><span class="level-name">High</span><p>All commands run, except deny and block list matches.</p></div>
         </div>
         <div class="grid-3 guard-grid">
           <article class="card">
             <h3>Sandboxed commands</h3>
-            <p>Commands can run inside bubblewrap with a seccomp filter on Linux, or sandbox-exec on macOS, with network access through a filtering proxy. Windows has no sandbox engine yet.</p>
+            <p>Turn on the sandbox to run commands inside bubblewrap on Linux or sandbox-exec on macOS, with file and network rules. It is off by default. Windows has no sandbox engine yet.</p>
           </article>
           <article class="card">
             <h3>Trusted folders</h3>
@@ -141,28 +154,75 @@
           </article>
           <article class="card">
             <h3>Rewind</h3>
-            <p>Edits are snapshotted per message. Rewind a session to an earlier message and put the files back the way they were.</p>
+            <p>File edits are snapshotted per message. Rewind a session to an earlier message and put those files back. Changes made by shell commands are not snapshotted.</p>
           </article>
         </div>
       </div>
     </section>
 
-    <section class="band band-alt" id="clients" aria-labelledby="clients-h">
+    <section class="band band-alt" id="architecture" aria-labelledby="arch-h">
       <div class="wrap">
-        <p class="kicker">One daemon, many clients</p>
-        <h2 id="clients-h">Start in the terminal. Pick it up in the app.</h2>
+        <p class="kicker">How it works</p>
+        <h2 id="arch-h">One daemon. Every client speaks the same protocol.</h2>
         <p class="section-lede">
-          <code>rigwell daemon</code> hosts many sessions at once and speaks JSON-RPC over a local socket or WebSocket.
-          Every client is a view onto the same sessions, so a prompt that waits for an answer shows up wherever you reconnect.
+          <code>rigwell daemon</code> hosts many sessions at once. Each connection holds one session. The session runs the
+          agent loop, checks each tool call with the permission gate, and keeps everything in <code>~/.rigwell</code>.
+          The TUI and <code>exec</code> can also run the same loop in-process, with no daemon.
         </p>
-        <div class="grid-4">
+        <figure class="arch">
+          <div class="arch-scroll">
+            <svg viewBox="0 0 1000 400" role="img" aria-labelledby="arch-t arch-d">
+              <title id="arch-t">Rigwell architecture</title>
+              <desc id="arch-d">Four clients (terminal UI, desktop app, rigwell exec, TypeScript SDK) connect to the rigwell daemon over a Unix socket, a token-protected WebSocket on 127.0.0.1 port 47822, or stdio. Inside the daemon a connection host gives each connection one agent session. The session calls model adapters, which reach model APIs, and runs tools through the permission gate. An MCP manager connects to MCP servers. Sessions, settings and snapshots are stored in the .rigwell folder. Automations, crons, missions and the side pane run only in the daemon.</desc>
+              <defs>
+                <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="a-head"/></marker>
+              </defs>
+              <!-- clients -->
+              <text x="20" y="24" class="a-label">CLIENTS</text>
+              <g class="a-box"><rect x="20" y="40" width="190" height="64" rx="10"/><text x="36" y="67" class="a-t">Terminal UI</text><text x="36" y="88" class="a-s">in-process or socket</text></g>
+              <g class="a-box"><rect x="20" y="124" width="190" height="64" rx="10"/><text x="36" y="151" class="a-t">Desktop app</text><text x="36" y="172" class="a-s">WebSocket + token</text></g>
+              <g class="a-box"><rect x="20" y="208" width="190" height="64" rx="10"/><text x="36" y="235" class="a-t">rigwell exec</text><text x="36" y="256" class="a-s">in-process or stdio</text></g>
+              <g class="a-box"><rect x="20" y="292" width="190" height="64" rx="10"/><text x="36" y="319" class="a-t">TypeScript SDK</text><text x="36" y="340" class="a-s">spawn, socket or WebSocket</text></g>
+              <path d="M210 72 H268" class="a-line" marker-end="url(#ah)"/>
+              <path d="M210 156 H268" class="a-line" marker-end="url(#ah)"/>
+              <path d="M210 240 H268" class="a-line" marker-end="url(#ah)"/>
+              <path d="M210 324 H268" class="a-line" marker-end="url(#ah)"/>
+              <!-- daemon -->
+              <rect x="270" y="10" width="450" height="380" rx="16" class="a-frame"/>
+              <text x="290" y="36" class="a-label a-label-in">RIGWELL DAEMON</text>
+              <g class="a-box a-tint"><rect x="290" y="50" width="410" height="44" rx="9"/><text x="495" y="77" text-anchor="middle" class="a-s a-strong">Unix socket &#183; WebSocket 127.0.0.1:47822 &#183; stdio</text></g>
+              <path d="M495 94 V108" class="a-line" marker-end="url(#ah)"/>
+              <g class="a-box"><rect x="290" y="110" width="410" height="44" rx="9"/><text x="495" y="137" text-anchor="middle" class="a-t">Connection host: one session per connection</text></g>
+              <path d="M495 154 V168" class="a-line" marker-end="url(#ah)"/>
+              <g class="a-box a-key"><rect x="290" y="170" width="410" height="58" rx="9"/><text x="495" y="195" text-anchor="middle" class="a-t a-on-key">Agent session loop</text><text x="495" y="215" text-anchor="middle" class="a-s a-on-key-s">turns &#183; script mode &#183; compaction &#183; snapshots</text></g>
+              <path d="M352 228 V246" class="a-line" marker-end="url(#ah)"/>
+              <path d="M495 228 V246" class="a-line" marker-end="url(#ah)"/>
+              <path d="M638 228 V246" class="a-line" marker-end="url(#ah)"/>
+              <g class="a-box"><rect x="290" y="248" width="125" height="50" rx="9"/><text x="352" y="278" text-anchor="middle" class="a-t">Permission gate</text></g>
+              <g class="a-box"><rect x="432" y="248" width="125" height="50" rx="9"/><text x="495" y="278" text-anchor="middle" class="a-t">Tools</text></g>
+              <g class="a-box"><rect x="575" y="248" width="125" height="50" rx="9"/><text x="638" y="278" text-anchor="middle" class="a-t">MCP manager</text></g>
+              <path d="M415 273 H430" class="a-line" marker-end="url(#ah)"/>
+              <g class="a-box a-dash"><rect x="290" y="318" width="410" height="52" rx="9"/><text x="495" y="341" text-anchor="middle" class="a-t">Automations &#183; crons &#183; missions &#183; side pane</text><text x="495" y="360" text-anchor="middle" class="a-s">daemon only</text></g>
+              <!-- outside -->
+              <text x="770" y="24" class="a-label">ON YOUR MACHINE AND BEYOND</text>
+              <g class="a-box"><rect x="770" y="40" width="210" height="64" rx="10"/><text x="786" y="67" class="a-t">~/.rigwell</text><text x="786" y="88" class="a-s">sessions, settings, snapshots</text></g>
+              <g class="a-box"><rect x="770" y="160" width="210" height="64" rx="10"/><text x="786" y="187" class="a-t">Model APIs</text><text x="786" y="208" class="a-s">through 5 adapters</text></g>
+              <g class="a-box"><rect x="770" y="248" width="210" height="64" rx="10"/><text x="786" y="275" class="a-t">MCP servers</text><text x="786" y="296" class="a-s">stdio, HTTP, SSE + OAuth</text></g>
+              <path d="M700 185 L768 80" class="a-line" marker-end="url(#ah)"/>
+              <path d="M700 199 H768" class="a-line" marker-end="url(#ah)"/>
+              <path d="M700 279 H768" class="a-line" marker-end="url(#ah)"/>
+            </svg>
+          </div>
+          <figcaption>The daemon and its clients. The <a href="manual/#architecture">manual</a> has the full diagrams, including one turn step by step.</figcaption>
+        </figure>
+        <div class="grid-4 clients-grid">
           <article class="card">
             <h3>Terminal UI</h3>
             <p><code>rigwell</code> opens the TUI, in-process or attached to a running daemon with <code>--daemon</code>.</p>
           </article>
           <article class="card">
             <h3>Desktop app</h3>
-            <p>An Electron app with a session sidebar, command palette, settings and a tray icon. It starts and supervises the daemon.</p>
+            <p>An Electron app with a session sidebar, command palette, side pane and a tray icon. It starts and supervises the daemon.</p>
           </article>
           <article class="card">
             <h3>Headless</h3>
@@ -173,19 +233,55 @@
             <p>A TypeScript SDK with handlers for permissions, questions and folder trust. See <a href="https://github.com/scottconverse/rigwell/blob/main/examples/sdk-multi-turn.ts">the example</a>.</p>
           </article>
         </div>
-        <div class="code-card code-wide">
-          <div class="code-head"><span>examples/sdk-multi-turn.ts</span><span class="muted">abridged</span></div>
-<pre><code><span class="tk-k">import</span> { createSession } <span class="tk-k">from</span> <span class="tk-s">"../src/sdk/index.ts"</span>;
+      </div>
+    </section>
 
-<span class="tk-k">const</span> session = <span class="tk-k">await</span> createSession({
-  cwd: process.cwd(),
-  autonomyLevel: <span class="tk-s">"low"</span>,
-  onPermission: (req) =&gt; ({ selectedOption: <span class="tk-s">"proceed_once"</span> }),
-});
-<span class="tk-k">for await</span> (<span class="tk-k">const</span> n <span class="tk-k">of</span> session.send(<span class="tk-s">"Summarise this project."</span>)) {
-  <span class="tk-k">if</span> (n.type === <span class="tk-s">"assistant_text_delta"</span>) process.stdout.write(n.textDelta);
-}
-<span class="tk-k">await</span> session.close();</code></pre>
+    <section class="band" id="programs" aria-labelledby="programs-h">
+      <div class="wrap split">
+        <div>
+          <p class="kicker">Built to be driven by programs</p>
+          <h2 id="programs-h">A documented protocol, not a screen to scrape.</h2>
+          <p>
+            Every client uses the same JSON-RPC 2.0 protocol: <code>rigwell.*</code> methods for sessions, models, MCP,
+            git, automations and missions, and a stream of notifications for text, tool calls and turn results.
+            Everything listens on 127.0.0.1 only.
+          </p>
+          <p><a href="manual/#protocol">Protocol reference</a> &middot; <a href="manual/#http">Every HTTP and WebSocket path</a> &middot; <a href="manual/#sdk">SDK</a></p>
+        </div>
+        <div class="iface">
+          <div class="iface-row"><span class="m">NDJSON</span><div><strong>stdio</strong><span><code>rigwell exec --input-format stream-jsonrpc</code></span></div></div>
+          <div class="iface-row"><span class="m">NDJSON</span><div><strong>Unix socket</strong><span><code>~/.rigwell/daemon.sock</code></span></div></div>
+          <div class="iface-row"><span class="m">WS</span><div><strong>WebSocket</strong><span><code>ws://127.0.0.1:47822</code>, token from <code>daemon.json</code></span></div></div>
+          <div class="iface-row"><span class="m m-post">POST</span><div><strong>Automation webhook</strong><span><code>127.0.0.1:47821/hooks/&lt;id&gt;</code>, Bearer or HMAC</span></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="band band-alt" id="mcp" aria-labelledby="mcp-h">
+      <div class="wrap split split-rev">
+        <div>
+          <p class="kicker">MCP connectors &middot; new in 0.2.0</p>
+          <h2 id="mcp-h">Connect MCP servers. Sign in with OAuth.</h2>
+          <p>
+            Add stdio, streamable HTTP or SSE MCP servers in <code>mcp.json</code>. Their tools load on demand, and every
+            MCP tool call asks you first unless you saved an "always" answer.
+          </p>
+          <p>
+            When an HTTP or SSE server needs sign-in, Rigwell says so and waits. Run <code>rigwell mcp login &lt;name&gt;</code>,
+            or select <strong>Sign in</strong> in the desktop app. It follows the MCP authorization spec with PKCE,
+            refreshes tokens before they expire, and keeps them in the credential store.
+          </p>
+          <p class="small">Tested against a local fake OAuth server only. Not yet tested against a real MCP server.</p>
+          <p><a href="manual/#mcp-oauth">How MCP sign-in works</a></p>
+        </div>
+        <div class="code-card">
+          <div class="code-head"><span>Terminal</span></div>
+<pre><code><span class="tk-p">$</span> rigwell mcp status
+<span class="tk-c">docs   http   Sign-in needed: run rigwell mcp login docs</span>
+<span class="tk-p">$</span> rigwell mcp login docs
+<span class="tk-c">Opening your browser to sign in...</span>
+<span class="tk-c">Signed in to docs.</span>
+<span class="tk-p">$</span> rigwell mcp logout docs</code></pre>
         </div>
       </div>
     </section>
@@ -205,7 +301,7 @@
         <div class="grid-3 feature-grid">
           <article class="card">
             <h3>Missions</h3>
-            <p>Split a long task into features and milestones. An orchestrator runs worker sessions and checks each milestone before moving on.</p>
+            <p>Split a long task into features. An orchestrator runs worker sessions and validation workers, and you approve the plan before it starts.</p>
           </article>
           <article class="card">
             <h3>Automations</h3>
@@ -213,19 +309,19 @@
           </article>
           <article class="card">
             <h3>Git worktrees</h3>
-            <p>Run a session in its own worktree and branch, with setup and cleanup. Open a pull request from it through the GitHub CLI or API.</p>
+            <p>Run a session in its own worktree and branch. Open a pull request from it through the GitHub CLI or API.</p>
+          </article>
+          <article class="card">
+            <h3>Spec mode</h3>
+            <p>Plan first in a read-only mode. Approve the plan, edit it, or hand it to a fresh session to build.</p>
+          </article>
+          <article class="card">
+            <h3>Skills, hooks, subagents</h3>
+            <p>Built-in skills from code review to PDF and spreadsheet work. Add your own skills, hooks, slash commands and subagents per project.</p>
           </article>
           <article class="card">
             <h3>Side pane</h3>
             <p>Files, a terminal, a browser the agent can drive, and a side chat for quick questions next to the session.</p>
-          </article>
-          <article class="card">
-            <h3>Skills, hooks, subagents</h3>
-            <p>Fifteen built-in skills ship in the repo, from code review to PDF and spreadsheet work. Add your own skills, hooks and subagents per project.</p>
-          </article>
-          <article class="card">
-            <h3>MCP connectors</h3>
-            <p>Attach MCP servers as connectors. Their tools load on demand, and a Script can call them like any other tool.</p>
           </article>
         </div>
         <figure class="shot-wide shot-narrow">
@@ -247,16 +343,15 @@
           <p>
             <code>rigwell eval run</code> runs coding tasks against your models, each in a fresh copy of a small repo,
             and a grader command checks the result. Run a candidate settings change next to a baseline, and
-            <code>rigwell eval report</code> compares them per model and per model family and recommends ship or do not ship.
-            A person makes the call. A weekly automation can run it for you.
+            <code>rigwell eval report</code> compares pass rate, cost, time and tokens. A person makes the call.
           </p>
-          <p><a href="https://github.com/scottconverse/rigwell/blob/main/docs/eval.md">How the eval loop works</a></p>
+          <p><a href="manual/#eval">How the eval loop works</a></p>
         </div>
         <div class="code-card">
           <div class="code-head"><span>Terminal</span></div>
 <pre><code><span class="tk-p">$</span> rigwell eval tasks
-<span class="tk-p">$</span> rigwell eval run
-<span class="tk-p">$</span> rigwell eval report</code></pre>
+<span class="tk-p">$</span> rigwell eval run --trials 3 --auto medium
+<span class="tk-p">$</span> rigwell eval report --since 7d</code></pre>
         </div>
       </div>
     </section>
@@ -264,8 +359,8 @@
     <section class="band" id="quick-start" aria-labelledby="qs-h">
       <div class="wrap">
         <p class="kicker">Quick start</p>
-        <h2 id="qs-h">Build it from source.</h2>
-        <p class="section-lede">Download the installer from the <a href="https://github.com/scottconverse/rigwell/releases/latest">latest release</a>. Windows is the release target; the macOS and Linux builds are extras. To run from source you need <a href="https://bun.sh">Bun</a> 1.4 or later, <code>git</code> and <code>rg</code> (ripgrep) on your PATH.</p>
+        <h2 id="qs-h">Install it, add a model, run it.</h2>
+        <p class="section-lede">Download the installer from the <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.2.0">v0.2.0 release</a>. Windows x64 is the release target. Linux builds are extras. There is no macOS build in 0.2.0. The installers are not signed, so Windows SmartScreen shows a warning. To run from source you need <a href="https://bun.sh">Bun</a> 1.4 or later, <code>git</code> and <code>rg</code> (ripgrep) on your PATH.</p>
         <ol class="steps">
           <li>
             <h3>Clone and install</h3>
@@ -293,7 +388,7 @@ bun src/cli/main.ts exec --auto low &quot;Fix the failing test&quot;">Copy</butt
 bun src/cli/main.ts
 <span class="tk-c"># one-shot, edits allowed without asking</span>
 bun src/cli/main.ts exec --auto low <span class="tk-s">"Fix the failing test"</span></code></pre></div>
-            <p class="small">For the desktop app: <code>cd desktop &amp;&amp; npm install &amp;&amp; bun run build.ts &amp;&amp; npx electron .</code> (see <a href="https://github.com/scottconverse/rigwell/blob/main/docs/desktop.md">docs/desktop.md</a>).</p>
+            <p class="small">For the desktop app: <code>cd desktop &amp;&amp; npm install &amp;&amp; bun run build.ts &amp;&amp; npx electron .</code> (see <a href="https://github.com/scottconverse/rigwell/blob/main/docs/desktop.md">docs/desktop.md</a>). Full setup is in the <a href="manual/#install">manual</a>.</p>
           </li>
         </ol>
       </div>
@@ -304,7 +399,7 @@ bun src/cli/main.ts exec --auto low <span class="tk-s">"Fix the failing test"</s
         <p class="kicker">Project status</p>
         <h2 id="status-h">Early, and honest about it.</h2>
         <p class="section-lede">
-          Every part of the local build spec is written and tested. Version 0.1.0 is the first release. It has not had wide real-world use.
+          Every part of the local build spec is written and tested. Version 0.2.0 is the second release. It has not had wide real-world use.
         </p>
         <div class="grid-3">
           <article class="card status-card status-ok">
@@ -312,18 +407,19 @@ bun src/cli/main.ts exec --auto low <span class="tk-s">"Fix the failing test"</s
             <ul>
               <li>Daemon, TUI, headless exec, SDK and desktop app</li>
               <li>The five provider adapters above</li>
-              <li>Script mode, permissions, sandbox, rewind</li>
+              <li>Script mode, permissions, rewind, spec mode</li>
               <li>Missions, automations, worktrees, side pane, skills, MCP</li>
-              <li>CI runs the tests on Linux, macOS and Windows</li>
+              <li>CI runs the tests on Windows and Linux</li>
             </ul>
           </article>
           <article class="card status-card status-warn">
             <h3>Not proven yet</h3>
             <ul>
+              <li>All tests use fake servers, not real providers</li>
+              <li>MCP OAuth tested against a fake server only</li>
+              <li>Run by hand on Windows only</li>
+              <li>No command sandbox on Windows; sandbox off by default</li>
               <li>The installers are not signed</li>
-              <li>Run by hand on Windows only; macOS and Linux checked in CI only</li>
-              <li>Real OS keychains and clipboards, signed installers and auto-update</li>
-              <li>No command sandbox on Windows</li>
             </ul>
           </article>
           <article class="card status-card status-plan">
@@ -331,13 +427,15 @@ bun src/cli/main.ts exec --auto low <span class="tk-s">"Fix the failing test"</s
             <ul>
               <li>Hosted parts, such as cloud machines and session sync</li>
               <li>Workstreams for Missions</li>
+              <li>GitHub-event and Slack automation triggers</li>
             </ul>
           </article>
         </div>
         <p class="small status-links">
-          Known issues and design choices: <a href="https://github.com/scottconverse/rigwell/blob/main/docs/handoff/HANDOFF.md">HANDOFF.md</a>
+          Release notes: <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.2.0">v0.2.0</a>
+          &middot; Known issues: <a href="https://github.com/scottconverse/rigwell/blob/main/docs/handoff/HANDOFF.md">HANDOFF.md</a>
           &middot; <a href="https://github.com/scottconverse/rigwell/blob/main/docs/decisions.md">decisions.md</a>
-          &middot; <a href="https://github.com/scottconverse/rigwell/blob/main/spec/harness-spec.md">the build spec</a>
+          &middot; <a href="manual/#limits">all known limits</a>
         </p>
       </div>
     </section>
@@ -348,8 +446,9 @@ bun src/cli/main.ts exec --auto low <span class="tk-s">"Fix the failing test"</s
         <h2>Read the code. Run it on your machine.</h2>
         <p>Rigwell is AGPL-3.0 licensed. Issues and pull requests are welcome on GitHub.</p>
         <div class="cta-row">
-          <a class="btn btn-primary" href="https://github.com/scottconverse/rigwell">View on GitHub</a>
-          <a class="btn btn-ghost-dark" href="#quick-start">Quick start</a>
+          <a class="btn btn-primary" href="https://github.com/scottconverse/rigwell/releases/tag/v0.2.0">Download v0.2.0</a>
+          <a class="btn btn-ghost-dark" href="manual/">Read the manual</a>
+          <a class="btn btn-ghost-dark" href="https://github.com/scottconverse/rigwell">View on GitHub</a>
         </div>
       </div>
     </section>
@@ -357,9 +456,11 @@ bun src/cli/main.ts exec --auto low <span class="tk-s">"Fix the failing test"</s
 
   <footer class="site-footer">
     <div class="wrap footer-inner">
-      <span>Rigwell &middot; <a href="https://github.com/scottconverse/rigwell/blob/main/LICENSE">AGPL-3.0-only</a></span>
+      <span>Rigwell 0.2.0 &middot; <a href="https://github.com/scottconverse/rigwell/blob/main/LICENSE">AGPL-3.0-only</a></span>
       <span>
+        <a href="manual/">Manual</a> &middot;
         <a href="https://github.com/scottconverse/rigwell">Source</a> &middot;
+        <a href="https://github.com/scottconverse/rigwell/releases">Releases</a> &middot;
         <a href="https://github.com/scottconverse/rigwell/issues">Issues</a> &middot;
         <a href="https://github.com/scottconverse/rigwell/blob/main/NOTICE">Notices</a>
       </span>

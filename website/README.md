@@ -1,6 +1,6 @@
 # Rigwell website
 
-The landing page for Rigwell. It is plain HTML, CSS and a small script, with no build step.
+The landing page and the user manual for Rigwell. They are plain HTML, CSS and small scripts, with no build step.
 
 | File | What it is |
 |---|---|
@@ -8,10 +8,13 @@ The landing page for Rigwell. It is plain HTML, CSS and a small script, with no 
 | `styles.css` | The styles. Colors come from the desktop app (`desktop/renderer/styles.css`) and the app icon. Dark mode follows the system setting. |
 | `main.js` | The phone menu and the Copy buttons. The page works without it. |
 | `assets/` | The app icon and three screenshots of the desktop app |
+| `manual/index.html` | The user manual, one page, published at `/rigwell/manual/` |
+| `manual/manual.css` | Manual layout (sidebar, tables, diagrams). It loads after `styles.css` and uses its colors. |
+| `manual/manual.js` | Sidebar filter, active section, heading links and Mermaid diagrams. Mermaid 11.4.1 loads from jsDelivr. Without it, the diagram source shows as text. |
 
 ## Preview
 
-Serve the folder with any static server, then open http://localhost:8765:
+Serve the folder with any static server, then open http://localhost:8765 (the manual is at http://localhost:8765/manual/):
 
 ```bash
 python -m http.server 8765 --directory website

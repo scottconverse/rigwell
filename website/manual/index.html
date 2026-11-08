@@ -1,0 +1,967 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rigwell manual</title>
+  <meta name="description" content="The Rigwell user manual: install, models, autonomy, MCP with OAuth sign-in, automations, the JSON-RPC protocol, every local HTTP endpoint, the CLI, configuration and the architecture.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#0e2a36">
+  <link rel="icon" href="../assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="manual.css">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js" defer></script>
+  <script src="manual.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#doc-main">Skip to content</a>
+
+  <header class="site-header doc-header" id="top">
+    <nav class="nav" aria-label="Main">
+      <a class="brand" href="../" aria-label="Rigwell home">
+        <img src="../assets/icon.svg" alt="" width="28" height="28">
+        <span>Rigwell <small>Manual</small></span>
+      </a>
+      <button class="toc-toggle" aria-expanded="false" aria-controls="toc">Contents</button>
+      <ul class="nav-links">
+        <li><a href="../">Home</a></li>
+        <li><a href="#quick-start">Quick start</a></li>
+        <li><a href="#protocol">Protocol</a></li>
+        <li><a href="https://github.com/scottconverse/rigwell/releases/tag/v0.2.0">v0.2.0</a></li>
+        <li><a class="nav-gh" href="https://github.com/scottconverse/rigwell">GitHub</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <div class="doc">
+    <aside class="toc" id="toc" aria-label="Manual contents">
+      <input class="toc-search" type="search" placeholder="Filter sections" aria-label="Filter sections">
+      <div class="toc-group"><p>Start</p><ul>
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#install">Install</a></li>
+        <li><a href="#quick-start">Quick start</a></li>
+        <li><a href="#concepts">Core ideas</a></li>
+      </ul></div>
+      <div class="toc-group"><p>Use</p><ul>
+        <li><a href="#clients">Clients</a></li>
+        <li><a href="#models">Models and providers</a></li>
+        <li><a href="#autonomy">Autonomy and approvals</a></li>
+        <li><a href="#tools">Agent tools</a></li>
+        <li><a href="#mcp">MCP servers</a></li>
+        <li><a href="#mcp-oauth">MCP sign-in (OAuth)</a></li>
+        <li><a href="#automations">Automations</a></li>
+        <li><a href="#missions">Missions</a></li>
+        <li><a href="#worktrees">Worktrees and PRs</a></li>
+        <li><a href="#extend">Skills, hooks, agents</a></li>
+        <li><a href="#eval">Eval</a></li>
+      </ul></div>
+      <div class="toc-group"><p>Reference</p><ul>
+        <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#protocol">JSON-RPC protocol</a></li>
+        <li><a href="#methods">Protocol methods</a></li>
+        <li><a href="#notifications">Notifications</a></li>
+        <li><a href="#http">HTTP and WebSocket paths</a></li>
+        <li><a href="#cli">CLI</a></li>
+        <li><a href="#tui">TUI commands and keys</a></li>
+        <li><a href="#config">Configuration</a></li>
+        <li><a href="#env">Environment variables</a></li>
+        <li><a href="#sdk">TypeScript SDK</a></li>
+        <li><a href="#storage">Files on disk</a></li>
+        <li><a href="#security">Security model</a></li>
+      </ul></div>
+      <div class="toc-group"><p>Help</p><ul>
+        <li><a href="#limits">Known limits</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+        <li><a href="#releases">Releases and CI</a></li>
+      </ul></div>
+    </aside>
+
+    <main class="doc-main" id="doc-main">
+
+      <!-- ============================== START ============================== -->
+      <section id="overview">
+        <p class="kicker">Rigwell manual &middot; version 0.2.0</p>
+        <h1>Rigwell user manual</h1>
+        <p class="doc-lede">Rigwell is a coding agent that runs on your own machine, with the model you choose. This manual covers how to install and use it, and every interface a program can call: the JSON-RPC protocol, the local HTTP and WebSocket endpoints, the CLI, the SDK and MCP.</p>
+        <div class="meta-row">
+          <span class="tag tag-new">New in 0.2.0: MCP OAuth sign-in</span>
+          <span class="tag">Bun + TypeScript</span>
+          <span class="tag">Electron desktop app</span>
+          <span class="tag">AGPL-3.0-only</span>
+        </div>
+        <p>One local <strong>daemon</strong> (a background process) holds the agent sessions. Four clients talk to it: a terminal UI (TUI), a desktop app, a headless <code>exec</code> mode and a TypeScript SDK. The agent reads, edits and runs code in your repository. Commands above the autonomy level you set wait for your approval.</p>
+        <div class="cards-2">
+          <div class="card"><h4>What Rigwell is</h4><p>A local agent harness. It talks to the model API you configure, runs tools on your machine, and keeps sessions, snapshots and settings in a folder in your home directory.</p></div>
+          <div class="card"><h4>What Rigwell is not</h4><p>A hosted service. It ships no model, no account and no telemetry endpoint. Hosted parts are planned, not built.</p></div>
+        </div>
+      </section>
+
+      <section id="install">
+        <h2>Install</h2>
+        <h3 id="install-installer">From the installer</h3>
+        <p>Download the installer from the <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.2.0">v0.2.0 release</a>.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Platform</th><th>File</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td>Windows x64</td><td><code>rigwell-setup-0.2.0-x64.exe</code></td><td>The release target</td></tr>
+            <tr><td>Linux x64</td><td><code>rigwell-0.2.0-x86_64.AppImage</code>, <code>rigwell-0.2.0-amd64.deb</code></td><td>Extra build</td></tr>
+            <tr><td>macOS (Apple silicon)</td><td>Not in 0.2.0</td><td>The macOS job did not run. v0.1.0 has a macOS build.</td></tr>
+          </tbody>
+        </table></div>
+        <div class="note note-warn"><strong>The installers are not signed.</strong><p>Windows SmartScreen shows a warning before the setup runs. Select "More info", then "Run anyway".</p></div>
+        <h3 id="install-source">From source</h3>
+        <p>You need <a href="https://bun.sh">Bun</a> 1.4 or later, <code>git</code>, and <code>rg</code> (ripgrep) on your PATH. The <code>Grep</code> tool calls <code>rg</code> and reports an error if it is missing.</p>
+<pre><code>git clone https://github.com/scottconverse/rigwell
+cd rigwell
+bun install
+bun src/cli/main.ts --help</code></pre>
+        <p>The desktop app lives in <code>desktop/</code>:</p>
+<pre><code>cd desktop
+npm install
+bun run build.ts
+npx electron .</code></pre>
+        <p>To build installers: <code>bun run package:win</code>, <code>package:linux</code> or <code>package:mac</code> in <code>desktop/</code>.</p>
+      </section>
+
+      <section id="quick-start">
+        <h2>Quick start</h2>
+        <p>Rigwell has no built-in model list. You add each model to <code>settings.json</code> in the Rigwell home folder: <code>~/.rigwell/</code>, or <code>$RIGWELL_HOME</code> if you set it.</p>
+        <h3 id="qs-1">1. Add a model</h3>
+<pre><code>{
+  "customModels": [
+    {
+      "model": "your-model-id",
+      "displayName": "My model",
+      "provider": "anthropic",
+      "baseUrl": "https://api.anthropic.com",
+      "apiKey": "${ANTHROPIC_API_KEY}"
+    }
+  ]
+}</code></pre>
+        <p><code>${ANTHROPIC_API_KEY}</code> reads the key from your environment. To keep the key in the credential store, run <code>rigwell credential set anthropic</code>, type the key on stdin, and use <code>"apiKey": "keychain:anthropic"</code>.</p>
+        <h3 id="qs-2">2. Start a session</h3>
+<pre><code>rigwell                                  # terminal UI
+rigwell exec --auto low "Fix the failing test"
+rigwell daemon                           # background daemon for the desktop app and SDK</code></pre>
+        <p>From source, put <code>bun src/cli/main.ts</code> in place of <code>rigwell</code>.</p>
+        <h3 id="qs-3">3. Trust the folder</h3>
+        <p>The first time you open a project, Rigwell asks if you trust the folder. Project settings, hooks, skills, agents, instruction files and project MCP servers load only for a trusted folder. For scripts, use <code>--trust</code> or <code>RIGWELL_TRUST_CWD=1</code>.</p>
+        <div class="note note-ok"><strong>Default is read-only.</strong><p>A new session starts at autonomy <code>off</code>. The agent can read and search. Every command and edit waits for you. Raise it with <code>--auto low|medium|high</code> or <kbd>Ctrl+L</kbd> in the TUI.</p></div>
+      </section>
+
+      <section id="concepts">
+        <h2>Core ideas</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td>Daemon</td><td>The process <code>rigwell daemon</code>. It serves a Unix socket and a loopback WebSocket. It also runs automations, missions and the side pane.</td></tr>
+            <tr><td>Connection</td><td>One socket, WebSocket or stdio link. One connection holds one session.</td></tr>
+            <tr><td>Session</td><td>A conversation with the agent. Saved as JSONL under <code>sessions/</code>. It can be loaded, forked, rewound, renamed, pinned and archived.</td></tr>
+            <tr><td>Turn</td><td>One user message and all the model calls and tool calls that follow, up to <code>agent_turn_completed</code>.</td></tr>
+            <tr><td>Autonomy</td><td><code>off</code>, <code>low</code>, <code>medium</code>, <code>high</code>. It sets which actions run without a prompt.</td></tr>
+            <tr><td>Interaction mode</td><td><code>auto</code> (normal), <code>spec</code> (read-only planning) or <code>mission</code> (orchestrated multi-worker run).</td></tr>
+            <tr><td>Script mode</td><td>The model writes a short JavaScript program that calls tools as functions. Many tool calls then take one model request.</td></tr>
+            <tr><td>Snapshot</td><td>A copy of a file before an <code>Edit</code>, <code>Create</code> or <code>ApplyPatch</code>. <code>rewind_session</code> restores it. Files changed by shell commands are not saved, so rewind cannot restore them.</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <!-- ============================== USE ============================== -->
+      <section id="clients">
+        <h2>Clients</h2>
+        <p>All clients speak the same JSON-RPC protocol. They differ in where the session runs.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Client</th><th>Start</th><th>Transport</th><th>Daemon-only features</th></tr></thead>
+          <tbody>
+            <tr><td>Terminal UI</td><td><code>rigwell</code></td><td>In-process by default. <code>--daemon</code>, <code>--socket</code> or <code>--url</code> attach to a daemon.</td><td>Only when attached</td></tr>
+            <tr><td>Desktop app</td><td>The installer, or <code>npx electron .</code></td><td>WebSocket to a daemon the app starts and supervises</td><td>Yes</td></tr>
+            <tr><td>Headless exec</td><td><code>rigwell exec "prompt"</code></td><td>In-process. With <code>--input-format stream-jsonrpc --output-format stream-jsonrpc</code>, NDJSON on stdio.</td><td>No</td></tr>
+            <tr><td>SDK</td><td><code>run()</code>, <code>createSession()</code>, <code>connectToDaemon()</code></td><td>Spawned exec, Unix socket or WebSocket</td><td>With <code>connectToDaemon</code></td></tr>
+          </tbody>
+        </table></div>
+        <p>"Daemon-only" means automations, crons, missions, the side pane (files, terminals, side chat) and the <code>Browser</code> tool. These methods exist only on a daemon connection.</p>
+        <h3 id="clients-exec">exec mode</h3>
+        <p><code>rigwell exec</code> prints the assistant text on stdout. It prints <code>[session] &lt;id&gt; model=&lt;m&gt; autonomy=&lt;a&gt;</code> and <code>[turn] &lt;reason&gt;</code> on stderr. The exit code is 0 only when the turn reason is <code>completed</code>. exec never prompts. An action that needs approval is refused.</p>
+        <h3 id="clients-desktop">Desktop app</h3>
+        <p>The app starts its own daemon, checks it is alive, and restarts it if it stops. It adds a side pane with files, terminals, a browser pane and a side chat. It registers the <code>rigwell://</code> URL scheme. Its settings live in <code>desktop-settings.json</code>.</p>
+      </section>
+
+      <section id="models">
+        <h2>Models and providers</h2>
+        <p><code>customModels[]</code> in settings is the only way to define a model. Rigwell checks each entry. A bad entry is skipped. <code>list_models {"includeDisabled": true}</code> shows it with the reason.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th><code>provider</code></th><th>API</th><th>Request path</th><th>Auth header</th></tr></thead>
+          <tbody>
+            <tr><td><code>anthropic</code></td><td>Anthropic Messages</td><td><code>&lt;baseUrl&gt;/v1/messages</code></td><td><code>x-api-key</code>, <code>anthropic-version: 2023-06-01</code></td></tr>
+            <tr><td><code>openai</code></td><td>OpenAI Responses</td><td><code>&lt;baseUrl&gt;/v1/responses</code> (WebSocket mode for the public OpenAI base only)</td><td><code>Authorization: Bearer</code></td></tr>
+            <tr><td><code>generic-chat-completion-api</code></td><td>OpenAI-compatible Chat Completions</td><td><code>&lt;baseUrl&gt;/v1/chat/completions</code></td><td><code>Authorization: Bearer</code> (left out if no key)</td></tr>
+            <tr><td><code>google</code></td><td>Gemini</td><td><code>/v1beta/models/&lt;model&gt;:streamGenerateContent?alt=sse</code></td><td><code>x-goog-api-key</code></td></tr>
+            <tr><td><code>bedrock-converse</code></td><td>Amazon Bedrock Converse</td><td><code>/model/&lt;model&gt;/converse-stream</code></td><td>SigV4 or Bearer</td></tr>
+          </tbody>
+        </table></div>
+        <h3 id="models-fields">Entry fields</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>model</code></td><td>Required. The model name the API expects.</td></tr>
+            <tr><td><code>provider</code></td><td>Required. One of the five above.</td></tr>
+            <tr><td><code>displayName</code></td><td>Name in the UI. The model id is <code>custom:&lt;displayName with dashes&gt;-&lt;index&gt;</code>, for example <code>custom:My-model-0</code>.</td></tr>
+            <tr><td><code>baseUrl</code></td><td>Required http(s) URL, except for <code>google</code>, Bedrock, or an OAuth provider with <code>apiBaseUrl</code>.</td></tr>
+            <tr><td><code>apiKey</code></td><td>A literal, <code>${ENV_VAR}</code>, or <code>keychain:&lt;name&gt;</code>. Placeholder values such as <code>your-api-key</code> or <code>changeme</code> are rejected.</td></tr>
+            <tr><td><code>credentialSource</code></td><td>Name of an <code>oauthProviders</code> entry. Cannot be used with <code>apiKey</code>.</td></tr>
+            <tr><td><code>extraHeaders</code>, <code>extraArgs</code></td><td>Extra request headers and body fields.</td></tr>
+            <tr><td><code>maxOutputTokens</code>, <code>maxContextLimit</code></td><td>Positive integers.</td></tr>
+            <tr><td><code>reasoningEffort</code></td><td><code>none</code>, <code>dynamic</code>, <code>off</code>, <code>minimal</code>, <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code>.</td></tr>
+            <tr><td><code>noImageSupport</code></td><td>Default true for <code>generic-chat-completion-api</code>, false for the rest.</td></tr>
+            <tr><td><code>fileEditToolProfile</code></td><td><code>apply-patch</code> or <code>create-edit</code>. OpenAI-made models default to ApplyPatch.</td></tr>
+            <tr><td><code>bedrock</code></td><td><code>awsRegion</code>, <code>awsAuthMethod</code> (<code>bearer-token</code>, <code>access-keys</code>, <code>profile</code>, <code>credentials-command</code>), <code>awsProfile</code>, keys, <code>awsCredentialExport</code>, <code>awsAuthRefresh</code>.</td></tr>
+          </tbody>
+        </table></div>
+        <h3 id="models-examples">Examples</h3>
+<pre><code>{ "customModels": [
+  { "model": "claude-model-id", "provider": "anthropic",
+    "baseUrl": "https://api.anthropic.com", "apiKey": "${ANTHROPIC_API_KEY}" },
+  { "model": "gpt-model-id", "provider": "openai",
+    "baseUrl": "https://api.openai.com", "apiKey": "keychain:openai" },
+  { "model": "llama3", "provider": "generic-chat-completion-api",
+    "baseUrl": "http://127.0.0.1:11434" },
+  { "model": "gemini-model-id", "provider": "google", "apiKey": "${GEMINI_API_KEY}" },
+  { "model": "bedrock-model-id", "provider": "bedrock-converse",
+    "bedrock": { "awsRegion": "us-east-1", "awsAuthMethod": "profile", "awsProfile": "dev" } }
+] }</code></pre>
+        <p>The model names above are placeholders. Use the names your provider lists.</p>
+        <h3 id="models-oauth">Account sign-in for models</h3>
+        <p>A model can use OAuth instead of an API key. Rigwell ships no OAuth provider entries and no client ids. You register your own client and add it under <code>oauthProviders.&lt;name&gt;</code> with <code>clientId</code>, <code>tokenEndpoint</code>, and an <code>authorizationEndpoint</code> or <code>deviceAuthorizationEndpoint</code>. Then run <code>rigwell auth login &lt;name&gt;</code> (add <code>--device</code> for the device flow). Tokens refresh when they have less than 60 seconds left.</p>
+        <h3 id="models-auto">The auto router</h3>
+        <p>With <code>autoRouter</code> set (a classifier model and a list of candidates), the model id <code>auto</code> picks a candidate for each request.</p>
+      </section>
+
+      <section id="autonomy">
+        <h2>Autonomy and approvals</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Level</th><th>Runs without a prompt</th></tr></thead>
+          <tbody>
+            <tr><td><code>off</code> (default)</td><td>Reads and searches only. Edit tools are not even offered to the model. Every command asks.</td></tr>
+            <tr><td><code>low</code></td><td>File edits, URL fetches, and commands the model rates low risk.</td></tr>
+            <tr><td><code>medium</code></td><td>Also commands rated medium risk (reversible).</td></tr>
+            <tr><td><code>high</code></td><td>All commands, except those on the deny list or block list. Subagents (<code>Task</code>) are offered only at this level.</td></tr>
+          </tbody>
+        </table></div>
+        <p>The model must label every <code>Execute</code> call with <code>riskLevel</code> and <code>riskReason</code>. A call with no risk level does not run. Rigwell then checks the command against three lists:</p>
+        <div class="diagram"><pre class="mermaid">
+flowchart TD
+  A["Execute call"] --> B{"riskLevel present?"}
+  B -- no --> R["Not run. Model is told to resend"]
+  B -- yes --> C{"On block list?"}
+  C -- yes --> X["Blocked"]
+  C -- no --> D{"On deny list?"}
+  D -- yes --> P["Ask. No 'always' option"]
+  D -- no --> E{"On allow list?"}
+  E -- yes --> OK["Run"]
+  E -- no --> F{"risk rank &lt;= autonomy rank?"}
+  F -- yes --> OK
+  F -- no --> Q["Ask. 'Always' raises autonomy to that level"]
+</pre><figcaption>How Rigwell decides to run a shell command. Ranks: off 0, low 1, medium 2, high 3. Spec mode blocks anything not rated low.</figcaption></div>
+        <ul>
+          <li><strong>Allow list</strong> (default): <code>ls</code>, <code>pwd</code>, <code>dir</code>, <code>git status</code>, <code>git diff</code>, <code>git log</code>, <code>git show</code>, <code>git blame</code>, <code>git ls-files</code>.</li>
+          <li><strong>Deny list</strong> (default, forces a prompt): disk format and <code>dd</code> to a device, shutdown and reboot, <code>chmod -R 777 /</code>, <code>chown -R</code>, <code>Format-Volume</code>, recursive <code>Remove-Item -Force</code>, <code>rm -r</code> on <code>/</code>, <code>~</code>, <code>.</code> or <code>$HOME</code>, and fork bombs.</li>
+          <li><strong>Block list</strong>: empty by default. A match never runs.</li>
+        </ul>
+        <p><code>--skip-permissions-unsafe</code> runs every tool call without asking. An org <code>maxAutonomyLevel</code> below <code>high</code> refuses it.</p>
+        <h3 id="autonomy-prompts">Approval prompts</h3>
+        <p>A prompt offers <code>proceed_once</code>, <code>proceed_always</code> and <code>cancel</code>. For MCP tools it offers <code>proceed_once</code>, <code>proceed_always_tools</code>, <code>proceed_always_server</code> and <code>cancel</code>. MCP tool calls always ask unless you saved an "always" answer. Autonomy does not change that.</p>
+        <h3 id="autonomy-sandbox">Command sandbox</h3>
+        <p>With <code>sandbox.enabled</code>, <code>Execute</code> runs inside bubblewrap on Linux or sandbox-exec on macOS. You set file and network rules in <code>sandbox.filesystem</code> and <code>sandbox.network</code>. Windows has no sandbox. If the sandbox is on but not available, <code>Execute</code> fails.</p>
+        <h3 id="autonomy-spec">Spec mode</h3>
+        <p>Spec mode is read-only planning. Edits are allowed only under <code>.rigwell/specs/</code>. Only low-risk commands run. The model ends with <code>ExitSpecMode</code>, and you approve, edit, or hand the plan to a new session. Approved plans go to <code>specSaveDir</code> (default <code>.rigwell/docs</code>).</p>
+      </section>
+
+      <section id="tools">
+        <h2>Agent tools</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
+          <tbody>
+            <tr><td><code>Read</code>, <code>LS</code>, <code>Grep</code>, <code>Glob</code></td><td>Read files and images, list folders, ripgrep search, glob search</td><td>Never asks</td></tr>
+            <tr><td><code>Execute</code></td><td>Run a shell command. Timeout 120 s (max 600 s). Output cap 30,000 characters per stream. Can run in the background.</td><td>See the flowchart</td></tr>
+            <tr><td><code>Edit</code>, <code>Create</code>, <code>ApplyPatch</code></td><td>Change files. The file must have been read first and be unchanged.</td><td><code>low</code> and up</td></tr>
+            <tr><td><code>FetchUrl</code></td><td>GET a URL. HTML becomes text. 2 MiB body cap, 30 s timeout.</td><td><code>low</code> and up</td></tr>
+            <tr><td><code>Script</code>, <code>script_job</code></td><td>Run JavaScript in a QuickJS sandbox that calls tools as <code>tools.Name({...})</code>. 256 MiB memory, 2 h total.</td><td>Each inner tool call is checked by itself</td></tr>
+            <tr><td><code>Task</code>, <code>TaskOutput</code>, <code>TaskStop</code></td><td>Start and manage a subagent with its own context</td><td>Offered at <code>high</code> only</td></tr>
+            <tr><td><code>TodoWrite</code>, <code>AskUser</code>, <code>StructuredOutput</code>, <code>Skill</code></td><td>Task list, multiple-choice questions, schema answer, load a skill</td><td>Never asks</td></tr>
+            <tr><td><code>Browser</code></td><td>Drive the desktop browser pane: open, navigate, snapshot, click, type, screenshot</td><td>Read actions never ask. Others need <code>low</code>.</td></tr>
+            <tr><td>Automation tools</td><td><code>CreateAutomation</code>, <code>EditAutomation</code>, <code>DeleteAutomation</code>, <code>RunAutomation</code>, <code>Loop</code></td><td>Always ask</td></tr>
+            <tr><td>MCP tools</td><td><code>server__tool</code>, loaded on demand</td><td>Always ask unless saved</td></tr>
+          </tbody>
+        </table></div>
+        <p>On Windows, <code>Execute</code> uses Git Bash if it finds it, else PowerShell, else <code>cmd.exe</code>.</p>
+      </section>
+
+      <section id="mcp">
+        <h2>MCP servers</h2>
+        <p>Rigwell is an MCP <strong>client</strong>. It connects to MCP servers and gives their tools to the model. It does not run an MCP server of its own.</p>
+        <h3 id="mcp-config">mcp.json</h3>
+        <p>Files: <code>~/.rigwell/mcp.json</code> (user), <code>&lt;project&gt;/.rigwell/mcp.json</code> and folder <code>.rigwell/mcp.json</code> (trusted folders only). On a name clash the higher level wins.</p>
+<pre><code>{
+  "mcpServers": {
+    "files": { "command": "npx", "args": ["-y", "some-mcp-server"], "env": { "LOG": "1" } },
+    "docs":  { "type": "http", "url": "https://mcp.example.com/mcp" },
+    "old":   { "type": "sse",  "url": "https://legacy.example.com/sse",
+               "headers": { "Authorization": "Bearer ${TOKEN}" } },
+    "off":   { "command": "my-server", "disabled": true }
+  }
+}</code></pre>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Transport</th><th>How it works</th></tr></thead>
+          <tbody>
+            <tr><td><code>stdio</code></td><td>Starts the command as a child process. Newline-delimited JSON-RPC. The default when there is no <code>url</code>.</td></tr>
+            <tr><td><code>http</code></td><td>MCP streamable HTTP. POST with <code>Accept: application/json, text/event-stream</code>. Keeps <code>Mcp-Session-Id</code>. The default when there is a <code>url</code>.</td></tr>
+            <tr><td><code>sse</code></td><td>Legacy SSE. GET an event stream, wait up to 10 s for the <code>endpoint</code> event, POST to it.</td></tr>
+          </tbody>
+        </table></div>
+        <p>Rigwell sends MCP protocol version <code>2025-06-18</code>. It uses MCP tools only. It does not use MCP resources, prompts or sampling. Servers start in parallel and never block the first turn. A dropped server reconnects after 1 s. A server that drops 6 times is marked <code>failed</code>.</p>
+        <p>MCP tools are <strong>deferred</strong>: the model first sees only names. It loads a schema with <code>load_tools</code>, then calls <code>call_tool</code>. In script mode it calls <code>tools.&lt;server&gt;.&lt;tool&gt;()</code>.</p>
+        <h3 id="mcp-manage">Add and remove servers</h3>
+        <ul>
+          <li>TUI: <code>/mcp add &lt;name&gt; &lt;url|cmd&gt;</code>, <code>/mcp remove &lt;name&gt;</code>, <code>/mcp</code> to list.</li>
+          <li>Protocol: <code>add_mcp_server</code>, <code>remove_mcp_server</code>, <code>list_mcp_servers</code>. These write the user <code>mcp.json</code> only.</li>
+          <li>Per session: pass <code>mcpServers[]</code> to <code>initialize_session</code>. A session server overrides a file server with the same name.</li>
+        </ul>
+      </section>
+
+      <section id="mcp-oauth">
+        <h2>MCP sign-in (OAuth) <span class="tag tag-new">New in 0.2.0</span></h2>
+        <p>An <code>http</code> or <code>sse</code> server that answers 401 needs sign-in. Rigwell shows "Sign-in needed: run <code>rigwell mcp login &lt;name&gt;</code>". Nothing opens a browser until you ask.</p>
+        <div class="cards-2">
+          <div class="card"><h4>Terminal</h4>
+<pre><code>rigwell mcp status
+rigwell mcp login docs
+rigwell mcp logout docs</code></pre></div>
+          <div class="card"><h4>Desktop app</h4><p>Open the Connectors dialog (the composer chip) or Settings &gt; Connectors. Select <strong>Sign in</strong>. The app opens your browser, waits, then reconnects the server. <strong>Sign out</strong> removes the token.</p></div>
+        </div>
+        <p>The flow follows the MCP authorization spec (2025-06-18):</p>
+        <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant U as You
+  participant R as Rigwell
+  participant M as MCP server
+  participant A as Auth server
+  R->>M: tools request
+  M-->>R: 401 + WWW-Authenticate
+  R-->>U: Sign-in needed
+  U->>R: mcp login (or Sign in button)
+  R->>M: GET /.well-known/oauth-protected-resource (RFC 9728)
+  R->>A: GET server metadata (RFC 8414, then OpenID)
+  R->>A: Register client (RFC 7591), if no client id
+  R->>U: Open browser at authorize URL (PKCE S256)
+  U->>A: Sign in and approve
+  A-->>R: Redirect to http://127.0.0.1:port/callback
+  R->>A: Exchange code (+ resource, RFC 8707)
+  A-->>R: Access and refresh tokens
+  R->>M: Reconnect with Bearer token
+</pre><figcaption>MCP OAuth sign-in. The redirect catcher on 127.0.0.1 runs only during the login and stops after 5 minutes.</figcaption></div>
+        <h3 id="mcp-oauth-options">oauth options in mcp.json</h3>
+<pre><code>"docs": {
+  "type": "http",
+  "url": "https://mcp.example.com/mcp",
+  "oauth": {
+    "scopes": ["read"],
+    "clientId": "optional-preregistered-id",
+    "clientMetadataUrl": "https://example.com/client.json",
+    "resource": "https://mcp.example.com",
+    "authorizationServerIssuer": "https://auth.example.com"
+  }
+}</code></pre>
+        <ul>
+          <li>Client choice: <code>clientId</code>, then <code>clientMetadataUrl</code> (if the server supports it), then a client registered before, then dynamic registration.</li>
+          <li>All endpoints must be https. Plain http is allowed only for 127.0.0.1 and localhost.</li>
+          <li>Tokens refresh before they expire. A failed refresh says "The sign-in expired".</li>
+          <li>Tokens are in the credential store under <code>oauth:mcp.&lt;server&gt;</code>. The client record is under <code>mcp-oauth:&lt;server&gt;</code>. Logout removes the token and keeps the client.</li>
+          <li><code>"oauth": false</code>, or an <code>Authorization</code> header in <code>headers</code>, turns OAuth off. A 403 stays a plain error. stdio servers never use OAuth.</li>
+        </ul>
+        <div class="note note-warn"><strong>Tested against a fake server only.</strong><p>The OAuth flow passes tests against a local fake MCP OAuth server. It is not yet tested against a real MCP server.</p></div>
+      </section>
+
+      <section id="automations">
+        <h2>Automations</h2>
+        <p>An automation is a saved prompt that runs on a schedule or when a local webhook is called. Automations run inside the daemon. A run is unattended: any action that would ask is refused, so the automation's autonomy decides what it can do.</p>
+        <ul>
+          <li>Create one by chatting (<code>start_automation_setup</code>), from a template (<code>list_automation_templates</code>, then <code>create_automation {templateId}</code>), or with the TUI <code>/automations</code> command.</li>
+          <li>Template categories: health, dependencies, testing, release, git.</li>
+          <li>Each automation has a folder: <code>HEARTBEAT.md</code> (front matter and prompt), <code>memory/</code>, <code>reports/</code>, <code>secrets.json</code> and a generated <code>VISUAL.html</code>.</li>
+          <li>Rigwell pauses an automation by itself after missed runs or repeated failures, and sends <code>rigwell.automation.auto_paused</code>.</li>
+        </ul>
+        <h3 id="automations-webhook">Webhook trigger</h3>
+        <p>An automation with <code>trigger: "webhook"</code> listens on <code>POST http://127.0.0.1:47821/hooks/&lt;id&gt;</code>. The listener runs only while at least one webhook automation exists. See <a href="#http-webhook">the webhook endpoint</a> for the full contract.</p>
+        <div class="diagram"><pre class="mermaid">
+flowchart LR
+  C["Caller"] -->|"POST /hooks/id"| W["Webhook listener 127.0.0.1:47821"]
+  W --> S{"Secret OK?"}
+  S -- no --> E401["401"]
+  S -- yes --> P{"Paused?"}
+  P -- yes --> E409["409"]
+  P -- no --> F{"payloadRegex match?"}
+  F -- no --> FIL["200 filtered"]
+  F -- yes --> D{"Same body in 60 s?"}
+  D -- yes --> DUP["200 deduped"]
+  D -- no --> CAP{"Over maxRunsPerHour?"}
+  CAP -- yes --> E429["429 capped"]
+  CAP -- no --> RUN["202 runId. Run starts"]
+</pre><figcaption>What happens to a webhook delivery.</figcaption></div>
+        <h3 id="automations-loop">Loops and crons</h3>
+        <p>In a session, <code>/loop 30m &lt;prompt&gt;</code> repeats a prompt. Units are <code>m</code> and <code>h</code>. A loop runs only while the daemon runs and the session is open. Protocol: <code>list_crons</code>, <code>create_cron</code>, <code>update_cron</code>, <code>delete_cron</code>.</p>
+      </section>
+
+      <section id="missions">
+        <h2>Missions</h2>
+        <p>A mission is a large task that an orchestrator splits into features. Worker sessions build each feature, and validation workers check it. Missions run at autonomy <code>high</code>. The orchestrator proposes the mission with <code>ProposeMission</code>, and you approve it before <code>StartMissionRun</code>.</p>
+        <ul>
+          <li>Protocol: <code>enter_mission_mode</code>, <code>mission_get</code>, <code>mission_pause</code>, <code>kill_worker_session</code>, <code>mission_list</code>.</li>
+          <li>Settings: <code>missions.allowedModels</code>, <code>missions.orchestratorModel</code>, and per session <code>missionSettings</code> (<code>workerModel</code>, <code>validationWorkerModel</code>, <code>skipScrutiny</code>, <code>skipUserTesting</code>).</li>
+          <li>A worker with no activity for 10 minutes stops (<code>RIGWELL_MISSION_WORKER_INACTIVITY_TIMEOUT_MS</code>).</li>
+          <li>Workstreams for missions are planned, not built.</li>
+        </ul>
+      </section>
+
+      <section id="worktrees">
+        <h2>Worktrees and pull requests</h2>
+        <p>A session can run in its own git worktree (<code>worktree: true</code>, or the <code>runInWorktree</code> setting). Worktrees go to <code>~/.rigwell/worktrees/</code> unless you set <code>worktreeDirectory</code>. Rigwell deletes old ones when there are more than <code>worktreeAutoDeleteLimit</code> (default 15).</p>
+        <ul>
+          <li>Git methods: <code>list_git_branches</code>, <code>checkout_git_branch</code>, <code>git_commit</code>, <code>git_push</code>, <code>get_git_branch_divergence</code>.</li>
+          <li><code>create_pr {title, body, base, draft}</code> asks you first. It uses <code>gh</code>, or the GitHub API (<code>RIGWELL_GITHUB_API</code>).</li>
+          <li>Create PR refuses a branch with no new commits. With uncommitted edits it tells you to commit first. <span class="tag tag-new">Fixed in 0.2.0</span></li>
+          <li>With <code>enableSecretScan</code>, Rigwell scans staged changes before <code>git commit</code>.</li>
+        </ul>
+      </section>
+
+      <section id="extend">
+        <h2>Skills, hooks, agents and commands</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Kind</th><th>Where</th><th>Format</th></tr></thead>
+          <tbody>
+            <tr><td>Skills</td><td><code>.rigwell/skills/&lt;name&gt;/</code>, <code>.agents/skills/</code>, <code>~/.rigwell/skills/</code></td><td><code>SKILL.md</code> with front matter. Body up to 10,000 characters. The first match wins.</td></tr>
+            <tr><td>Subagents</td><td><code>.rigwell/agents/&lt;name&gt;.md</code>, <code>~/.rigwell/agents/</code></td><td>Front matter: <code>name</code>, <code>description</code>, <code>model</code>, <code>reasoningEffort</code>, <code>tools</code>, <code>mcpServers</code>. Body = system prompt.</td></tr>
+            <tr><td>Slash commands</td><td><code>.rigwell/commands/&lt;name&gt;.md</code>, <code>~/.rigwell/commands/</code></td><td>Front matter <code>description</code>, <code>argument-hint</code>. Body uses <code>$ARGUMENTS</code> and <code>$1</code> to <code>$9</code>.</td></tr>
+            <tr><td>Hooks</td><td><code>hooks</code> in settings, or <code>hooks.json</code></td><td>Events: PreToolUse, PostToolUse, Notification, UserPromptSubmit, Stop, SubagentStop, PreCompact, SessionStart, SessionEnd. Each hook is a command with a timeout (default 60 s).</td></tr>
+            <tr><td>Instructions</td><td>Each folder from the git root to cwd</td><td><code>CLAUDE.md</code> or <code>AGENTS.md</code> (also under <code>.rigwell/</code>). Total budget 80,000 characters.</td></tr>
+          </tbody>
+        </table></div>
+        <p>Built-in skills include review, security-review, deep-security-review, simplify, init, incident, visualize, and Word, Excel, PowerPoint and PDF document skills.</p>
+        <p>Subagent limits: depth 1, 5 per root session, 10 per process (settings <code>subagentLimits</code>).</p>
+      </section>
+
+      <section id="eval">
+        <h2>Eval</h2>
+        <p><code>rigwell eval</code> runs coding tasks against your models. It reports pass rate, cost, time, tokens, requests and cache hit rate, and compares a build with the one before.</p>
+<pre><code>rigwell eval tasks
+rigwell eval run --model custom:My-model-0 --trials 3 --auto medium
+rigwell eval report --since 7d --against &lt;buildId&gt;</code></pre>
+        <p>A task is a folder <code>evals/tasks/&lt;name&gt;/</code> with <code>repo/</code>, <code>prompt.txt</code> and <code>task.json</code> (a grader command and an optional budget). Shipped tasks: <code>fix-greeting-typo</code>, <code>add-clamp</code>, <code>rename-constant</code>. Config is <code>~/.rigwell/eval/config.json</code>, with prices per million tokens and named variants. Results go to <code>~/.rigwell/eval/runs/&lt;buildId&gt;/</code>.</p>
+      </section>
+
+      <!-- ============================== REFERENCE ============================== -->
+      <section id="architecture">
+        <h2>Architecture</h2>
+        <p>Every client reaches the same connection host. The connection host owns one session per connection. The session runs the agent loop: it calls a model adapter, checks each tool call with the permission gate, and runs the tool.</p>
+        <div class="diagram"><pre class="mermaid">
+flowchart LR
+  subgraph Clients
+    TUI["Terminal UI"]
+    DESK["Desktop app (Electron)"]
+    EXEC["rigwell exec"]
+    SDK["TypeScript SDK"]
+  end
+  subgraph Daemon["rigwell daemon"]
+    SOCK["Unix socket (NDJSON)"]
+    WS["WebSocket 127.0.0.1:47822 (token)"]
+    CONN["Connection host: one session each"]
+    AUTO["Automations and crons"]
+    MIS["Missions"]
+    SIDE["Side pane: files, terminals, browser, side chat"]
+  end
+  TUI -->|in-process or socket| CONN
+  DESK --> WS
+  SDK --> SOCK
+  SDK --> WS
+  EXEC -->|in-process or stdio| CONN
+  SOCK --> CONN
+  WS --> CONN
+  CONN --> SES["Agent session"]
+  AUTO --> SES
+  MIS --> SES
+  SIDE --- CONN
+  SES --> ADP["Model adapters"]
+  SES --> GATE["Permission gate"]
+  GATE --> TOOLS["Tools"]
+  SES --> MCPM["MCP manager"]
+  SES --> STORE[("~/.rigwell")]
+  ADP --> APIS["Model APIs"]
+  MCPM --> SRV["MCP servers"]
+</pre><figcaption>System overview. Automations, missions and the side pane exist only in the daemon.</figcaption></div>
+
+        <h3 id="arch-turn">One turn</h3>
+        <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  participant C as Client
+  participant S as Session
+  participant M as Model adapter
+  participant G as Permission gate
+  participant T as Tool
+  C->>S: add_user_message
+  S-->>C: {} (turn runs async)
+  loop until the model stops calling tools
+    S->>M: stream request
+    M-->>S: text and tool_use deltas
+    S-->>C: assistant_text_delta, tool_call
+    S->>G: check tool call
+    alt needs approval
+      G-->>C: request_permission
+      C-->>G: proceed_once / proceed_always / cancel
+    end
+    G->>T: run (or refuse)
+    T-->>S: result
+    S-->>C: tool_result
+  end
+  S-->>C: agent_turn_completed
+</pre><figcaption>The client sends one message and then gets a stream of notifications.</figcaption></div>
+
+        <h3 id="arch-layers">Source layout</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Folder</th><th>Part</th></tr></thead>
+          <tbody>
+            <tr><td><code>src/cli</code></td><td>Command line entry and argument parsing</td></tr>
+            <tr><td><code>src/daemon</code></td><td>Daemon, socket and WebSocket servers, connection host</td></tr>
+            <tr><td><code>src/protocol</code></td><td>JSON-RPC peer, envelope, error codes, protocol version</td></tr>
+            <tr><td><code>src/agent</code></td><td>Agent session loop, prompts, model profiles, compaction</td></tr>
+            <tr><td><code>src/adapters</code></td><td>Anthropic, OpenAI, Chat Completions, Gemini and Bedrock adapters, retry</td></tr>
+            <tr><td><code>src/tools</code>, <code>src/script</code></td><td>Built-in tools, and the QuickJS script runner</td></tr>
+            <tr><td><code>src/permissions</code>, <code>src/sandbox</code></td><td>Gate, command lists, secret scan, bubblewrap and sandbox-exec</td></tr>
+            <tr><td><code>src/mcp</code>, <code>src/auth</code></td><td>MCP client, transports, MCP OAuth, model OAuth</td></tr>
+            <tr><td><code>src/storage</code>, <code>src/snapshots</code></td><td>Settings, sessions, index, credentials, snapshots</td></tr>
+            <tr><td><code>src/automations</code>, <code>src/missions</code>, <code>src/worktree</code>, <code>src/sidepane</code></td><td>Daemon features</td></tr>
+            <tr><td><code>src/skills</code>, <code>src/hooks</code>, <code>src/subagents</code>, <code>src/instructions</code></td><td>Extensions</td></tr>
+            <tr><td><code>src/tui</code>, <code>desktop/</code>, <code>src/sdk</code></td><td>Clients</td></tr>
+            <tr><td><code>src/eval</code></td><td>Eval runner and reports</td></tr>
+          </tbody>
+        </table></div>
+
+        <h3 id="arch-settings">Settings layers</h3>
+        <div class="diagram"><pre class="mermaid">
+flowchart TB
+  ORG["org (managed file)"] --> RUN["runtime (--settings)"]
+  RUN --> FOL["folder .rigwell/ (nearest cwd wins)"]
+  FOL --> PRJ["project .rigwell/"]
+  PRJ --> USR["user ~/.rigwell/"]
+  USR --> BLT["built-in defaults"]
+  T{{"Trusted folder?"}} -.gates.-> FOL
+  T -.gates.-> PRJ
+</pre><figcaption>Highest level on top. Objects merge deeply. Arrays and single values replace. Folder and project levels load only for a trusted folder.</figcaption></div>
+      </section>
+
+      <section id="protocol">
+        <h2>JSON-RPC protocol</h2>
+        <p>All clients use one protocol: JSON-RPC 2.0 with a Rigwell envelope. Protocol version: <code>0.1.0</code>. It did not change in Rigwell 0.2.0.</p>
+<pre><code>{
+  "jsonrpc": "2.0",
+  "type": "request",            // request | response | notification (optional on input)
+  "protocolVersion": "0.1.0",
+  "id": "a1",                   // must be a string for requests
+  "method": "rigwell.initialize_session",
+  "params": { "cwd": "/path/to/repo", "machineId": "default" }
+}</code></pre>
+        <ul>
+          <li>Every method name starts with <code>rigwell.</code>. A request without the prefix gets <code>-32601</code>.</li>
+          <li>Framing: NDJSON (one JSON object per line) on stdio and the Unix socket. One message per text frame on the WebSocket.</li>
+          <li>Version rule: only the <strong>major</strong> number must match. A message with no <code>protocolVersion</code> is accepted. A major mismatch on a request returns <code>-32600</code> with both versions in <code>data</code>.</li>
+          <li>There is no separate handshake. The first call on a connection is <code>initialize_session</code> or <code>load_session</code>.</li>
+          <li>Client notifications are accepted and ignored. A duplicate in-flight id gets <code>-32006</code>.</li>
+        </ul>
+        <h3 id="protocol-errors">Error codes</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Code</th><th>Name</th><th>When</th></tr></thead>
+          <tbody>
+            <tr><td><code>-32700</code></td><td>PARSE_ERROR</td><td>A line is not valid JSON</td></tr>
+            <tr><td><code>-32600</code></td><td>INVALID_REQUEST</td><td>Bad envelope, non-string id, protocol major mismatch</td></tr>
+            <tr><td><code>-32601</code></td><td>METHOD_NOT_FOUND</td><td>Unknown method, or not on this kind of connection</td></tr>
+            <tr><td><code>-32602</code></td><td>INVALID_PARAMS</td><td>Bad params, unknown model, missing cwd, no models configured</td></tr>
+            <tr><td><code>-32603</code></td><td>INTERNAL_ERROR</td><td>Uncaught error, compaction failure, SDK timeout</td></tr>
+            <tr><td><code>-32004</code></td><td>ENTITY_NOT_FOUND</td><td>Session, automation or provider not found</td></tr>
+            <tr><td><code>-32005</code></td><td>SESSION_DISCONNECTED</td><td>No session on the connection yet, or it closed</td></tr>
+            <tr><td><code>-32006</code></td><td>CONFLICT</td><td>Session already exists, id in flight, turn running, stale write</td></tr>
+            <tr><td><code>-32001</code>, <code>-32800</code></td><td>AUTHENTICATION_ERROR, REQUEST_CANCELLED</td><td>Defined, not sent by the current code</td></tr>
+          </tbody>
+        </table></div>
+        <h3 id="protocol-example">Example: exec over stdio</h3>
+<pre><code>rigwell exec --input-format stream-jsonrpc --output-format stream-jsonrpc --auto low
+
+&gt; {"jsonrpc":"2.0","id":"1","method":"rigwell.initialize_session","params":{"cwd":".","machineId":"default"}}
+&lt; {"jsonrpc":"2.0","type":"response","protocolVersion":"0.1.0","id":"1","result":{"sessionId":"...", ...}}
+&gt; {"jsonrpc":"2.0","id":"2","method":"rigwell.add_user_message","params":{"text":"List the files"}}
+&lt; {"jsonrpc":"2.0","type":"response","id":"2","result":{}}
+&lt; {"jsonrpc":"2.0","type":"notification","method":"rigwell.session_notification",
+   "params":{"sessionId":"...","notification":{"type":"assistant_text_delta", ...}}}
+&lt; ... {"type":"agent_turn_completed","reason":"completed", ...}</code></pre>
+      </section>
+
+      <section id="methods">
+        <h2>Protocol methods</h2>
+        <p>Names below leave out the <code>rigwell.</code> prefix.</p>
+        <h3 id="methods-session">Session methods (every connection)</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Method</th><th>Main params</th><th>Result</th></tr></thead>
+          <tbody>
+            <tr><td><code>initialize_session</code></td><td><code>cwd</code>*, <code>machineId</code>, <code>modelId</code>, <code>reasoningEffort</code>, <code>interactionMode</code>, <code>autonomyLevel</code>, <code>systemPrompt</code>, <code>mcpServers[]</code>, <code>worktree</code>, <code>structuredOutputFormat</code>, tool id lists</td><td><code>{sessionId, hostId, session, settings, availableModels, trusted, gitRepo?, worktree?}</code></td></tr>
+            <tr><td><code>load_session</code></td><td><code>sessionId</code>*, <code>cwd</code>, <code>messageLimit</code>, <code>loadAllMessages</code></td><td>Session, settings, <code>isAgentLoopInProgress</code>, <code>pendingPermissions[]</code>, <code>queuedMessages[]</code>, ...</td></tr>
+            <tr><td><code>add_user_message</code></td><td><code>text</code> or <code>content[]</code>, <code>images[]</code> (5 MiB), <code>files[]</code> (PDF 32 MiB, text 1 MiB), <code>queuePlacement</code></td><td><code>{}</code>. The turn runs async.</td></tr>
+            <tr><td><code>answer_request</code></td><td><code>requestId</code>, <code>answer</code></td><td><code>{}</code></td></tr>
+            <tr><td><code>interrupt_session</code>, <code>close_session</code></td><td><code>reason</code> (close)</td><td><code>{}</code></td></tr>
+            <tr><td><code>update_session_settings</code></td><td><code>modelId</code>, <code>reasoningEffort</code>, <code>interactionMode</code>, <code>autonomyLevel</code>, compaction fields, <code>missionSettings</code></td><td><code>{}</code></td></tr>
+            <tr><td><code>rename_session</code>, <code>pin_session</code>, <code>archive_session</code></td><td><code>title</code>, <code>pinned</code>, <code>archived</code></td><td><code>{}</code></td></tr>
+            <tr><td><code>list_sessions</code></td><td><code>cwd</code>, <code>includeArchived</code>, <code>limit</code></td><td><code>{sessions}</code></td></tr>
+            <tr><td><code>search_sessions</code></td><td><code>query</code>*, <code>mode</code> (lexical, semantic: a local hashing embedder, not a language model), <code>limit</code></td><td><code>{hits:[{sessionId,title,score,snippet,...}]}</code></td></tr>
+            <tr><td><code>fork_session</code></td><td><code>title</code>, <code>tags</code></td><td><code>{newSessionId}</code></td></tr>
+            <tr><td><code>rewind_session</code></td><td><code>messageId</code>, <code>restoreFiles</code>, <code>force</code></td><td>Rewind result</td></tr>
+            <tr><td><code>compact_session</code></td><td><code>customInstructions</code>, <code>mode</code></td><td>Compaction result</td></tr>
+            <tr><td><code>list_tools</code>, <code>list_models</code>, <code>get_context_stats</code>, <code>warmup_cache</code></td><td>Filters</td><td>Lists and stats</td></tr>
+            <tr><td><code>list_mcp_servers</code>, <code>add_mcp_server</code>, <code>remove_mcp_server</code></td><td><code>name</code>, <code>type</code>, <code>command</code> or <code>url</code></td><td><code>{servers, summary}</code> or <code>{success}</code></td></tr>
+            <tr><td><code>mcp_auth_start</code> <span class="tag tag-new">0.2.0</span></td><td><code>serverName</code></td><td>Login status with <code>loginId</code> and <code>url</code>. Poll <code>auth_login_status</code>.</td></tr>
+            <tr><td><code>mcp_auth_logout</code> <span class="tag tag-new">0.2.0</span></td><td><code>serverName</code></td><td><code>{success}</code></td></tr>
+          </tbody>
+        </table></div>
+        <h3 id="methods-other">Git, auth and secrets (every connection)</h3>
+        <ul>
+          <li>Worktrees and git: <code>list_managed_worktrees</code>, <code>get_worktree_status</code>, <code>inspect_worktree_deletion</code>, <code>cleanup_worktree</code>, <code>list_git_branches</code>, <code>get_git_branch_divergence</code>, <code>checkout_git_branch</code>, <code>git_commit</code>, <code>git_push</code>, <code>create_pr</code>, <code>get_pr_status</code>, setup profile methods.</li>
+          <li>Auth: <code>auth_list</code>, <code>auth_login_start {name, mode}</code>, <code>auth_login_status {loginId}</code>, <code>auth_logout</code>. Results never contain tokens.</li>
+          <li>Secrets and environments: <code>list_secrets</code>, <code>set_secret</code>, <code>delete_secret</code>, <code>list_environments</code>, <code>set_environment</code>, <code>delete_environment</code>. No method reads a secret value back.</li>
+        </ul>
+        <h3 id="methods-daemon">Daemon-only methods</h3>
+        <ul>
+          <li>Automations: <code>list_automations</code>, <code>create_automation</code>, <code>update_automation</code>, <code>rename_automation</code>, <code>pause_automation</code>, <code>resume_automation</code>, <code>delete_automation</code>, <code>run_automation</code>, <code>get_automation_history</code>, <code>rotate_automation_secret</code>, <code>list_automation_templates</code>, <code>get_automation_visual</code>, <code>register_automation_project</code>, <code>start_automation_setup</code>.</li>
+          <li>Crons: <code>list_crons</code>, <code>create_cron</code>, <code>update_cron</code>, <code>delete_cron</code>.</li>
+          <li>Missions: <code>enter_mission_mode</code>, <code>mission_get</code>, <code>mission_pause</code>, <code>kill_worker_session</code>, <code>mission_list</code>.</li>
+          <li>Side pane (wire names include <code>daemon.</code>, for example <code>rigwell.daemon.list_files</code>): <code>list_files</code>, <code>search_files</code>, <code>get_workspace_file_content</code>, <code>write_workspace_file_content</code>, <code>create_terminal</code>, <code>write_terminal_data</code>, <code>resize_terminal</code>, <code>close_terminal</code>, <code>list_terminals</code>, <code>browser_attach</code>, <code>browser_detach</code>, <code>browser_status</code>, <code>side_chat_ask</code>, <code>side_chat_list</code>, <code>side_chat_set_writes</code>, <code>side_chat_promote</code>, <code>side_chat_cancel</code>.</li>
+        </ul>
+        <h3 id="methods-server">Requests the server sends to the client</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Method</th><th>Params</th><th>The client answers</th></tr></thead>
+          <tbody>
+            <tr><td><code>request_permission</code></td><td><code>requestId</code>, <code>toolUses[{toolUse, confirmationType, details}]</code>, <code>options[{label,value}]</code></td><td><code>{selectedOption, comment?}</code></td></tr>
+            <tr><td><code>ask_user</code></td><td><code>requestId</code>, <code>questions[{index,topic,question,options,multiSelect}]</code></td><td><code>{cancelled?, answers[{index,question,answer}]}</code></td></tr>
+            <tr><td><code>request_trust</code></td><td><code>cwd</code>, <code>unlocks[]</code></td><td><code>{trust, remember?}</code></td></tr>
+          </tbody>
+        </table></div>
+        <p>Confirmation types: edit, create, exec, mcp_tool, exit_spec_mode, apply_patch, fetch_url, recommend_mission, upgrade_model, secret_scan_violation, create_pr, propose_mission, start_mission_run.</p>
+      </section>
+
+      <section id="notifications">
+        <h2>Notifications</h2>
+        <p>Session events arrive as <code>rigwell.session_notification</code> with <code>params: {sessionId, notification: {type, ...}}</code>.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Group</th><th>Types</th></tr></thead>
+          <tbody>
+            <tr><td>Streaming</td><td><code>assistant_text_delta</code>, <code>assistant_text_complete</code>, <code>thinking_text_delta</code>, <code>thinking_text_complete</code>, <code>create_message</code></td></tr>
+            <tr><td>Tools</td><td><code>tool_call</code>, <code>tool_result</code>, <code>tool_progress_update</code>, <code>tool_execution_phase_changed</code>, <code>tool_execution_heartbeat</code> (every 10 s)</td></tr>
+            <tr><td>Turn</td><td><code>agent_turn_completed</code> (reason, token usage, duration), <code>agent_working_state_changed</code>, <code>llm_retry</code>, <code>error</code>, <code>session_token_usage_changed</code></td></tr>
+            <tr><td>Session</td><td><code>settings_updated</code>, <code>session_title_updated</code>, <code>todo_state_changed</code>, <code>session_compacted</code>, <code>permission_resolved</code>, <code>spec_handoff</code>, <code>mcp_status_changed</code>, <code>setup_step_progress</code></td></tr>
+            <tr><td>Hooks</td><td><code>hook_execution_started</code>, <code>hook_execution_completed</code></td></tr>
+            <tr><td>Missions</td><td><code>mission_state_changed</code>, <code>mission_features_changed</code>, <code>mission_progress_entry</code>, <code>mission_worker_started</code>, <code>mission_worker_completed</code></td></tr>
+            <tr><td>Side pane</td><td><code>daemon.terminal_data</code>, <code>daemon.terminal_exit</code>, <code>daemon.side_chat_entry</code></td></tr>
+          </tbody>
+        </table></div>
+        <p>Top-level daemon notifications (not wrapped): <code>rigwell.cron.state_changed</code>, <code>rigwell.automation.auto_paused</code>, <code>rigwell.worktree.removed</code>, <code>rigwell.worktree.branch_changed</code>.</p>
+      </section>
+
+      <section id="http">
+        <h2>HTTP and WebSocket paths</h2>
+        <p>The daemon is not a REST server. It has no <code>/health</code>, <code>/metrics</code> or SSE route. These are all the network listeners Rigwell opens. Each binds to <code>127.0.0.1</code>, except where the webhook host is changed.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Method</th><th>Path</th><th>Listener</th><th>Auth</th></tr></thead>
+          <tbody>
+            <tr><td><span class="m m-ws">WS</span></td><td><code>ws://127.0.0.1:47822/</code></td><td>Daemon WebSocket</td><td>Token: <code>?token=</code> or <code>Authorization: Bearer</code></td></tr>
+            <tr><td><span class="m m-post">POST</span></td><td><code>/hooks/&lt;automationId&gt;</code> on port 47821</td><td>Automation webhook</td><td>Bearer secret or HMAC signature</td></tr>
+            <tr><td><span class="m m-get">GET</span></td><td><code>/callback</code> on a free port</td><td>OAuth redirect catcher</td><td><code>state</code> check, PKCE</td></tr>
+            <tr><td><span class="m m-get">GET</span></td><td><code>/json/version</code></td><td>Desktop CDP proxy</td><td>Host must be 127.0.0.1</td></tr>
+            <tr><td><span class="m m-ws">WS</span></td><td><code>/devtools/browser/&lt;uuid&gt;</code></td><td>Desktop CDP proxy</td><td>The random id</td></tr>
+          </tbody>
+        </table></div>
+
+        <h3 id="http-ws">Daemon WebSocket</h3>
+        <ul>
+          <li>Host is always <code>127.0.0.1</code>. Port 47822 by default. Change it with <code>rigwell daemon --ws-port &lt;n&gt;</code> (0 = a free port) or <code>daemon.wsPort</code> in user settings. Turn it off with <code>--no-ws</code>.</li>
+          <li>The token is 32 random bytes, new at each daemon start. It is in <code>~/.rigwell/daemon.json</code> (mode 0600) with the pid, socket path and URL.</li>
+          <li>Any path is accepted. One connection holds one session.</li>
+        </ul>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Upgrade answer</th><th>Cause</th></tr></thead>
+          <tbody>
+            <tr><td><code>403</code> forbidden</td><td>Host header is not 127.0.0.1, localhost or [::1] (guards against DNS rebinding)</td></tr>
+            <tr><td><code>401</code> unauthorized</td><td>Missing or wrong token</td></tr>
+            <tr><td><code>426</code></td><td>Token OK, but the request is not a WebSocket upgrade</td></tr>
+          </tbody>
+        </table></div>
+<pre><code>// Node or Bun: connect with the token from daemon.json
+const info = JSON.parse(await Bun.file(`${home}/.rigwell/daemon.json`).text());
+const ws = new WebSocket(`${info.ws.url}?token=${info.token}`);</code></pre>
+
+        <h3 id="http-socket">Daemon Unix socket</h3>
+        <p>Default path <code>~/.rigwell/daemon.sock</code>. If that path is longer than 103 bytes, Rigwell uses a short path in the temp folder. Change it with <code>--socket &lt;path&gt;</code>. The socket has no token. File permissions protect it.</p>
+
+        <h3 id="http-webhook">Automation webhook</h3>
+<pre><code>POST http://127.0.0.1:47821/hooks/&lt;automationId&gt;
+Authorization: Bearer &lt;webhookSecret&gt;
+  or
+X-Rigwell-Signature: sha256=&lt;hex HMAC-SHA256(secret, raw body)&gt;
+
+&lt;raw body, up to 256 KiB, becomes the run payload&gt;</code></pre>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Status</th><th>Body</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>202</code></td><td><code>{"runId":"..."}</code></td><td>Run started</td></tr>
+            <tr><td><code>200</code></td><td><code>{"status":"filtered"}</code></td><td><code>payloadRegex</code> did not match</td></tr>
+            <tr><td><code>200</code></td><td><code>{"status":"deduped"}</code></td><td>Same body within 60 s</td></tr>
+            <tr><td><code>401</code></td><td><code>{"error":"unauthorized"}</code></td><td>Bad secret or signature</td></tr>
+            <tr><td><code>404</code></td><td><code>{"error":"not found"}</code></td><td>Unknown id, or not a webhook automation</td></tr>
+            <tr><td><code>405</code></td><td><code>{"error":"method not allowed"}</code></td><td>Not POST</td></tr>
+            <tr><td><code>409</code></td><td><code>{"error":"automation is paused"}</code></td><td>Paused</td></tr>
+            <tr><td><code>413</code></td><td><code>{"error":"body too large"}</code></td><td>Over 256 KiB</td></tr>
+            <tr><td><code>429</code></td><td><code>{"status":"capped"}</code></td><td>Over <code>maxRunsPerHour</code></td></tr>
+          </tbody>
+        </table></div>
+        <p>The secret comes back once from <code>create_automation</code> and from <code>rotate_automation_secret</code>. Port and host: <code>automations.webhookPort</code> and <code>automations.webhookHost</code>. The last 100 deliveries are in <code>memory/deliveries.json</code>.</p>
+
+        <h3 id="http-oauth">OAuth redirect catcher</h3>
+        <p>During <code>rigwell auth login</code> or <code>rigwell mcp login</code>, Rigwell opens a server on 127.0.0.1 (a free port unless <code>redirectPort</code> is set). It answers <code>GET /callback</code> once, checks <code>state</code>, swaps the code with PKCE S256, and stops. It times out after 5 minutes.</p>
+
+        <h3 id="http-cdp">Desktop CDP proxy</h3>
+        <p>The desktop app exposes its browser pane to the <code>Browser</code> tool through a small Chrome DevTools Protocol proxy on 127.0.0.1 and a random port. The daemon accepts only a <code>ws://127.0.0.1:&lt;port&gt;/devtools/browser/&lt;id&gt;</code> URL. This is internal to the app.</p>
+      </section>
+
+      <section id="cli">
+        <h2>CLI</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Command</th><th>Does</th></tr></thead>
+          <tbody>
+            <tr><td><code>rigwell</code>, <code>rigwell tui</code></td><td>Terminal UI</td></tr>
+            <tr><td><code>rigwell exec [flags] "&lt;prompt&gt;"</code></td><td>One prompt, no prompts for approval. Exit 0 only on <code>completed</code>.</td></tr>
+            <tr><td><code>rigwell exec --input-format stream-jsonrpc --output-format stream-jsonrpc</code></td><td>JSON-RPC on stdio</td></tr>
+            <tr><td><code>rigwell exec -r</code></td><td>Print a numbered session list</td></tr>
+            <tr><td><code>rigwell sessions search &lt;query&gt; [--semantic] [--limit n] [--cwd dir] [--json]</code></td><td>Search sessions</td></tr>
+            <tr><td><code>rigwell daemon [--socket path] [--ws-port n] [--no-ws]</code></td><td>Start the daemon</td></tr>
+            <tr><td><code>rigwell auth login &lt;name&gt; [--device]</code>, <code>logout</code>, <code>status</code></td><td>Model account sign-in</td></tr>
+            <tr><td><code>rigwell mcp login &lt;name&gt;</code>, <code>logout &lt;name&gt;</code>, <code>status</code> <span class="tag tag-new">0.2.0</span></td><td>MCP server sign-in</td></tr>
+            <tr><td><code>rigwell credential set &lt;name&gt;</code> (value on stdin), <code>delete &lt;name&gt;</code></td><td>Credential store</td></tr>
+            <tr><td><code>rigwell eval run | report | tasks</code></td><td>Eval loop</td></tr>
+          </tbody>
+        </table></div>
+        <h3 id="cli-flags">Flags for exec and tui</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Flag</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>--auto low|medium|high</code></td><td>Autonomy. Default is <code>off</code>.</td></tr>
+            <tr><td><code>--skip-permissions-unsafe</code></td><td>Run every tool call. Cannot combine with <code>--auto</code>.</td></tr>
+            <tr><td><code>-m</code>, <code>--model &lt;id&gt;</code></td><td>Model id, such as <code>custom:My-model-0</code></td></tr>
+            <tr><td><code>--cwd &lt;dir&gt;</code></td><td>Working folder</td></tr>
+            <tr><td><code>-s</code>, <code>--session-id &lt;id&gt;</code></td><td>Continue a session</td></tr>
+            <tr><td><code>-r</code>, <code>--resume [id]</code></td><td>Resume. With no id, list sessions.</td></tr>
+            <tr><td><code>--fork &lt;id&gt;</code></td><td>Copy a session and continue the copy</td></tr>
+            <tr><td><code>--use-spec</code>, <code>--spec-model</code>, <code>--spec-reasoning-effort</code></td><td>Start in spec mode</td></tr>
+            <tr><td><code>--trust</code></td><td>Trust the working folder for this run</td></tr>
+            <tr><td><code>--settings &lt;path&gt;</code></td><td>Extra settings file (runtime level)</td></tr>
+            <tr><td>TUI only: <code>--daemon</code>, <code>--socket &lt;path&gt;</code>, <code>--url &lt;ws://...&gt;</code>, <code>--token &lt;t&gt;</code></td><td>Attach to a daemon</td></tr>
+          </tbody>
+        </table></div>
+        <p>Exit code 2 means a usage error.</p>
+      </section>
+
+      <section id="tui">
+        <h2>TUI commands and keys</h2>
+        <p><strong>Slash commands:</strong> <code>/help</code>, <code>/new</code>, <code>/sessions</code>, <code>/model</code>, <code>/settings</code>, <code>/context</code>, <code>/cost</code>, <code>/status</code>, <code>/compress</code>, <code>/rewind-conversation</code>, <code>/fork</code>, <code>/rename</code>, <code>/pr</code>, <code>/btw</code>, <code>/copy</code>, <code>/cwd</code>, <code>/mcp</code>, <code>/hooks</code>, <code>/skills</code>, <code>/commands</code>, <code>/agents</code>, <code>/statusline</code>, <code>/vim</code>, <code>/themes</code>, <code>/automations</code>, <code>/loop</code>, <code>/diagnostics</code>, <code>/login</code>, <code>/logout</code>, <code>/quit</code>.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Key</th><th>Action</th></tr></thead>
+          <tbody>
+            <tr><td><kbd>Enter</kbd></td><td>Send, or steer a running turn</td></tr>
+            <tr><td><kbd>Ctrl+Enter</kbd> / <kbd>Alt+Enter</kbd></td><td>Queue a message</td></tr>
+            <tr><td><kbd>\</kbd> then <kbd>Enter</kbd></td><td>New line</td></tr>
+            <tr><td><kbd>Esc</kbd>, double <kbd>Esc</kbd></td><td>Cancel. Double Esc on an empty box rewinds.</td></tr>
+            <tr><td><kbd>Shift+Tab</kbd></td><td>Cycle mode (auto, spec)</td></tr>
+            <tr><td><kbd>Ctrl+L</kbd></td><td>Cycle autonomy</td></tr>
+            <tr><td><kbd>Tab</kbd> / <kbd>Ctrl+N</kbd></td><td>Cycle reasoning effort / model</td></tr>
+            <tr><td><kbd>Ctrl+O</kbd> / <kbd>Ctrl+P</kbd></td><td>Detailed view / edit in <code>$EDITOR</code></td></tr>
+            <tr><td><kbd>@</kbd> / <kbd>/</kbd> / <kbd>!</kbd> / <kbd>?</kbd></td><td>File picker / command menu / bash mode / help</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="config">
+        <h2>Configuration</h2>
+        <p>Settings files are <code>settings.json</code> and <code>settings.local.json</code> at each level. <code>.local</code> wins in its level. See <a href="#arch-settings">settings layers</a> for the order.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Key</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>customModels[]</code></td><td>Models. See <a href="#models">Models</a>.</td></tr>
+            <tr><td><code>oauthProviders{}</code></td><td>OAuth clients for model sign-in</td></tr>
+            <tr><td><code>sessionDefaultSettings</code></td><td><code>model</code>, <code>reasoningEffort</code> (high), <code>interactionMode</code> (auto), <code>autonomyLevel</code> (off)</td></tr>
+            <tr><td><code>commandAllowlist</code>, <code>commandDenylist</code>, <code>commandBlocklist</code></td><td>Command lists. A higher level replaces the whole list.</td></tr>
+            <tr><td><code>sandbox</code></td><td><code>enabled</code>, <code>mode</code>, <code>filesystem</code>, <code>network</code></td></tr>
+            <tr><td><code>trustedFolders</code></td><td>Saved trust answers</td></tr>
+            <tr><td><code>mcpAlwaysAllow</code></td><td>Saved "always" answers for MCP tools and servers</td></tr>
+            <tr><td><code>hooks</code>, <code>hooksDisabled</code>, <code>allowManagedHooksOnly</code></td><td>Hooks</td></tr>
+            <tr><td><code>scriptToolModels</code>, <code>scriptLimits</code>, <code>modelProfiles</code></td><td>Script mode and per-model tuning</td></tr>
+            <tr><td><code>compaction*</code></td><td>When and how to compress long sessions</td></tr>
+            <tr><td><code>llmRequestTimeout</code>, <code>loopGuards</code></td><td>Request timeout (10 min) and loop guards</td></tr>
+            <tr><td><code>subagentLimits</code>, <code>autoRouter</code>, <code>specSaveDir</code></td><td>Subagents, auto model, spec output folder</td></tr>
+            <tr><td><code>runInWorktree</code>, <code>worktreeDirectory</code>, <code>worktreeAutoDeleteLimit</code></td><td>Worktrees</td></tr>
+            <tr><td><code>automations.webhookPort</code>, <code>automations.webhookHost</code>, <code>daemon.wsPort</code></td><td>Ports (user level)</td></tr>
+            <tr><td><code>missions</code></td><td>Mission models</td></tr>
+            <tr><td><code>enableSecretScan</code></td><td>Scan before <code>git commit</code></td></tr>
+            <tr><td><code>statusLine</code>, <code>diffMode</code>, sound keys</td><td>TUI display</td></tr>
+          </tbody>
+        </table></div>
+        <h3 id="config-org">Org-managed settings</h3>
+        <p>Set <code>RIGWELL_ORG_MANAGED_SETTINGS_LOCAL_PATH</code> to a file (max 1 MiB). Org rules win: <code>maxAutonomyLevel</code> is a ceiling, deny and block lists can only grow, <code>modelPolicy</code> limits models, a stricter <code>sandbox</code> wins, and org hooks always run.</p>
+      </section>
+
+      <section id="env">
+        <h2>Environment variables</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Variable</th><th>Effect</th></tr></thead>
+          <tbody>
+            <tr><td><code>RIGWELL_HOME</code></td><td>Data folder. Default <code>~/.rigwell</code>.</td></tr>
+            <tr><td><code>RIGWELL_TRUST_CWD=1</code></td><td>Trust the working folder</td></tr>
+            <tr><td><code>RIGWELL_ORG_MANAGED_SETTINGS_LOCAL_PATH</code></td><td>Org settings file</td></tr>
+            <tr><td><code>RIGWELL_CREDENTIALS=file</code></td><td>Skip OS keychains. Use <code>credentials.json</code>.</td></tr>
+            <tr><td><code>RIGWELL_OPENAI_WEBSOCKET</code></td><td><code>off</code> or <code>force</code> for the OpenAI WebSocket mode</td></tr>
+            <tr><td><code>RIGWELL_PARK_MS</code></td><td>How long a dropped session with an open prompt waits (30 min)</td></tr>
+            <tr><td><code>RIGWELL_SNAPSHOTS=off</code>, <code>RIGWELL_SNAPSHOT_MAX_BYTES</code></td><td>Turn off snapshots, or cap the store (512 MiB)</td></tr>
+            <tr><td><code>RIGWELL_NO_AUTO_TITLE</code></td><td>No automatic session titles</td></tr>
+            <tr><td><code>RIGWELL_NO_BROWSER=1</code></td><td>The TUI does not open a browser</td></tr>
+            <tr><td><code>RIGWELL_NO_WAKE_LOCK=1</code></td><td>Missions do not keep the machine awake</td></tr>
+            <tr><td><code>RIGWELL_GH_CMD</code>, <code>RIGWELL_GITHUB_API</code></td><td>How <code>create_pr</code> reaches GitHub</td></tr>
+            <tr><td><code>RIGWELL_BROWSER_CDP_PORT</code>, <code>RIGWELL_BROWSER_CDP_URL</code></td><td>Browser pane endpoint</td></tr>
+            <tr><td><code>RIGWELL_UPDATE_URL</code>, <code>RIGWELL_UPDATE_PUBLIC_KEY</code></td><td>Desktop update feed and Linux signing key</td></tr>
+            <tr><td><code>AWS_REGION</code>, <code>AWS_BEARER_TOKEN_BEDROCK</code></td><td>Bedrock fallbacks</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="sdk">
+        <h2>TypeScript SDK</h2>
+        <p>The SDK is in <code>src/sdk/index.ts</code>. It is not published to npm. Import it from a checkout.</p>
+<pre><code>import { run, createSession, connectToDaemon } from "./src/sdk/index.ts";
+
+// One prompt in a spawned exec process
+const r = await run("Summarize README.md", { cwd: ".", autonomyLevel: "low" });
+console.log(r.reason, r.text);
+
+// A multi-turn session with approval callbacks
+const s = await createSession({
+  cwd: ".",
+  onPermission: async (req) =&gt; ({ selectedOption: "proceed_once" }),
+});
+const turn = s.send("Run the tests");
+for await (const n of turn) if (n.type === "assistant_text_delta") process.stdout.write(n.textDelta);
+await turn.done;
+await s.close("other");
+
+// Attach to a running daemon (socket by default, or url + token)
+const d = await connectToDaemon({ cwd: "." });</code></pre>
+        <ul>
+          <li>Exports: <code>run</code>, <code>createSession</code>, <code>connectToDaemon</code>, <code>openSession</code>, <code>readDaemonInfo</code>, <code>RigwellSession</code>, <code>RpcClient</code>, <code>SpawnTransport</code>, <code>SocketTransport</code>, <code>WebSocketTransport</code>.</li>
+          <li>A missing callback is safe: permission becomes <code>cancel</code>, ask_user is cancelled, trust is <code>false</code>.</li>
+          <li>Example: <a href="https://github.com/scottconverse/rigwell/blob/main/examples/sdk-multi-turn.ts"><code>examples/sdk-multi-turn.ts</code></a>.</li>
+        </ul>
+      </section>
+
+      <section id="storage">
+        <h2>Files on disk</h2>
+        <p>Everything is under the Rigwell home (<code>~/.rigwell</code> or <code>$RIGWELL_HOME</code>).</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Path</th><th>Holds</th></tr></thead>
+          <tbody>
+            <tr><td><code>settings.json</code>, <code>settings.local.json</code></td><td>User settings</td></tr>
+            <tr><td><code>mcp.json</code>, <code>hooks.json</code></td><td>MCP servers, hooks</td></tr>
+            <tr><td><code>credentials.json</code></td><td>Credential store fallback (mode 0600)</td></tr>
+            <tr><td><code>secrets.json</code>, <code>environments.json</code></td><td>Secret index, named environments</td></tr>
+            <tr><td><code>daemon.json</code>, <code>daemon.sock</code></td><td>Daemon discovery file and socket</td></tr>
+            <tr><td><code>sessions/&lt;project&gt;/&lt;id&gt;.jsonl</code></td><td>Session transcripts and per-session settings</td></tr>
+            <tr><td><code>cache/session-index/index.db</code></td><td>SQLite search index</td></tr>
+            <tr><td><code>snapshots/</code></td><td>File snapshots for rewind (files over 20 MiB are skipped)</td></tr>
+            <tr><td><code>automations/</code>, <code>crons/</code>, <code>missions/</code></td><td>Daemon features</td></tr>
+            <tr><td><code>worktrees/</code>, <code>worktree-setups/</code></td><td>Managed worktrees</td></tr>
+            <tr><td><code>skills/</code>, <code>agents/</code>, <code>commands/</code></td><td>User extensions</td></tr>
+            <tr><td><code>eval/</code></td><td>Eval config and runs</td></tr>
+            <tr><td><code>logs/</code></td><td>Daemon log, secret-scan false positives</td></tr>
+            <tr><td><code>desktop-settings.json</code></td><td>Desktop app settings</td></tr>
+          </tbody>
+        </table></div>
+        <p>In a project: <code>.rigwell/</code> holds project settings, <code>mcp.json</code>, skills, agents, commands, automations and specs.</p>
+      </section>
+
+      <section id="security">
+        <h2>Security model</h2>
+        <ul>
+          <li><strong>Loopback only.</strong> The WebSocket host is fixed to 127.0.0.1. It checks the Host header and needs a fresh token at each start.</li>
+          <li><strong>Trust gate.</strong> Code-like files in a project (settings, hooks, skills, agents, instructions, MCP servers) load only after you trust the folder. A project file cannot trust itself.</li>
+          <li><strong>Bounded autonomy.</strong> Default <code>off</code>. Commands carry a risk label. Deny and block lists. MCP tools always ask.</li>
+          <li><strong>Unattended runs refuse.</strong> exec, automations and subagents with no approver refuse anything that would ask.</li>
+          <li><strong>Secrets stay out of results.</strong> Auth and secret methods never return a token or a secret value.</li>
+          <li><strong>Credential store.</strong> macOS Keychain or libsecret, else <code>credentials.json</code> with mode 0600. On Windows the code uses the file, protected by a Windows ACL (access list).</li>
+          <li><strong>Sandbox.</strong> Optional on Linux and macOS. Not on Windows.</li>
+          <li><strong>Webhook secret.</strong> A per-automation Bearer secret or HMAC signature.</li>
+        </ul>
+      </section>
+
+      <!-- ============================== HELP ============================== -->
+      <section id="limits">
+        <h2>Known limits</h2>
+        <ul>
+          <li>Windows is the release target. It is tested by hand on Windows only. CI runs tests on Windows and Linux. The macOS CI job does not run.</li>
+          <li>No command sandbox on Windows. The sandbox is off by default on all platforms.</li>
+          <li>On Windows, the side-pane terminal has no PTY (a pseudo-terminal), so full-screen terminal programs do not draw correctly.</li>
+          <li>The installed app does not include <code>git</code> or <code>rg</code>. Grep, Glob and worktrees need them on PATH.</li>
+          <li>The macOS build is Apple silicon (arm64) only.</li>
+          <li>All tests use fake servers. No test calls a real model provider, OS keychain, GitHub or vendor MCP server.</li>
+          <li>Chrome cookie import does not work on Windows. The dialog says so when it opens.</li>
+          <li>MCP OAuth is tested against a local fake server only.</li>
+          <li>The installers are not signed.</li>
+          <li>Hosted parts and Workstreams for Missions are planned, not built.</li>
+          <li>GitHub-event and Slack-message automation triggers are not built.</li>
+          <li>The SDK is not on npm.</li>
+        </ul>
+      </section>
+
+      <section id="troubleshooting">
+        <h2>Troubleshooting</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>You see</th><th>Do this</th></tr></thead>
+          <tbody>
+            <tr><td>"No models configured: add customModels to settings.json"</td><td>Add a <code>customModels</code> entry to <code>~/.rigwell/settings.json</code>.</td></tr>
+            <tr><td>A model is missing from the list</td><td>Run <code>list_models</code> with <code>includeDisabled</code> to see why. Often an unset <code>${VAR}</code> or a placeholder key.</td></tr>
+            <tr><td>Grep fails</td><td>Install ripgrep and put <code>rg</code> on PATH.</td></tr>
+            <tr><td>Project settings or skills do not load</td><td>Trust the folder: answer yes, use <code>--trust</code>, or set <code>RIGWELL_TRUST_CWD=1</code>.</td></tr>
+            <tr><td>MCP server shows "Sign-in needed"</td><td>Run <code>rigwell mcp login &lt;name&gt;</code>, or select Sign in in the desktop app.</td></tr>
+            <tr><td>"The sign-in expired"</td><td>The refresh failed. Sign in again.</td></tr>
+            <tr><td>WebSocket gets 401 or 403</td><td>Read the token from <code>daemon.json</code> again (it is new at each start). Connect to 127.0.0.1, not a LAN address.</td></tr>
+            <tr><td>The daemon has no WebSocket</td><td>Port 47822 is in use. Use <code>--ws-port 0</code> or set <code>daemon.wsPort</code>.</td></tr>
+            <tr><td><code>exec</code> exits 1</td><td>The turn did not end with <code>completed</code>, or an action needed approval. Raise <code>--auto</code>.</td></tr>
+            <tr><td>Windows SmartScreen blocks setup</td><td>The installer is not signed. Select "More info", then "Run anyway".</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="releases">
+        <h2>Releases and CI</h2>
+        <ul>
+          <li>A <code>v*</code> tag starts <code>release.yml</code>. It makes a draft release, builds Windows, Linux and macOS installers, and publishes.</li>
+          <li><code>ci.yml</code> and <code>platforms.yml</code> run the tests. They skip changes that touch only docs, <code>spec/</code>, <code>website/</code>, LICENSE or NOTICE.</li>
+          <li><code>pages.yml</code> publishes <code>website/</code> to GitHub Pages on a push to main.</li>
+          <li>Releases: <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.2.0">v0.2.0</a>, <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.1.0">v0.1.0</a>.</li>
+        </ul>
+        <div class="doc-foot">
+          <p>Rigwell is licensed under <a href="https://github.com/scottconverse/rigwell/blob/main/LICENSE">AGPL-3.0-only</a>. Wire protocol shapes are adapted from the Apache-2.0 <code>@factory/droid-sdk</code> 0.10.0; see <a href="https://github.com/scottconverse/rigwell/blob/main/NOTICE">NOTICE</a>. Found a mistake in this manual? <a href="https://github.com/scottconverse/rigwell/issues">Open an issue</a>.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
