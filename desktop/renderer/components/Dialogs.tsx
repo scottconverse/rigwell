@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { bridge } from "../lib/rpc.ts";
 import { app, useStore } from "../lib/app-model.ts";
 import { trustAsks, type SessionController } from "../lib/session.ts";
+import { validateNewSkill, validateSkillName } from "../lib/skill-md.ts";
 import { mcpAuthButtons, pollLogin, type LoginStatus } from "../lib/access.ts";
 
 export function Dialog({ title, onClose, children, wide }: { title: string; onClose(): void; children: React.ReactNode; wide?: boolean }) {
@@ -182,8 +183,9 @@ export function ConnectorsDialog({ ctl, onClose }: { ctl: SessionController; onC
 // ------------------------------------------------------------------ Skills
 
 interface SkillView { name: string; description: string; bucket: string; status: string; filePath: string; body: string; errors: string[]; userInvocable: boolean }
-type SkillTab = "All" | "Personal" | "Built-in";
-export const skillTab = (s: { bucket: string }): SkillTab => (s.bucket === "builtin" ? "Built-in" : "Personal");
+type SkillTab = "All" | "User" | "Project" | "Built-in";
+/** Where a skill comes from: built-in (bundled), project (<repo>/.rigwell/skills and friends) or user ($RIGWELL_HOME/skills and friends). */
+export const skillTab = (s: { bucket: string }): Exclude<SkillTab, "All"> => (s.bucket === "builtin" ? "Built-in" : s.bucket === "project-dir" ? "Project" : "User");
 
 /** Skills come from the shared registry in the main process (no daemon method lists them). `list_tools` only tells whether the Skill tool is exposed. */
 export function SkillsDialog({ ctl, cwd, onClose }: { ctl?: SessionController; cwd: string; onClose(): void }) {
@@ -192,31 +194,80 @@ export function SkillsDialog({ ctl, cwd, onClose }: { ctl?: SessionController; c
   const [q, setQ] = useState("");
   const [tab, setTab] = useState<SkillTab>("All");
   const [sel, setSel] = useState<string>();
-  useEffect(() => { void bridge().skills.list(cwd).then(setSkills).catch(() => setSkills([])); }, [cwd]);
+  const [creating, setCreating] = useState(false);
+  const reload = useCallback(() => bridge().skills.list(cwd).then(setSkills).catch(() => setSkills([])), [cwd]);
+  useEffect(() => { void reload(); }, [reload]);
   useEffect(() => { void ctl?.request("list_tools").then((r) => setToolOn((r.tools ?? []).some((t: any) => t.id === "Skill"))).catch(() => {}); }, [ctl]);
+  if (creating) return <CreateSkillDialog cwd={cwd} skills={skills} onClose={() => setCreating(false)} onCreated={(file) => { setCreating(false); setQ(""); setTab("All"); setSel(file); void reload(); }} />;
   const rows = skills.filter((s) => (tab === "All" || skillTab(s) === tab) && `${s.name} ${s.description}`.toLowerCase().includes(q.toLowerCase()));
   const cur = skills.find((s) => s.filePath === sel) ?? rows[0];
   return (
     <Dialog title="Skills" onClose={onClose} wide>
       <div className="dlg-row">
         <input placeholder="Search skills" aria-label="Search skills" value={q} onChange={(e) => setQ(e.target.value)} />
-        <div className="seg" role="tablist">{(["All", "Personal", "Built-in"] as SkillTab[]).map((t) => <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t}</button>)}</div>
+        <div className="seg" role="tablist">{(["All", "User", "Project", "Built-in"] as SkillTab[]).map((t) => <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t}</button>)}</div>
+        <button onClick={() => setCreating(true)}>Create skill</button>
       </div>
       {toolOn === false && <div className="banner warn small" role="status">The Skill tool is not available to the agent in this session, so skills are listed but cannot be loaded by the model.</div>}
       <div className="skills">
         <ul className="plain-list skill-list" aria-label="Skills">
           {rows.map((s) => (
             <li key={s.filePath}><button className={`side-row ${cur?.filePath === s.filePath ? "on" : ""}`} onClick={() => setSel(s.filePath)}>
-              <span className="side-title">{s.name}</span><span className="muted small">{s.status === "enabled" ? skillTab(s) : s.status}</span>
+              <span className="side-title">{s.name}</span><span className="muted small skill-src">{skillTab(s)}</span>{s.status !== "enabled" && <span className="muted small">{s.status}</span>}
             </button></li>
           ))}
-          {!rows.length && <li className="muted pad">No skills found. Add a folder with a SKILL.md under ~/.rigwell/skills or .rigwell/skills.</li>}
+          {!rows.length && <li className="muted pad">No skills found. Use Create skill, or add a folder with a SKILL.md under ~/.rigwell/skills or .rigwell/skills.</li>}
         </ul>
         <div className="skill-preview">
-          {cur ? (<><h4>{cur.name}</h4><p className="muted">{cur.description}</p>{cur.errors.length > 0 && <p className="error-text small">{cur.errors.join(" ")}</p>}<pre className="code-block">{cur.body}</pre><div className="muted small">{cur.filePath}</div></>) : <div className="muted pad">Select a skill to preview its SKILL.md.</div>}
+          {cur ? (<><h4>{cur.name}</h4><p className="muted">{cur.description}</p>{cur.errors.length > 0 && <p className="error-text small">{cur.errors.join(" ")}</p>}<pre className="code-block" aria-label="SKILL.md body">{cur.body}</pre><div className="muted small">{cur.filePath}</div></>) : <div className="muted pad">Select a skill to view its SKILL.md.</div>}
         </div>
       </div>
       <div className="dialog-actions"><button onClick={onClose}>Close</button></div>
+    </Dialog>
+  );
+}
+
+/** Create skill: writes SKILL.md under the user or project skills folder. An existing skill is only replaced after a second click on Replace. */
+function CreateSkillDialog({ cwd, skills, onClose, onCreated }: { cwd: string; skills: SkillView[]; onClose(): void; onCreated(filePath: string): void }) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [body, setBody] = useState("");
+  const [scope, setScope] = useState<"user" | "project">("user");
+  const [error, setError] = useState("");
+  const [exists, setExists] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const nameErr = name ? validateSkillName(name) : "";
+  const clash = skills.find((s) => s.name === name);
+  const save = async (overwrite: boolean) => {
+    const errs = validateNewSkill({ name, description, body });
+    if (errs.length) { setError(errs.join(" ")); return; }
+    setBusy(true); setError("");
+    try {
+      const r = await bridge().skills.create(cwd, { name, description, body, scope, overwrite });
+      if (r.ok) onCreated(r.filePath);
+      else { setExists(!!r.exists); setError(r.error); }
+    } catch (e) { setError((e as Error).message); }
+    setBusy(false);
+  };
+  return (
+    <Dialog title="Create skill" onClose={onClose} wide>
+      <label className="field">Name<input aria-label="Skill name" placeholder="code-review" value={name} onChange={(e) => { setName(e.target.value.trim()); setExists(false); setError(""); }} /></label>
+      {nameErr && <div className="error-text small" role="alert">{nameErr}</div>}
+      {!nameErr && clash && <div className="muted small" role="status">A {skillTab(clash).toLowerCase()} skill named {name} exists. A project skill replaces a user or built-in one with the same name when it loads.</div>}
+      <label className="field">Description<input aria-label="Skill description" placeholder="When the agent should use this skill" value={description} onChange={(e) => setDescription(e.target.value)} /></label>
+      <div className="field">Scope
+        <div className="seg" role="radiogroup" aria-label="Scope">
+          <button role="radio" aria-checked={scope === "user"} className={scope === "user" ? "on" : ""} onClick={() => { setScope("user"); setExists(false); }}>User (all projects)</button>
+          <button role="radio" aria-checked={scope === "project"} className={scope === "project" ? "on" : ""} onClick={() => { setScope("project"); setExists(false); }}>Project (this folder)</button>
+        </div>
+      </div>
+      <label className="field">Instructions<textarea aria-label="Skill instructions" placeholder="Steps and rules the agent follows when this skill is loaded" value={body} onChange={(e) => setBody(e.target.value)} /></label>
+      {error && <div className="banner error" role="alert">{error}</div>}
+      <div className="dialog-actions">
+        <button onClick={onClose}>Cancel</button>
+        {exists ? <button className="primary" disabled={busy} onClick={() => void save(true)}>Replace existing skill</button>
+          : <button className="primary" disabled={busy || !!nameErr} onClick={() => void save(false)}>Create</button>}
+      </div>
     </Dialog>
   );
 }

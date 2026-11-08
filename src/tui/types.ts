@@ -109,6 +109,8 @@ export interface TuiState {
   statusLineHint?: string;
   statusLinePadding?: number;
   sessionId?: string;
+  /** True until the first session is ready: Enter queues the message (pending.queue) and it is sent once ready. */
+  starting?: boolean;
   modelId: string;
   reasoning: string;
   autonomy: "off" | "low" | "medium" | "high";
@@ -168,7 +170,7 @@ export type Effect =
   | { type: "quit" }
   | { type: "new_session"; cwd?: string }
   | { type: "resume"; sessionId: string }
-  | { type: "list_sessions" }
+  | { type: "list_sessions"; tree?: boolean }
   | { type: "fetch_context"; show: boolean }
   | { type: "shell"; command: string }
   | { type: "files"; query: string }
@@ -193,7 +195,7 @@ export type TuiEvent =
   | { type: "session_ready"; result: any; fresh: boolean }
   | { type: "context_stats"; stats: any; show: boolean }
   | { type: "info"; text: string; level?: "info" | "error" }
-  | { type: "sessions"; sessions: { id: string; title?: string; updatedAt?: string; pinned?: boolean }[] }
+  | { type: "sessions"; sessions: { id: string; title?: string; updatedAt?: string; pinned?: boolean; parent?: string }[]; tree?: boolean }
   | { type: "overlay"; title: string; lines: string[] }
   | { type: "extras"; custom: CustomEntry[]; skills: number; mcps?: number; issues?: number }
   | { type: "status_line"; text: string | undefined; hint?: string; padding?: number }

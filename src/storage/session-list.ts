@@ -18,6 +18,8 @@ export interface SessionListEntry {
   archivedAt: string | null;
   isSubagent: boolean;
   hasUserVisibleMessages: boolean;
+  /** Session this one was forked from (fork_session), when known. */
+  parent?: string;
 }
 
 const visibleCache = new Map<string, { mtimeMs: number; value: boolean; first: string }>();
@@ -56,7 +58,7 @@ function listFromIndex(o: { cwd?: string; includeArchived?: boolean; includeBtwF
     refreshIndex(db, o.cwd ? projectSlug(o.cwd) : undefined);
     return queryPicker(db, o).map((r) => ({
       sessionId: r.sessionId, title: displayTitle(r.title, r.preview), cwd: r.cwd, updatedAt: new Date(r.lastEventAt).toISOString(), pinned: r.pinned,
-      archivedAt: r.archivedAt, isSubagent: false, hasUserVisibleMessages: true,
+      archivedAt: r.archivedAt, isSubagent: false, hasUserVisibleMessages: true, ...(r.parent ? { parent: r.parent } : {}),
     }));
   } catch (e) {
     try { db.close(); } catch { /* already closed */ }

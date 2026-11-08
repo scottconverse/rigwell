@@ -2,6 +2,8 @@
 // tables, inline code, bold, italic and links. Everything is escaped first; only http(s) and mailto links are kept,
 // so the output is safe to insert as HTML.
 
+import { parseEmail } from "./email.ts";
+
 export const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
 const safeHref = (h: string) => (/^(https?:\/\/|mailto:)/i.test(h.trim()) ? escapeHtml(h.trim()) : undefined);
@@ -25,6 +27,13 @@ function inline(src: string): string {
 const isTableSep = (l: string) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
 const cells = (l: string) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
 
+/** An email draft as a card: headers, body, Copy and "Open in mail app" buttons (wired in Transcript.tsx from data-email). */
+function emailCard(raw: string, d: ReturnType<typeof parseEmail> & object): string {
+  const rows = d.headers.map((h) => `<div class="email-row"><span class="email-k">${escapeHtml(h.name)}</span><span class="email-v">${escapeHtml(h.value)}</span></div>`).join("");
+  return `<div class="email-card" data-email="${escapeHtml(raw)}"><div class="email-head">${rows}</div><div class="email-body">${escapeHtml(d.body)}</div>` +
+    `<div class="email-actions"><button type="button" data-email-copy>Copy</button><button type="button" data-email-open>Open in mail app</button></div></div>`;
+}
+
 export function renderMarkdown(md: string): string {
   const lines = md.replace(/\r\n/g, "\n").split("\n");
   const out: string[] = [];
@@ -37,6 +46,8 @@ export function renderMarkdown(md: string): string {
       i++;
       while (i < lines.length && !/^```\s*$/.test(lines[i])) body.push(lines[i++]);
       i++;
+      const draft = fence[1].toLowerCase() === "email" ? parseEmail(body.join("\n")) : null;
+      if (draft) { out.push(emailCard(body.join("\n"), draft)); continue; }
       out.push(`<pre><code${fence[1] ? ` data-lang="${escapeHtml(fence[1])}"` : ""}>${escapeHtml(body.join("\n"))}</code></pre>`);
       continue;
     }

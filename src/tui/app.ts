@@ -51,6 +51,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     version: opts.version, cwd, homeDir: opts.homeDir, idPrefix: `tui-${crypto.randomUUID().slice(0, 8)}`,
     agentsMd: existsSync(join(cwd, "AGENTS.md")), theme: "dark",
   });
+  state = { ...state, starting: true };
   let client: RpcClient | undefined;
   let reqN = 0;
   const waiting = new Map<string, (result: unknown) => void>();
@@ -97,11 +98,20 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     if (next !== progress) { progress = next; if (tty) stdout.write(progressSequence(next)); }
   };
 
+  // While the session starts, keys reach the input box. Effects that need the session (a shortcut such as Tab or
+  // Ctrl+L, or Esc) wait here and run once session_ready clears `starting`. Trust answers and local effects run now.
+  const NEEDS_SESSION = new Set<Effect["type"]>(["settings", "interrupt", "rpc", "btw", "list_sessions", "new_session", "resume", "rewind", "open_rewind", "handoff", "fetch_context", "send", "shell"]);
+  const heldEffects: Effect[] = [];
   function dispatch(e: TuiEvent) {
     const step = reduce(state, e);
     state = step.state;
     setProgress();
-    for (const eff of step.effects) void run(eff);
+    // Held shortcuts (for example a model or autonomy change) run before the queued messages that session_ready sends.
+    const effects = !state.starting && heldEffects.length ? [...heldEffects.splice(0), ...step.effects] : step.effects;
+    for (const eff of effects) {
+      if (state.starting && NEEDS_SESSION.has(eff.type)) heldEffects.push(eff);
+      else void run(eff);
+    }
     schedule();
     if (state.quit && !finishing) void finish(0);
   }
@@ -186,14 +196,14 @@ export async function runTui(opts: TuiOptions): Promise<number> {
         }
         case "list_sessions": {
           // rigwell.list_sessions hides subagent and empty sessions (spec §12.1); fall back to a local scan when it is missing.
-          let list: { id: string; title?: string; updatedAt?: string; pinned?: boolean }[];
+          let list: { id: string; title?: string; updatedAt?: string; pinned?: boolean; parent?: string }[];
           try {
             const r = await client!.request("list_sessions", { cwd });
-            list = ((r?.sessions ?? []) as any[]).map((x) => ({ id: x.sessionId, title: x.title, updatedAt: x.updatedAt, pinned: x.pinned }));
+            list = ((r?.sessions ?? []) as any[]).map((x) => ({ id: x.sessionId, title: x.title, updatedAt: x.updatedAt, pinned: x.pinned, parent: x.parent }));
           } catch {
             list = listSessions(cwd).map((x) => ({ id: x.id, title: x.title, updatedAt: new Date(x.mtimeMs).toISOString() }));
           }
-          dispatch({ type: "sessions", sessions: list });
+          dispatch({ type: "sessions", sessions: list, tree: eff.tree });
           return;
         }
         case "fetch_context": {
@@ -394,17 +404,15 @@ export async function runTui(opts: TuiOptions): Promise<number> {
   }
 
   let ready = false;
-  const early: string[] = [];
   function onData(chunk: Buffer | string) {
     let data = chunk.toString();
-    if (!ready && !state.panels.length) { early.push(data); return; }
     // Focus reporting (CSI I / CSI O) feeds soundFocusMode; it is not a key.
     data = data.replace(/\x1b\[([IO])/g, (_m, c) => { focused = c === "I"; return ""; });
     for (const key of parseKeys(data)) dispatch({ type: "key", key, now: Date.now() });
   }
 
   // The terminal is live before the session starts: rigwell.request_trust can arrive during initialize_session / load_session.
-  // Keys typed before the session is ready wait, unless a panel (the trust question) is open to receive them.
+  // Keys typed before the session is ready go into the input box as usual; Enter queues the message and it is sent when the session is ready.
   enterTerminal();
   onResize();
   stdin.on("data", onData);
@@ -428,7 +436,6 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     return 1;
   }
   ready = true;
-  for (const chunk of early.splice(0)) onData(chunk);
   process.once("SIGTERM", () => void finish(143));
   return exited;
 }

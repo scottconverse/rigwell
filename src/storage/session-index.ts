@@ -273,7 +273,7 @@ export function refreshIndex(db: Database, projectKey?: string): void {
 
 export interface PickerRow {
   sessionId: string; title: string; cwd: string; preview: string; lastEventAt: number; pinned: boolean; archivedAt: string | null;
-  tags: Record<string, unknown>; messagesCount: number;
+  tags: Record<string, unknown>; messagesCount: number; parent: string | null;
 }
 
 /**
@@ -290,7 +290,7 @@ export function queryPicker(db: Database, o: { cwd?: string; includeArchived?: b
   if (o.limit && o.limit > 0) args.push(Math.floor(o.limit));
   return (db.query(sql).all(...args) as any[]).map((r) => ({
     sessionId: r.session_id, title: r.title ?? "New Session", cwd: r.cwd ?? "", preview: r.preview ?? "", lastEventAt: r.last_event_at ?? 0,
-    pinned: r.pinned === 1, archivedAt: r.archived_at ?? null, tags: JSON.parse(r.tags || "{}"), messagesCount: r.messages_count ?? 0,
+    pinned: r.pinned === 1, archivedAt: r.archived_at ?? null, tags: JSON.parse(r.tags || "{}"), messagesCount: r.messages_count ?? 0, parent: r.parent ?? null,
   }));
 }
 

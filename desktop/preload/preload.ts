@@ -48,7 +48,14 @@ const api = {
     save: (folder: string, profile: unknown): Promise<string> => ipcRenderer.invoke("profiles:save", folder, profile),
     remove: (folder: string, id: string): Promise<void> => ipcRenderer.invoke("profiles:delete", folder, id),
   },
-  skills: { list: (cwd: string): Promise<any[]> => ipcRenderer.invoke("skills:list", cwd) },
+  clipboard: {
+    writeText: (text: string): Promise<void> => ipcRenderer.invoke("clipboard:writeText", text),
+    writeImage: (dataUrl: string): Promise<void> => ipcRenderer.invoke("clipboard:writeImage", dataUrl),
+  },
+  skills: {
+    list: (cwd: string): Promise<any[]> => ipcRenderer.invoke("skills:list", cwd),
+    create: (cwd: string, input: { name: string; description: string; body: string; scope: "user" | "project"; overwrite?: boolean }): Promise<{ ok: true; filePath: string } | { ok: false; error: string; exists?: boolean }> => ipcRenderer.invoke("skills:create", cwd, input),
+  },
   dialog: {
     pickFolder: (): Promise<string | null> => ipcRenderer.invoke("dialog:pickFolder"),
     pickFile: (filters?: { name: string; extensions: string[] }[]): Promise<string | null> => ipcRenderer.invoke("dialog:pickFile", filters),

@@ -19,7 +19,7 @@ import { browserPermission, buildCsp, isAllowedExternal, isTrustedSender, parseD
 import { loadDesktopSettings, updateDesktopSettings, type DesktopSettings } from "./settings.ts";
 import { DaemonSupervisor, START_FAILURE_HINT } from "./supervisor.ts";
 import { deleteLocalProfile, gitRoot, listProfileViews, readUserSettings, saveLocalProfile, trustFolder, updateUserSettings } from "./user-settings.ts";
-import { listSkillViews } from "./skills.ts";
+import { createSkill, listSkillViews } from "./skills.ts";
 import { synthWav } from "./sounds.ts";
 import { freeSlot, saveZoom, stepZoom, zoomFor } from "./window-zoom.ts";
 import { showWhenReady } from "./window-show.ts";
@@ -313,6 +313,14 @@ function registerIpc() {
   ipcMain.handle("profiles:save", guard(async (_e, folder: string, p: any) => { const root = await gitRoot(String(folder)); if (!root) throw new Error("Not a git repository"); return saveLocalProfile(HOME, root, p); }));
   ipcMain.handle("profiles:delete", guard(async (_e, folder: string, id: string) => { const root = await gitRoot(String(folder)); if (!root) throw new Error("Not a git repository"); deleteLocalProfile(HOME, root, String(id)); }));
   ipcMain.handle("skills:list", guard((_e, cwd: string) => listSkillViews(String(cwd))));
+  // The page has no clipboard permission (the default session denies it), so copy buttons go through the main process.
+  ipcMain.handle("clipboard:writeText", guard((_e, text: string) => { clipboard.writeText(String(text).slice(0, 5_000_000)); }));
+  ipcMain.handle("clipboard:writeImage", guard((_e, dataUrl: string) => {
+    const img = nativeImage.createFromDataURL(String(dataUrl));
+    if (img.isEmpty()) throw new Error("Not an image");
+    clipboard.writeImage(img);
+  }));
+  ipcMain.handle("skills:create", guard((_e, cwd: string, input: any) => createSkill(String(cwd ?? ""), input)));
 
   ipcMain.handle("dialog:pickFolder", guard(async (e) => {
     const w = BrowserWindow.fromWebContents(e.sender);

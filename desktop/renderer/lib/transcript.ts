@@ -2,7 +2,7 @@
 // User bubbles, markdown text, tool rows (icon, name, main argument), thinking blocks and notices (spec §14.3).
 
 export type Item =
-  | { kind: "user"; id: string; text: string }
+  | { kind: "user"; id: string; text: string; images?: { mediaType: string; data: string }[] }
   | { kind: "assistant"; id: string; text: string }
   | { kind: "thinking"; id: string; text: string }
   | { kind: "tool"; id: string; name: string; input: Record<string, unknown>; status: "running" | "ok" | "error"; output?: string; live?: string; phase?: string }
@@ -50,6 +50,11 @@ export function fromMessages(messages: any[]): Item[] {
         const t = String(b.text ?? "");
         if (m.role === "user") { if (t.trim() && !/^\s*<system-reminder>/.test(t)) items.push({ kind: "user", id, text: t }); }
         else if (t.trim()) items.push({ kind: "assistant", id, text: t });
+      } else if (b.type === "image" && m.role === "user" && typeof b.data === "string") {
+        const img = { mediaType: String(b.mediaType ?? "image/png"), data: b.data as string };
+        const last = items[items.length - 1];
+        if (last?.kind === "user" && last.id.startsWith(`${m.id}:`)) last.images = [...(last.images ?? []), img];
+        else items.push({ kind: "user", id, text: "", images: [img] });
       } else if (b.type === "thinking" && b.thinking) items.push({ kind: "thinking", id, text: b.thinking });
       else if (b.type === "tool_use") items = upsertTool(items, b.id, { name: b.name, input: b.input ?? {} });
       else if (b.type === "tool_result") items = upsertTool(items, b.tool_use_id, { status: b.is_error ? "error" : "ok", output: text(b.content) });

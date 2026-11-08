@@ -1,7 +1,7 @@
 // Security helpers for the main process (spec §14.6). Pure so they can be tested without Electron.
 
 /** Schemes the app may hand to the OS: web pages, local files and the common editors. */
-export const EXTERNAL_SCHEMES = ["http:", "https:", "file:", "vscode:", "cursor:", "zed:", "jetbrains:", "idea:"];
+export const EXTERNAL_SCHEMES = ["http:", "https:", "file:", "mailto:", "vscode:", "cursor:", "zed:", "jetbrains:", "idea:"];
 
 export function isAllowedExternal(raw: string): boolean {
   try { return EXTERNAL_SCHEMES.includes(new URL(raw).protocol); } catch { return false; }

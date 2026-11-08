@@ -198,7 +198,7 @@ export class SessionController extends Store<SessionState> {
     const names = [...(attach.images ?? []).map((_, i) => `image ${i + 1}`), ...(attach.files ?? []).map((f) => f.name)];
     const shown = names.length ? `${text}\n[Attached: ${names.join(", ")}]` : text;
     if (this.attaching) await Promise.race([this.attaching, new Promise((r) => setTimeout(r, 3000))]);
-    this.set({ items: [...this.state.items, { kind: "user", id: `u-${Date.now()}`, text: shown }], working: "thinking" });
+    this.set({ items: [...this.state.items, { kind: "user", id: `u-${Date.now()}`, text: shown, ...(attach.images?.length ? { images: attach.images } : {}) }], working: "thinking" });
     if (this.state.title === "New Session") this.set({ title: text.split("\n")[0].slice(0, 60) });
     try { await this.conn.request("add_user_message", { text, ...(attach.images?.length ? { images: attach.images } : {}), ...(attach.files?.length ? { files: attach.files } : {}) }); } catch (e) { this.set({ items: [...this.state.items, { kind: "info", id: `e-${Date.now()}`, text: (e as Error).message, level: "error" }], working: "idle" }); }
   }
