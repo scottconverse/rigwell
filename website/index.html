@@ -40,7 +40,7 @@
     <section class="hero">
       <div class="wrap hero-grid">
         <div class="hero-copy">
-          <p class="eyebrow"><span class="pill">v0.3.1</span> Open source &middot; AGPL-3.0 &middot; Signed Windows installer</p>
+          <p class="eyebrow"><span class="pill">v0.3.2</span> Open source &middot; AGPL-3.0 &middot; Signed Windows installer</p>
           <h1>A coding agent that runs on your machine, with the model you choose.</h1>
           <p class="lede">
             Rigwell is one local daemon with four ways in: a terminal UI, a desktop app, a headless mode and a TypeScript SDK.
@@ -48,7 +48,7 @@
             It reads, edits and runs code in your repo, and commands above the autonomy level you set wait for your yes.
           </p>
           <div class="cta-row">
-            <a class="btn btn-primary" href="https://github.com/scottconverse/rigwell/releases/tag/v0.3.1">Download v0.3.1 for Windows</a>
+            <a class="btn btn-primary" href="https://github.com/scottconverse/rigwell/releases/tag/v0.3.2">Download v0.3.2 for Windows</a>
             <a class="btn btn-ghost" href="manual/">Read the manual</a>
           </div>
           <p class="hero-note">Linux AppImage and deb builds are on the same page. Or <a href="#quick-start">build it from source</a>.</p>
@@ -360,7 +360,7 @@
       <div class="wrap">
         <p class="kicker">Quick start</p>
         <h2 id="qs-h">Install it, add a model, run it.</h2>
-        <p class="section-lede">Download the installer from the <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.3.1">v0.3.1 release</a>. Windows x64 is the release target. Linux builds are extras. There is no macOS build in 0.3.1. The Windows setup file is signed by Scott Converse. The app inside it and the Linux files are not signed. To run from source you need <a href="https://bun.sh">Bun</a> 1.4 or later, <code>git</code> and <code>rg</code> (ripgrep) on your PATH.</p>
+        <p class="section-lede">Download the installer from the <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.3.2">v0.3.2 release</a>. Windows x64 is the release target. macOS (Apple silicon) and Linux builds are extras. The Windows setup file is signed by Scott Converse. The app inside it, the Mac files and the Linux files are not signed. macOS blocks the Mac app the first time. To open it, run <code>xattr -dr com.apple.quarantine /Applications/Rigwell.app</code> in Terminal, or go to System Settings &gt; Privacy &amp; Security and click <strong>Open Anyway</strong>. To run from source you need <a href="https://bun.sh">Bun</a> 1.4 or later, <code>git</code> and <code>rg</code> (ripgrep) on your PATH.</p>
         <ol class="steps">
           <li>
             <h3>Clone and install</h3>
@@ -399,7 +399,7 @@ bun src/cli/main.ts exec --auto low <span class="tk-s">"Fix the failing test"</s
         <p class="kicker">Project status</p>
         <h2 id="status-h">Early, and honest about it.</h2>
         <p class="section-lede">
-          Every part of the local build spec is written and tested. Version 0.3.1 is the latest release. It has not had wide real-world use.
+          Every part of the local build spec is written and tested. Version 0.3.2 is the latest release. It has not had wide real-world use.
         </p>
         <div class="grid-3">
           <article class="card status-card status-ok">
@@ -432,7 +432,7 @@ bun src/cli/main.ts exec --auto low <span class="tk-s">"Fix the failing test"</s
           </article>
         </div>
         <p class="small status-links">
-          Release notes: <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.3.1">v0.3.1</a>
+          Release notes: <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.3.2">v0.3.2</a>
           &middot; Known issues: <a href="https://github.com/scottconverse/rigwell/blob/main/docs/handoff/HANDOFF.md">HANDOFF.md</a>
           &middot; <a href="https://github.com/scottconverse/rigwell/blob/main/docs/decisions.md">decisions.md</a>
           &middot; <a href="manual/#limits">all known limits</a>
@@ -446,7 +446,7 @@ bun src/cli/main.ts exec --auto low <span class="tk-s">"Fix the failing test"</s
         <h2>Read the code. Run it on your machine.</h2>
         <p>Rigwell is AGPL-3.0 licensed. Issues and pull requests are welcome on GitHub.</p>
         <div class="cta-row">
-          <a class="btn btn-primary" href="https://github.com/scottconverse/rigwell/releases/tag/v0.3.1">Download v0.3.1</a>
+          <a class="btn btn-primary" href="https://github.com/scottconverse/rigwell/releases/tag/v0.3.2">Download v0.3.2</a>
           <a class="btn btn-ghost-dark" href="manual/">Read the manual</a>
           <a class="btn btn-ghost-dark" href="https://github.com/scottconverse/rigwell">View on GitHub</a>
         </div>
@@ -456,7 +456,7 @@ bun src/cli/main.ts exec --auto low <span class="tk-s">"Fix the failing test"</s
 
   <footer class="site-footer">
     <div class="wrap footer-inner">
-      <span>Rigwell 0.3.1 &middot; <a href="https://github.com/scottconverse/rigwell/blob/main/LICENSE">AGPL-3.0-only</a></span>
+      <span>Rigwell 0.3.2 &middot; <a href="https://github.com/scottconverse/rigwell/blob/main/LICENSE">AGPL-3.0-only</a></span>
       <span>
         <a href="manual/">Manual</a> &middot;
         <a href="https://github.com/scottconverse/rigwell">Source</a> &middot;
