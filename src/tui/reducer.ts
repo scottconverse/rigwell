@@ -19,7 +19,7 @@ const zeroUsage = () => ({ inputTokens: 0, outputTokens: 0, cacheCreationTokens:
 
 export function initialState(o: InitOptions): TuiState {
   return {
-    version: o.version ?? "0.2.0", cwd: o.cwd, homeDir: o.homeDir ?? "~/.rigwell", idPrefix: o.idPrefix ?? "tui", counter: 0,
+    version: o.version ?? "0.3.0", cwd: o.cwd, homeDir: o.homeDir ?? "~/.rigwell", idPrefix: o.idPrefix ?? "tui", counter: 0,
     header: { agentsMd: o.agentsMd ?? false, skills: 0, mcps: 0, issues: 0 }, rows: 24, cols: 80, scroll: 0, custom: [],
     modelId: o.modelId ?? "", reasoning: o.reasoning ?? "high", autonomy: o.autonomy ?? "off", mode: o.mode ?? "auto", models: [],
     working: "idle", running: false, now: 0, contextUsed: 0, contextLimit: 0, tokenUsage: zeroUsage(), turns: 0,
