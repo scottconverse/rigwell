@@ -7,7 +7,7 @@ repo, and commands above the autonomy level you set wait for your approval.
 **[Website](https://scottconverse.github.io/rigwell/)** ·
 **[User manual](https://scottconverse.github.io/rigwell/manual/)** ·
 [Quick start](#quick-start) ·
-[Download v0.3.1](https://github.com/scottconverse/rigwell/releases/tag/v0.3.1) ·
+[Download v0.3.2](https://github.com/scottconverse/rigwell/releases/tag/v0.3.2) ·
 [Issues](https://github.com/scottconverse/rigwell/issues)
 
 ## What it does
@@ -29,9 +29,13 @@ repo, and commands above the autonomy level you set wait for your approval.
 
 ## Quick start
 
-Download the installer from the [v0.3.1 release](https://github.com/scottconverse/rigwell/releases/tag/v0.3.1).
-Windows x64 is the release target. Linux AppImage and deb builds are extras. There is no macOS build in 0.3.1
-(v0.1.0 has one). The Windows setup file is signed by Scott Converse. The app inside it and the Linux files are not signed.
+Download the installer from the [v0.3.2 release](https://github.com/scottconverse/rigwell/releases/tag/v0.3.2).
+Windows x64 is the release target. macOS (Apple silicon) dmg and zip, and Linux AppImage and deb builds are extras.
+The Windows setup file is signed by Scott Converse. The app inside it, the Mac files and the Linux files are not signed.
+
+The Mac app is not signed by Apple, so macOS blocks it the first time. To open it, run
+`xattr -dr com.apple.quarantine /Applications/Rigwell.app` in Terminal, or go to
+System Settings > Privacy & Security and click **Open Anyway**.
 
 To run from source you need Bun 1.4 or later, `git` and `rg` (ripgrep) on your PATH.
 
@@ -80,8 +84,8 @@ variables, the SDK, files on disk and the security model.
 
 ## Project status
 
-Early. Version 0.3.1 is the latest release (the 0.3.0 code with a signed Windows installer). Every part of the local build spec is written and tested, but
-all tests use fake servers, and Rigwell has not had wide real-world use. CI runs the tests on Windows and
+Early. Version 0.3.2 is the latest release (the 0.3.0 code with a signed Windows installer and a macOS build). Every part of the local build spec is written and tested, but
+all tests use fake servers, and Rigwell has not had wide real-world use. CI runs the tests on Windows, macOS and
 Linux. It is run by hand on Windows only.
 
 Known limits:

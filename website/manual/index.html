@@ -27,7 +27,7 @@
         <li><a href="../">Home</a></li>
         <li><a href="#quick-start">Quick start</a></li>
         <li><a href="#protocol">Protocol</a></li>
-        <li><a href="https://github.com/scottconverse/rigwell/releases/tag/v0.3.1">v0.3.1</a></li>
+        <li><a href="https://github.com/scottconverse/rigwell/releases/tag/v0.3.2">v0.3.2</a></li>
         <li><a class="nav-gh" href="https://github.com/scottconverse/rigwell">GitHub</a></li>
       </ul>
     </nav>
@@ -80,11 +80,11 @@
 
       <!-- ============================== START ============================== -->
       <section id="overview">
-        <p class="kicker">Rigwell manual &middot; version 0.3.1</p>
+        <p class="kicker">Rigwell manual &middot; version 0.3.2</p>
         <h1>Rigwell user manual</h1>
         <p class="doc-lede">Rigwell is a coding agent that runs on your own machine, with the model you choose. This manual covers how to install and use it, and every interface a program can call: the JSON-RPC protocol, the local HTTP and WebSocket endpoints, the CLI, the SDK and MCP.</p>
         <div class="meta-row">
-          <span class="tag tag-new">New in 0.3.1: signed Windows installer. New in 0.3.0: rigwell doctor, /tree, desktop skills browser</span>
+          <span class="tag tag-new">New in 0.3.2: macOS build. New in 0.3.1: signed Windows installer. New in 0.3.0: rigwell doctor, /tree, desktop skills browser</span>
           <span class="tag">Bun + TypeScript</span>
           <span class="tag">Electron desktop app</span>
           <span class="tag">AGPL-3.0-only</span>
@@ -99,13 +99,13 @@
       <section id="install">
         <h2>Install</h2>
         <h3 id="install-installer">From the installer</h3>
-        <p>Download the installer from the <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.3.1">v0.3.1 release</a>.</p>
+        <p>Download the installer from the <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.3.2">v0.3.2 release</a>.</p>
         <div class="table-wrap"><table>
           <thead><tr><th>Platform</th><th>File</th><th>Status</th></tr></thead>
           <tbody>
-            <tr><td>Windows x64</td><td><code>rigwell-setup-0.3.1-x64.exe</code></td><td>The release target</td></tr>
-            <tr><td>Linux x64</td><td><code>rigwell-0.3.1-x86_64.AppImage</code>, <code>rigwell-0.3.1-amd64.deb</code></td><td>Extra build</td></tr>
-            <tr><td>macOS (Apple silicon)</td><td>Not in 0.3.1</td><td>The macOS job did not run. v0.1.0 has a macOS build.</td></tr>
+            <tr><td>Windows x64</td><td><code>rigwell-setup-0.3.2-x64.exe</code></td><td>The release target. Signed.</td></tr>
+            <tr><td>Linux x64</td><td><code>rigwell-0.3.2-x86_64.AppImage</code>, <code>rigwell-0.3.2-amd64.deb</code></td><td>Extra build</td></tr>
+            <tr><td>macOS (Apple silicon)</td><td><code>rigwell-0.3.2-arm64.dmg</code>, <code>rigwell-0.3.2-arm64.zip</code></td><td>Extra build. Not signed.</td></tr>
           </tbody>
         </table></div>
         <div class="note note-ok"><strong>The Windows setup file is signed.</strong><p>The publisher is Scott Converse. Only the setup file is signed. The app inside it and the Linux files are not signed.</p></div>
@@ -566,7 +566,7 @@ flowchart TB
 
       <section id="protocol">
         <h2>JSON-RPC protocol</h2>
-        <p>All clients use one protocol: JSON-RPC 2.0 with a Rigwell envelope. Protocol version: <code>0.1.0</code>. It did not change in Rigwell 0.2.0, 0.3.0 or 0.3.1.</p>
+        <p>All clients use one protocol: JSON-RPC 2.0 with a Rigwell envelope. Protocol version: <code>0.1.0</code>. It did not change in Rigwell 0.2.0, 0.3.0, 0.3.1 or 0.3.2.</p>
 <pre><code>{
   "jsonrpc": "2.0",
   "type": "request",            // request | response | notification (optional on input)
@@ -924,11 +924,11 @@ const d = await connectToDaemon({ cwd: "." });</code></pre>
       <section id="limits">
         <h2>Known limits</h2>
         <ul>
-          <li>Windows is the release target. It is tested by hand on Windows only. CI runs tests on Windows and Linux. The macOS CI job does not run.</li>
+          <li>Windows is the release target. It is tested by hand on Windows only. CI runs tests on Windows, macOS and Linux.</li>
           <li>No command sandbox on Windows. The sandbox is off by default on all platforms.</li>
           <li>On Windows, the side-pane terminal has no PTY (a pseudo-terminal), so full-screen terminal programs do not draw correctly.</li>
           <li>The installed app does not include <code>git</code> or <code>rg</code>. Grep, Glob and worktrees need them on PATH.</li>
-          <li>The macOS build is Apple silicon (arm64) only.</li>
+          <li>The macOS build is Apple silicon (arm64) only. It is not signed or notarized by Apple. It is built and tested in CI only. macOS blocks it the first time. To open it, run <code>xattr -dr com.apple.quarantine /Applications/Rigwell.app</code> in Terminal, or go to System Settings &gt; Privacy &amp; Security and click <strong>Open Anyway</strong>.</li>
           <li>All tests use fake servers. No test calls a real model provider, OS keychain, GitHub or vendor MCP server.</li>
           <li>Chrome cookie import does not work on Windows. The dialog says so when it opens.</li>
           <li>MCP OAuth is tested against a local fake server only.</li>
@@ -964,7 +964,7 @@ const d = await connectToDaemon({ cwd: "." });</code></pre>
           <li>A <code>v*</code> tag starts <code>release.yml</code>. It makes a draft release, builds Windows, Linux and macOS installers, and publishes.</li>
           <li><code>ci.yml</code> and <code>platforms.yml</code> run the tests. They skip changes that touch only docs, <code>spec/</code>, <code>website/</code>, LICENSE or NOTICE.</li>
           <li><code>pages.yml</code> publishes <code>website/</code> to GitHub Pages on a push to main.</li>
-          <li>Releases: <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.3.1">v0.3.1</a>, <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.3.0">v0.3.0</a>, <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.1.0">v0.1.0</a>.</li>
+          <li>Releases: <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.3.2">v0.3.2</a>, <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.3.1">v0.3.1</a>, <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.3.0">v0.3.0</a>, <a href="https://github.com/scottconverse/rigwell/releases/tag/v0.1.0">v0.1.0</a>.</li>
         </ul>
         <div class="doc-foot">
           <p>Rigwell is licensed under <a href="https://github.com/scottconverse/rigwell/blob/main/LICENSE">AGPL-3.0-only</a>. Wire protocol shapes are adapted from the Apache-2.0 <code>@factory/droid-sdk</code> 0.10.0; see <a href="https://github.com/scottconverse/rigwell/blob/main/NOTICE">NOTICE</a>. Found a mistake in this manual? <a href="https://github.com/scottconverse/rigwell/issues">Open an issue</a>.</p>
