@@ -142,7 +142,7 @@ async function probe(cfg: McpServerConfig, f: Fetch): Promise<string | undefined
       : await f(cfg.url!, {
         method: "POST", signal: AbortSignal.timeout(15_000),
         headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...(cfg.headers ?? {}) },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "rigwell", version: "0.2.0" } } }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "rigwell", version: "0.3.0" } } }),
       });
     void res.body?.cancel();
     return res.status === 401 ? res.headers.get("www-authenticate") ?? undefined : undefined;
