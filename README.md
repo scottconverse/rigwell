@@ -7,7 +7,7 @@ repo, and commands above the autonomy level you set wait for your approval.
 **[Website](https://scottconverse.github.io/rigwell/)** ·
 **[User manual](https://scottconverse.github.io/rigwell/manual/)** ·
 [Quick start](#quick-start) ·
-[Download v0.2.0](https://github.com/scottconverse/rigwell/releases/tag/v0.2.0) ·
+[Download v0.3.0](https://github.com/scottconverse/rigwell/releases/tag/v0.3.0) ·
 [Issues](https://github.com/scottconverse/rigwell/issues)
 
 ## What it does
@@ -17,7 +17,7 @@ repo, and commands above the autonomy level you set wait for your approval.
 - **Bounded autonomy.** Four levels (off, low, medium, high). The default is off (read-only). The model labels
   each command with a risk level, and allow, deny and block lists apply on top. Commands can run in a sandbox
   (bubblewrap on Linux, sandbox-exec on macOS). Edits are snapshotted so you can rewind.
-- **MCP connectors with sign-in.** Connect stdio, streamable HTTP and SSE MCP servers. New in 0.2.0: OAuth
+- **MCP connectors with sign-in.** Connect stdio, streamable HTTP and SSE MCP servers. Since 0.2.0: OAuth
   sign-in for HTTP and SSE servers (`rigwell mcp login <name>`, or Sign in in the desktop app).
 - **Script mode.** The model can write a short script that calls the tools as functions, so many tool calls
   take one model request.
@@ -29,8 +29,8 @@ repo, and commands above the autonomy level you set wait for your approval.
 
 ## Quick start
 
-Download the installer from the [v0.2.0 release](https://github.com/scottconverse/rigwell/releases/tag/v0.2.0).
-Windows x64 is the release target. Linux AppImage and deb builds are extras. There is no macOS build in 0.2.0
+Download the installer from the [v0.3.0 release](https://github.com/scottconverse/rigwell/releases/tag/v0.3.0).
+Windows x64 is the release target. Linux AppImage and deb builds are extras. There is no macOS build in 0.3.0
 (v0.1.0 has one). The installers are not signed, so Windows SmartScreen shows a warning.
 
 To run from source you need Bun 1.4 or later, `git` and `rg` (ripgrep) on your PATH.
@@ -80,7 +80,7 @@ variables, the SDK, files on disk and the security model.
 
 ## Project status
 
-Early. Version 0.2.0 is the second release. Every part of the local build spec is written and tested, but
+Early. Version 0.3.0 is the third release. Every part of the local build spec is written and tested, but
 all tests use fake servers, and Rigwell has not had wide real-world use. CI runs the tests on Windows and
 Linux. It is run by hand on Windows only.
 
