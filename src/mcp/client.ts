@@ -44,7 +44,7 @@ export class McpClient {
     try {
       await this.conn.start();
       const r = await this.conn.request("initialize", {
-        protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "rigwell", version: "0.3.0" },
+        protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "rigwell", version: "0.3.1" },
       }, timeoutMs);
       this.serverInfo = r?.serverInfo;
       await this.conn.notify("notifications/initialized");
