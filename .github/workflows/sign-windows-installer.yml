@@ -1,0 +1,100 @@
+# Signs an already-built Rigwell Windows installer via Azure Artifact Signing.
+# Sign-only: downloads a named intake asset, refuses any hash mismatch,
+# signs, fail-closed verifies, and emits the signed exe + a receipt as a
+# workflow artifact. Publishes nothing, overwrites nothing, builds nothing.
+# Copied from scottconverse/civiccast sign-native-installer.yml (signed OK Oct 29-30 2026).
+name: sign-windows-installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag holding the unsigned installer
+        required: true
+        default: v0.3.0
+      asset_name:
+        description: Exact installer filename
+        required: true
+        default: rigwell-setup-0.3.0-x64.exe
+      expected_sha256:
+        description: Required SHA-256 of the unsigned installer (lowercase)
+        required: true
+
+permissions:
+  contents: write # read draft-release assets (drafts require push-level token)
+
+jobs:
+  sign:
+    runs-on: windows-latest
+    steps:
+      - name: Download intake asset
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+          ASSET: ${{ inputs.asset_name }}
+        run: |
+          New-Item -ItemType Directory -Force -Path intake | Out-Null
+          gh release download $env:TAG --repo ${{ github.repository }} --pattern $env:ASSET --dir intake
+          $files = Get-ChildItem intake -Filter *.exe
+          if ($files.Count -ne 1) { Write-Error "Expected exactly 1 exe in intake, found $($files.Count)."; exit 1 }
+
+      - name: Refuse hash mismatch (fail closed)
+        shell: pwsh
+        env:
+          EXPECTED: ${{ inputs.expected_sha256 }}
+        run: |
+          $exe = Get-ChildItem intake -Filter *.exe | Select-Object -First 1
+          $actual = (Get-FileHash -Algorithm SHA256 $exe.FullName).Hash.ToLowerInvariant()
+          $expected = $env:EXPECTED.Trim().ToLowerInvariant()
+          Write-Host "Expected: $expected"
+          Write-Host "Actual:   $actual"
+          if ($actual -ne $expected) { Write-Error "Intake hash mismatch - refusing to sign."; exit 1 }
+          Write-Host "OK: intake exe matches the pinned hash."
+
+      - name: Sign the installer (Azure Trusted Signing)
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: https://wcus.codesigning.azure.net
+          signing-account-name: scottconverse-signing
+          certificate-profile-name: ScottConversePublic
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          files-folder: intake
+          files-folder-filter: exe
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+
+      - name: Verify Authenticode signature (fail closed) and write receipt
+        shell: pwsh
+        env:
+          UNSIGNED_SHA: ${{ inputs.expected_sha256 }}
+        run: |
+          $exe = Get-ChildItem intake -Filter *.exe | Select-Object -First 1
+          $sig = Get-AuthenticodeSignature $exe.FullName
+          Write-Host "File:   $($exe.Name)"
+          Write-Host "Status: $($sig.Status)"
+          Write-Host "Signer: $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne "Valid") { Write-Error "Signature NOT Valid ($($sig.Status))."; exit 1 }
+          $signedSha = (Get-FileHash -Algorithm SHA256 $exe.FullName).Hash.ToLowerInvariant()
+          $receipt = [ordered]@{
+            file            = $exe.Name
+            unsigned_sha256 = $env:UNSIGNED_SHA.Trim().ToLowerInvariant()
+            signed_sha256   = $signedSha
+            signed_bytes    = $exe.Length
+            signer_subject  = $sig.SignerCertificate.Subject
+            signer_thumb    = $sig.SignerCertificate.Thumbprint
+            timestamp       = "$($sig.TimeStamperCertificate.Subject)"
+            workflow_run    = "${{ github.run_id }}"
+            status          = "Valid"
+          }
+          $receipt | ConvertTo-Json | Out-File -Encoding utf8 intake/signing-receipt.json
+          Write-Host "OK: signed, Valid, receipt written. Signed sha256: $signedSha"
+
+      - name: Upload signed exe + receipt as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-windows-installer
+          path: intake/
+          retention-days: 7
+          if-no-files-found: error
