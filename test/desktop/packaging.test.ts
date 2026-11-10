@@ -46,6 +46,11 @@ describe("builder config", () => {
     expect(cfg).toContain("build/stage/bun");
     expect(cfg).toContain("build/stage/daemon");
   });
+  test("Windows: every exe goes through the signing hook, sha256 only; no elevate.exe", () => {
+    expect(cfg).toContain("sign: packaging/sign.cjs");
+    expect(cfg).toContain("signingHashAlgorithms: [sha256]");
+    expect(cfg).toContain("packElevateHelper: false");
+  });
 });
 
 function readFileOrEmpty(p: string) { try { return require("node:fs").readFileSync(p, "utf8") as string; } catch { return ""; } }

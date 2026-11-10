@@ -52,7 +52,13 @@ win:
   icon: assets/icon.ico
   target: [nsis]
   artifactName: rigwell-setup-${version}-${arch}.${ext}
+  # Signs rigwell.exe, the uninstaller and the setup file (see the notes in packaging/sign.cjs).
+  signtoolOptions:
+    sign: packaging/sign.cjs
+    signingHashAlgorithms: [sha256]
 nsis:
   oneClick: false
   perMachine: false
+  # elevate.exe is only for per-machine installs. Rigwell installs per user, so it is not shipped.
+  packElevateHelper: false
   allowToChangeInstallationDirectory: true

@@ -4,9 +4,15 @@ name: release
 # Windows is the only platform a release needs (decision 341). macOS and Linux build in their own jobs at the
 # same time. They do not hold up Windows, and if one of them fails the Windows files still ship.
 # Tag only a commit whose ci and platforms runs are green; this workflow builds and uploads, it does not test.
+#
+# Windows signing: rigwell.exe, the uninstaller and the setup file are signed with Azure Artifact Signing
+# by desktop/packaging/sign.cjs. The job stops if any of them is not validly signed by Scott Converse.
+# A hand run (workflow_dispatch) builds and checks the signed Windows files only. It makes no release.
+# It keeps the setup file as a run artifact for 1 day.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -23,6 +29,7 @@ env:
 jobs:
   # Makes a draft release for the tag if there is none yet. The Windows job publishes it.
   draft:
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -31,6 +38,11 @@ jobs:
 
   windows:
     needs: draft
+    # On a hand run the draft job is skipped; Windows still runs.
+    # On a tag push it runs only when the repo variable RIGWELL_CI_SIGNING is 1 (the AZURE_* secrets are set).
+    # Until then the Windows files are built and signed on Scott's PC, uploaded to the draft by hand,
+    # and the draft is published by hand.
+    if: ${{ !failure() && !cancelled() && (github.event_name == 'workflow_dispatch' || vars.RIGWELL_CI_SIGNING == '1') }}
     runs-on: windows-2022
     timeout-minutes: 40
     steps:
@@ -54,13 +66,69 @@ jobs:
         working-directory: desktop
         shell: bash
         run: test -f node_modules/electron/dist/electron.exe || node node_modules/electron/install.js
-      - name: Build the installer (unsigned)
+      - name: Install the Azure signing module
+        shell: pwsh
+        run: Install-Module -Name ArtifactSigning -RequiredVersion 0.1.20 -Force -Repository PSGallery -Scope CurrentUser
+      - name: Build and sign the installer
         working-directory: desktop
         shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          RIGWELL_SIGN: "1"
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: RIGWELL_BUN_BIN="$(command -v bun).exe" bun run package:win --publish never || RIGWELL_BUN_BIN="$(command -v bun)" bun run package:win --publish never
+      - name: Check every Windows signature (installs the app, then removes it)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $rel = 'desktop/release'
+          $setups = @(Get-ChildItem $rel -Filter 'rigwell-setup-*-x64.exe')
+          if ($setups.Count -ne 1) { throw "expected 1 setup file, found $($setups.Count)" }
+          $setup = $setups[0].FullName
+          function Test-Ours($f) {
+            $s = Get-AuthenticodeSignature -LiteralPath $f
+            if ($s.Status -ne 'Valid') { throw "$f : signature status is $($s.Status)" }
+            if (-not $s.SignerCertificate.Subject.StartsWith('CN=Scott Converse')) { throw "$f : signer is $($s.SignerCertificate.Subject)" }
+            if (-not $s.TimeStamperCertificate) { throw "$f : no timestamp" }
+            Write-Host "OK  $f  ($($s.SignerCertificate.Subject))"
+          }
+          function Test-Bun($f) {
+            $s = Get-AuthenticodeSignature -LiteralPath $f
+            if ($s.Status -ne 'Valid') { throw "$f : Bun signature status is $($s.Status)" }
+            Write-Host "OK  $f  (Bun, own signature: $($s.SignerCertificate.Subject))"
+          }
+          Test-Ours $setup
+          Test-Ours "$rel/win-unpacked/rigwell.exe"
+          Test-Bun "$rel/win-unpacked/resources/bun/bun.exe"
+          # No other .exe may ship.
+          $other = @(Get-ChildItem "$rel/win-unpacked" -Recurse -Filter *.exe | Where-Object { $_.Name -notin @('rigwell.exe', 'bun.exe') })
+          if ($other.Count) { throw "unexpected exe files: $($other.FullName -join ', ')" }
+          # latest.yml must describe the signed setup file.
+          $sha512 = [Convert]::ToBase64String([Security.Cryptography.SHA512]::Create().ComputeHash([IO.File]::ReadAllBytes($setup)))
+          if (-not (Select-String -LiteralPath "$rel/latest.yml" -SimpleMatch "sha512: $sha512" -Quiet)) { throw "latest.yml sha512 does not match the signed setup file" }
+          Write-Host "OK  latest.yml sha512 matches the signed setup file"
+          # Install silently, check the installed files, then uninstall.
+          $dir = Join-Path $env:RUNNER_TEMP 'rigwell-install'
+          $p = Start-Process -FilePath $setup -ArgumentList '/S', "/D=$dir" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "setup exit code $($p.ExitCode)" }
+          Test-Ours "$dir/rigwell.exe"
+          Test-Ours "$dir/Uninstall Rigwell.exe"
+          Test-Bun "$dir/resources/bun/bun.exe"
+          Start-Process -FilePath "$dir/Uninstall Rigwell.exe" -ArgumentList '/S' -Wait
+          $sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $setup).Hash.ToLower()
+          "Signed setup file: $(Split-Path $setup -Leaf)  SHA-256: $sha256" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+      - name: Keep the signed setup file (hand run only)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rigwell-setup-signed
+          path: desktop/release/rigwell-setup-*-x64.exe
+          retention-days: 1
+          if-no-files-found: error
       - name: Upload to the release and publish it
+        if: github.event_name == 'push'
         shell: bash
         run: |
           shopt -s nullglob
@@ -71,6 +139,7 @@ jobs:
 
   macos:
     needs: draft
+    if: github.event_name == 'push'
     runs-on: macos-15
     timeout-minutes: 40
     steps:
@@ -102,6 +171,7 @@ jobs:
 
   linux:
     needs: draft
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
