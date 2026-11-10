@@ -39,7 +39,10 @@ jobs:
   windows:
     needs: draft
     # On a hand run the draft job is skipped; Windows still runs.
-    if: ${{ !failure() && !cancelled() }}
+    # On a tag push it runs only when the repo variable RIGWELL_CI_SIGNING is 1 (the AZURE_* secrets are set).
+    # Until then the Windows files are built and signed on Scott's PC, uploaded to the draft by hand,
+    # and the draft is published by hand.
+    if: ${{ !failure() && !cancelled() && (github.event_name == 'workflow_dispatch' || vars.RIGWELL_CI_SIGNING == '1') }}
     runs-on: windows-2022
     timeout-minutes: 40
     steps:
