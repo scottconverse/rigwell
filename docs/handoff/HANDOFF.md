@@ -28,6 +28,9 @@ with the old history and the old PR #1. Commit IDs in this file are from that ol
 - CI (`.github/workflows/ci.yml`, `.github/workflows/platforms.yml`): Linux `test` green; macOS tests + app package green.
 - Release targets (decision 341): Windows is the only platform a release needs. macOS and Linux ship when they build,
   and never block or delay a release. `.github/workflows/release.yml` builds the installers for a `v*` tag.
+- Windows signing (decision 349): every Rigwell Windows file is signed by Scott Converse since v0.3.3 (setup file,
+  `rigwell.exe`, uninstaller). The repo has no signing secrets, so the Windows files are built, signed and uploaded by hand.
+  Latest release: v0.3.3.
 
 ## Done in the last session (Windows PC)
 - Windows worktree e2e hang: fixed (decision 319, commit 1aba96a). Root cause was the test's `expect(c.call(...)).rejects` wait on Windows.
@@ -77,7 +80,7 @@ None assigned. Ask the owner. The spec is built; later phases (hosted parts, Wor
 - Declined by the owner: GitHub-event and Slack-message triggers. Spec later phases (not built): hosted parts, §15.10 Workstreams. MCP OAuth sign-in is built (decision 346, `rigwell mcp login <name>`; desktop Sign in button, decision 347), tested only against a local fake server.
 
 ## Not verified on real hardware
-macOS and Linux are not release targets (decision 341). Not verified: Windows beyond CI and the Nov 1 walkthrough, real OS keychains, real clipboards and terminals, signed and notarized installers, and the
+macOS and Linux are not release targets (decision 341). Not verified: Windows beyond CI and the Nov 1 walkthrough, real OS keychains, real clipboards and terminals, Apple signing and notarization (the Mac files are not signed), and the
 electron-updater install path.
 
 ## Working rules used so far
