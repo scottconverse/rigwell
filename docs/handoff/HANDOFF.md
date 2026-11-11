@@ -1,18 +1,18 @@
 # Handoff: Rigwell build state
 
-Branch `phase-1-core-loop`, draft PR scottconverse/rigwell#1 (base `main`). Do not merge without the owner.
-The repo is public (Nov 2 2026, decision 337). `evidence/` is not in it; it is in the private repo `scottconverse/rigwell-private`,
+All work is on `main`. The old build branch `phase-1-core-loop` and its PR scottconverse/rigwell#1 are merged and gone.
+Latest release: v0.3.3 (Nov 10 2026 UTC). The repo is public (Nov 2 2026, decision 337). `evidence/` is not in it; it is in the private repo `scottconverse/rigwell-private`,
 with the old history and the old PR #1. Commit IDs in this file are from that old history.
 
 ## First: set up the session
-- Repo: `https://github.com/scottconverse/rigwell`. Work on branch `phase-1-core-loop` (this file does not exist on `main`):
-  `git clone https://github.com/scottconverse/rigwell && cd rigwell && git checkout phase-1-core-loop`.
-  Commit and push to `phase-1-core-loop`; it feeds draft PR #1. Never push to `main`.
+- Repo: `https://github.com/scottconverse/rigwell`: `git clone https://github.com/scottconverse/rigwell && cd rigwell`.
+  Make a new branch from `main` for each change, push it and open a PR to `main`. Never push to `main` directly.
+  The owner approves each merge. Merges are squash merges. Docs-only commits carry `[skip ci]`.
 - Tools: bun 1.4.4, node 22, git, ripgrep (`rg`). For the sandbox tests on Linux: `bubblewrap` and `socat`.
   For the desktop tests: Xvfb (`xvfb-run`), then `cd desktop && npm install` and, if `desktop/node_modules/electron/dist`
   is missing, `node node_modules/electron/install.js`. Packaging tests need `cd desktop && bun run package:linux` first.
 - Install and check: `bun install`, `bunx tsc --noEmit -p .`, `cd desktop && npx tsc -p .`, `xvfb-run -a bun test`, `bun perf/gate.ts`.
-- CI logs: `gh run list --branch phase-1-core-loop`, then `gh run view <run-id> --log-failed` (or `gh run view --job <job-id> --log`).
+- CI logs: `gh run list --branch <your-branch>`, then `gh run view <run-id> --log-failed` (or `gh run view --job <job-id> --log`).
   Workflows: `.github/workflows/ci.yml` (Linux `test`, `desktop`) and `.github/workflows/platforms.yml` (macOS, Windows).
 - Owner preferences: never use the em-dash character (U+2014) anywhere. No model names in commits or files.
   Commit trailer: `Co-Authored-By: Claude <noreply@anthropic.com>` (or your session's attribution line).
@@ -48,7 +48,8 @@ Windows test fixtures (332), the re-shown prompt test race (333), Electron tests
 - Landing page in `website/` (decision 339), checked at desktop, tablet and phone widths in light and dark mode.
 - Non-code changes start no CI run (decision 340): `ci.yml` and `platforms.yml` skip docs, spec and website changes.
   `.github/workflows/pages.yml` publishes it. GitHub Pages is on (owner approved, Nov 2 2026, source: GitHub Actions).
-  The site goes live at https://scottconverse.github.io/rigwell/ after the branch is merged to `main`.
+  The site is live at https://scottconverse.github.io/rigwell/. A docs-only push does not start it: run
+  `gh workflow run pages.yml -R scottconverse/rigwell --ref main` after a site change is merged.
 - The root README is now a short entry point that links to the site.
 
 ## Next task
@@ -76,7 +77,7 @@ None assigned. Ask the owner. The spec is built; later phases (hosted parts, Wor
 ## Waiting on the owner (do not decide for them)
 - (Resolved) `create_pr` and PR status (§18.6): approved and built (decisions 321 to 327).
 - License: decided by the owner: AGPL-3.0-only (`LICENSE`, package.json `license`, README, NOTICE).
-- Merge to `main`: the site at https://scottconverse.github.io/rigwell/ goes live only after that merge (Pages is on).
+- (Resolved) Merge to `main`: done. The site is live at https://scottconverse.github.io/rigwell/.
 - Declined by the owner: GitHub-event and Slack-message triggers. Spec later phases (not built): hosted parts, §15.10 Workstreams. MCP OAuth sign-in is built (decision 346, `rigwell mcp login <name>`; desktop Sign in button, decision 347), tested only against a local fake server.
 
 ## Not verified on real hardware
