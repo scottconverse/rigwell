@@ -103,14 +103,20 @@ const ref = (snapshot: string, role: string, name: string) => {
 }, 10_000);
 
 (reason ? test.skip : test)("browser screenshots and downloads honor a denied output directory", async () => {
-  const env = tmpEnv(), manager = new AgentBrowserManager(undefined, { executable: pw.chromium.executablePath() });
+  const env = tmpEnv(), trace: string[] = [], previousTrace = process.env.RIGWELL_BROWSER_TRACE;
+  process.env.RIGWELL_BROWSER_TRACE = "1";
+  const manager = new AgentBrowserManager(undefined, { executable: pw.chromium.executablePath(), log: (message) => { trace.push(message); if (trace.length > 100) trace.shift(); } });
+  let phase = "open";
+  const diagnostic = setTimeout(() => console.error("[browser denied-output pending]", JSON.stringify({ phase, trace })), 8000);
   const ctx: ToolContext = { cwd: env.root, sessionId: "browser-files", readFiles: new Map(), signal: new AbortController().signal };
   const web = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) { return new URL(req.url).pathname === "/download" ? new Response("Must not be written", { headers: { "content-disposition": 'attachment; filename="blocked.txt"' } }) : new Response('<title>Downloads</title><a href="/download" download>Download fixture</a>', { headers: { "content-type": "text/html" } }); } });
   try {
     writeJson(join(env.rigwellHome, "settings.json"), { sandbox: { filesystem: { denyWrite: [join(env.root, ".rigwell")] } } });
     const opened = await manager.run("browser_open", { url: `http://127.0.0.1:${web.port}` }, ctx); expect(opened.isError).not.toBe(true);
+    phase = "screenshot";
     const shot = await manager.run("browser_screenshot", {}, ctx); expect(shot.isError).toBe(true); expect(shot.content).toContain("blocked by the file policy");
+    phase = "download";
     const clicked = await manager.run("browser_click", { ref: ref(opened.content, "link", "Download fixture") }, ctx); expect(clicked.isError).not.toBe(true);
     await Bun.sleep(100); expect(existsSync(join(env.root, ".rigwell/browser/browser-files"))).toBe(false);
-  } finally { await manager.closeAll(); web.stop(true); env.cleanup(); }
+  } finally { phase = "close"; await manager.closeAll(); clearTimeout(diagnostic); web.stop(true); env.cleanup(); if (previousTrace === undefined) delete process.env.RIGWELL_BROWSER_TRACE; else process.env.RIGWELL_BROWSER_TRACE = previousTrace; }
 }, 10_000);

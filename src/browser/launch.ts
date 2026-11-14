@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { removeBrowserProfile } from "./cleanup.ts";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { rigwellHome } from "../storage/paths.ts";
@@ -44,8 +44,8 @@ export async function launchHeadlessBrowser(policy: BrowserPolicy, signal: Abort
     if (!target.startsWith(root + sep)) throw new Error("Browser profile escaped its owned root");
     // Windows may keep a Chromium helper's file handles briefly after the parent exits.
     // Retry only transient filesystem errors, asynchronously, without extending tool/test deadlines.
-    try { await rm(target, { recursive: true, force: true, maxRetries: 4, retryDelay: 25 }); }
-    catch (e) { (opts.log ?? console.warn)(`Browser exited; its temporary profile was preserved (${(e as NodeJS.ErrnoException).code ?? "cleanup failed"})`); }
+    try { await removeBrowserProfile(target); }
+    catch (e) { (opts.log ?? console.warn)(`Browser exited; its temporary profile was preserved (${(e as NodeJS.ErrnoException).code ?? "cleanup failed"}, ${(e as NodeJS.ErrnoException).path ?? target})`); }
   };
   try {
     proxy = await startProxy({ allowed, denied, listen: { port: 0 }, onViolation: (v) => opts.log?.(`[browser] blocked ${v.host}: ${v.reason}`) });

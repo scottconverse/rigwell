@@ -36,7 +36,7 @@ describe("DaemonBroker", () => {
     const repo = makeRepo();
     const req = (id: string, method: string, params: any) => JSON.stringify({ jsonrpc: "2.0", type: "request", id, method: "rigwell." + method, params });
     broker.send(1, a, req("i1", "initialize_session", { cwd: repo, modelId: "custom:Fake-Anthropic-0", autonomyLevel: "off" }));
-    const wait = async (pred: () => boolean) => { for (let i = 0; i < 300 && !pred(); i++) await sleep(25); expect(pred()).toBe(true); };
+    const wait = async (pred: () => boolean) => { for (let i = 0; i < 300 && !pred(); i++) await sleep(25); if (!pred()) console.error("[broker pending]", JSON.stringify({ delivered: delivered.slice(-20), attention, requests: fake.requests.length })); expect(pred()).toBe(true); };
     await wait(() => delivered.some((d) => d.payload?.message?.includes('"id":"i1"')));
     broker.send(1, a, req("m1", "add_user_message", { text: "run it" }));
 
