@@ -44,8 +44,27 @@ const { pw, reason } = chromiumStatus("Remote machine headless acceptance");
     await page.getByLabel("Machine name").fill("spare"); await page.getByLabel("SSH destination").fill("owner@spare");
     await page.getByRole("button", { name: "Add machine", exact: true }).click(); await page.getByRole("heading", { name: "spare", exact: true }).waitFor();
     expect(store.get("spare").host).toBe("owner@spare");
-    phase = "Home"; await page.getByRole("button", { name: "New task", exact: true }).click();
-    await page.getByLabel("Session machine").selectOption("remote"); await page.getByLabel("Remote working folder").fill(env.root);
+    phase = "Home";
+    // Deliver pending mount autofocus frames while the user is entering the remote folder.
+    await page.evaluate(() => {
+      const request = window.requestAnimationFrame.bind(window), cancel = window.cancelAnimationFrame.bind(window);
+      let holding = true, seq = 0; const frames = new Map<number, FrameRequestCallback>();
+      window.requestAnimationFrame = (fn) => holding ? (frames.set(--seq, fn), seq) : request(fn);
+      window.cancelAnimationFrame = (id) => { if (id < 0) frames.delete(id); else cancel(id); };
+      (window as any).pendingFocusFrames = () => frames.size;
+      (window as any).releaseFocusFrames = () => {
+        holding = false; const pending = [...frames.values()]; frames.clear();
+        window.requestAnimationFrame = request; window.cancelAnimationFrame = cancel;
+        for (const fn of pending) fn(performance.now());
+      };
+      document.querySelector<HTMLButtonElement>("nav button")!.click();
+    });
+    await page.waitForFunction(() => !!document.querySelector('[aria-label="Session machine"]'));
+    await page.getByLabel("Session machine").selectOption("remote");
+    await page.waitForFunction(() => (window as any).pendingFocusFrames() > 0);
+    await page.evaluate(() => document.querySelector('[aria-label="Remote working folder"]')!.addEventListener("focus", () => queueMicrotask(() => (window as any).releaseFocusFrames()), { once: true }));
+    await page.getByLabel("Remote working folder").fill(env.root);
+    expect(await page.getByLabel("Remote working folder").inputValue()).toBe(env.root);
     phase = "compose"; await page.getByRole("textbox", { name: "Message", exact: true }).fill("Say hello from the remote fixture");
     await page.waitForFunction(() => { const button = document.querySelector<HTMLButtonElement>('button[aria-label="Send"]'); return button && !button.disabled; });
     phase = "send";

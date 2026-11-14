@@ -73,9 +73,18 @@ export function Composer(props: {
       handlePaste: (_v, e) => { const f = e.clipboardData?.files; return !!f && f.length > 0 && pasteRef.current(f); },
     },
     onUpdate: ({ editor: ed }) => setText(ed.getText({ blockSeparator: "\n" })),
-    autofocus: !!props.autoFocus,
+    autofocus: false,
   });
-  useEffect(() => { if (props.autoFocus) editor?.commands.focus(); }, [props.autoFocus, editor]);
+  useEffect(() => {
+    if (!props.autoFocus || !editor) return;
+    const initialFocus = document.activeElement;
+    if (initialFocus && initialFocus !== document.body && initialFocus.tagName !== "BUTTON") return;
+    // Check at delivery time: mount autofocus must not steal a field the user selected.
+    const frame = requestAnimationFrame(() => {
+      if (!editor.isDestroyed && (!document.activeElement || document.activeElement === document.body || document.activeElement === initialFocus)) editor.view.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [props.autoFocus, editor]);
   const clearText = () => { editor?.commands.clearContent(true); setText(""); };
 
   const cycle = (list: string[], cur: string | undefined) => list[(Math.max(0, list.indexOf(cur ?? "")) + 1) % list.length];
