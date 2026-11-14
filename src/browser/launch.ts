@@ -48,7 +48,7 @@ export async function launchHeadlessBrowser(policy: BrowserPolicy, signal: Abort
     catch (e) { (opts.log ?? console.warn)(`Browser exited; its temporary profile was preserved (${(e as NodeJS.ErrnoException).code ?? "cleanup failed"}, ${(e as NodeJS.ErrnoException).path ?? target})`); }
   };
   try {
-    proxy = await startProxy({ allowed, denied, listen: { port: 0 }, onViolation: (v) => opts.log?.(`[browser] blocked ${v.host}: ${v.reason}`) });
+    proxy = await startProxy({ allowed, denied, listen: { port: 0 }, onViolation: (v) => opts.log?.(`[browser] blocked ${v.host}: ${v.reason}`), log: opts.log });
     // Automation must retain ownership of this child. On Windows Chromium otherwise
     // relaunches from elevated callers and exits before publishing its CDP endpoint.
     child = spawn(executable, ["--headless=new", "--enable-automation", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
@@ -60,7 +60,7 @@ export async function launchHeadlessBrowser(policy: BrowserPolicy, signal: Abort
     const proc = child;
     exited = new Promise<void>((r) => { proc.once("exit", () => r()); proc.once("error", () => r()); });
     let startError: Error | undefined; proc.once("error", (e) => { startError = e; });
-    proc.stderr!.on("data", (d) => { stderr = (stderr + d.toString()).slice(-8000); });
+    proc.stderr!.on("data", (d) => { stderr = (stderr + d.toString()).slice(-8000); opts.log?.(`[browser stderr] ${d.toString().trim()}`); });
     const started = Date.now();
     for (;;) {
       if (signal.aborted) throw new Error("Browser launch cancelled");
