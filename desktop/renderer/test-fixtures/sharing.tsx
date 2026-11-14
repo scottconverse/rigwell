@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { SharedSessions } from "../components/SharedSessions.tsx";
 import { Sync } from "../components/Sync.tsx";
+import { PhoneAccessPage } from "../components/PhoneAccess.tsx";
 import { SessionScreen } from "../components/SessionScreen.tsx";
 import { app } from "../lib/app-model.ts";
 const sockets = new Map<number, WebSocket>(); let seq = 0;
@@ -25,6 +26,7 @@ const off = () => () => {};
 (app as any).set({ daemon: { state: "running" }, models: [], userSettings: {} });
 Object.defineProperty(navigator, 'clipboard', { value: { async writeText(text: string) { (window as any).fixtureClipboard = text; } } });
 function Fixture() {
+  if (window.location.pathname === "/phone") return <PhoneAccessPage />;
   const [route, go] = useState(window.location.pathname === "/sync" ? "/sync" : "/imports");
   if (route === "/sync") return <Sync go={go} />;
   return route.startsWith("/sessions/") ? <SessionScreen sessionId={route.split("/")[2]!} /> : <SharedSessions id={route.split("/")[2]} go={go} />;

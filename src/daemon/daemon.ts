@@ -14,6 +14,8 @@ import { DEFAULT_WS_PORT, removeDaemonInfo, startWsServer, writeDaemonInfo } fro
 import { runningSessionCount, stopLiveSessions } from "../machines/live-sessions.ts";
 import { machineRuntimeInfo } from "../machines/runtime-info.ts";
 import { listWorkstreamStores } from "../workstreams/store.ts";
+import { PhoneAccess } from "../phone/server.ts";
+import { PhoneStore } from "../phone/store.ts";
 
 export const defaultSocketPath = () => join(rigwellHome(), "daemon.sock");
 
@@ -99,9 +101,14 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
       canPrompt: true, log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs,
       machineControl,
       onNotification: (s, n) => { if (s) workstreams.observe(s, n); },
-      sharedSession: workstreams.sharedSession,
+      sharedSession: (id) => {
+        const member = workstreams.sharedSession(id); if (member) return member;
+        const owner = [...conns].find((c) => !c.closed && c.session?.id === id), session = owner?.session;
+        return owner && session ? { session, alive: () => conns.has(owner) && !owner.closed && owner.session === session, subscribe: (notify) => session.subscribeNotifications(notify) } : undefined;
+      },
       sharedRemoteSession: workstreams.sharedRemoteSession,
-      extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx), ...mission.methods, ...stream.methods },
+      extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx), ...mission.methods, ...stream.methods, ...phone.methods },
+      notifyUserMessages: true,
       wrapTools: (tools) => stream.wrapTools(mission.wrapTools(tools)),
       extraTools: sidepane || autoTools.length ? () => [...(sidepane ? sidepane.tools() : []), ...autoTools] : undefined,
     });
@@ -118,6 +125,10 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
     ctxs.delete(conn);
     void conn.shutdown({ park: true });
   };
+  const phone = new PhoneAccess(new PhoneStore(), (write) => {
+    const conn = mkConn(write); return { feed: (m) => conn.peer.feed(m + "\n"), close: () => dropConn(conn) };
+  }, opts.log);
+  await phone.restore();
   const server = Bun.listen<Data>({
     unix: opts.socketPath,
     socket: {
@@ -167,6 +178,7 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
     wsToken: wsServer?.token,
     automations: auto,
     workstreams,
+    phone,
     get sessionCount() { return [...conns].filter((c) => c.session).length; },
     stop() {
       if (stopped) return stopped;
@@ -179,6 +191,7 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
       if (sidepane) pending.push(sidepane.closeAll());
       server.stop(true);
       wsServer?.stop();
+      phone.stop();
       if (opts.advertise !== false) removeDaemonInfo(home, process.pid, wsServer?.token);
       try { unlinkSync(opts.socketPath); } catch {}
       const done = stopped = Promise.all(pending).then(() => {});

@@ -6,16 +6,18 @@ import { bridge } from "../lib/rpc.ts";
 import { Accounts, ApiKeys, Environments, VoiceSettings } from "./SettingsAccess.tsx";
 import { CodeProviders } from "./CodeProviders.tsx";
 import { RemoteMachines } from "./Machines.tsx";
+import { PhoneAccessPage } from "./PhoneAccess.tsx";
 import { ConnectorSettings, CustomModels, MissionSettings, SessionDefaults, SessionManagement, UsagePage, WorktreeSettings } from "./SettingsAgent.tsx";
 
 const PAGES = [
   ["general", "General"], ["appearance", "Appearance"], ["notifications", "Notifications and sounds"], ["session-defaults", "Session Defaults"], ["missions", "Missions"],
   ["custom-models", "Custom Models"], ["machines", "Remote machines"], ["worktrees", "Worktrees"], ["connectors", "Connectors"], ["session-management", "Session Management"], ["usage", "Usage"],
-  ["api-keys", "API keys"], ["environments", "Environments"], ["accounts", "Accounts"], ["code-providers", "Code providers"], ["voice", "Voice dictation"], ["support", "Support"],
+  ["api-keys", "API keys"], ["environments", "Environments"], ["accounts", "Accounts"], ["code-providers", "Code providers"], ["voice", "Voice dictation"], ["phone-access", "Phone access"], ["support", "Support"],
 ] as const;
 const AGENT_PAGES: Record<string, () => React.ReactElement | null> = {
   "session-defaults": SessionDefaults, missions: MissionSettings, "custom-models": CustomModels, worktrees: WorktreeSettings,
   machines: RemoteMachines,
+  "phone-access": PhoneAccessPage,
   connectors: ConnectorSettings, "session-management": SessionManagement, usage: UsagePage,
   "api-keys": ApiKeys, environments: Environments, accounts: Accounts, "code-providers": CodeProviders, voice: VoiceSettings,
 };

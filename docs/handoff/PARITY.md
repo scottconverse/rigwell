@@ -44,8 +44,8 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 19. Remote machines over SSH, including sessions, automations, mission workers and Workstream members on them,
     and the remote desktop viewer (§20.6). Implemented and headless affected checks green: owned startup recovery, complete selected-machine Files/Terminal, remote mission library handoff, persistent member restart/listener rearm and optional viewer. Delivered on d985672 with all four required CI jobs and unsigned packages green. No real remote-host or VNC screen acceptance claimed. See HANDOFF State and docs/machines.md.
 20. Fleet management page and `rigwell machine` commands (§20.7).
-21. Session sync between your machines, share and export, import (§20.8). Share/import delivered on b97f32d with all four CI jobs/packages green. Sync/leases continuation prepared; candidate CI pending.
-22. Remote access from a phone with pairing (§20.9).
+21. Session sync between your machines, share and export, import (§20.8). Share/import delivered on b97f32d with all four CI jobs/packages green. Sync/leases delivered on eab2195 with all four CI jobs/packages green; see docs/sync.md.
+22. Remote access from a phone with pairing (§20.9). Implemented locally: chosen-interface TLS, certificate identity, one-time QR/device revocation, mobile sessions/prompts/Workstreams and desktop settings; affected checks green, awaiting candidate CI. See docs/phone.md and HANDOFF State. Real phone/network acceptance remains.
 
 ## 6. Automations and delegation
 

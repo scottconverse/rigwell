@@ -580,9 +580,13 @@ export class Session {
     return this.byIds([...this.baseTools(), ...this.sessionTools(), ...task, ...exit, this.deferred.loadToolsTool(), this.deferred.callToolTool(), ...script]);
   }
 
+  private notificationViews = new Set<(n: Record<string, unknown>) => void>();
+  subscribeNotifications(view: (n: Record<string, unknown>) => void) { this.notificationViews.add(view); return () => { this.notificationViews.delete(view); }; }
   private notify(n: Record<string, unknown>) {
     const redact = this.deps.redact;
-    this.host.notify(redact ? (redactDeep(n, redact) as Record<string, unknown>) : n);
+    const value = redact ? (redactDeep(n, redact) as Record<string, unknown>) : n;
+    this.host.notify(value);
+    for (const view of this.notificationViews) try { view(value); } catch (e) { this.deps.log?.(`[session view] ${(e as Error).message}`); }
   }
 
   private setState(s: WorkingState) {

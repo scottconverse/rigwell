@@ -114,7 +114,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
   const peer: RpcPeer = new RpcPeer(write, (m, p) => handle(m, p), opts.log);
 
   const notify = (n: Record<string, unknown>) => {
-    opts.onNotification?.(session, n);
+    if (!shared && !sharedRemote) opts.onNotification?.(session, n);
     peer.notify(METHOD_PREFIX + "session_notification", { ...(session ? { sessionId: session.id } : {}), notification: n });
     // A generated title renames a generated worktree branch (spec 18.2).
     if (n.type === "session_title_updated" && n.updateType !== "manual" && worktree && session && typeof n.title === "string") {
