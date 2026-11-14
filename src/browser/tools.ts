@@ -131,7 +131,7 @@ export class AgentBrowserManager {
     if (pane && page?.service !== pane) { await page?.close(); page = new AgentPage(pane, undefined, this.trace); this.pages.set(ctx.sessionId, page); }
     if (!page) {
       this.trace("launch owned browser"); const owned = await launchHeadlessBrowser(browserPolicy(ctx.sessionId, ctx.cwd), ctx.signal, { ...this.opts, log: process.env.RIGWELL_BROWSER_TRACE === "1" ? this.trace : this.opts.log });
-      this.trace("owned CDP ready"); page = new AgentPage(new BrowserService({ cdpUrl: owned.url }), owned, this.trace); this.pages.set(ctx.sessionId, page);
+      this.trace("owned CDP ready"); page = new AgentPage(new BrowserService({ cdpUrl: owned.url, log: this.trace }), owned, this.trace); this.pages.set(ctx.sessionId, page);
     }
     await page.prepare(ctx); return page;
   }

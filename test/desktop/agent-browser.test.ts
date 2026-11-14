@@ -106,10 +106,11 @@ const ref = (snapshot: string, role: string, name: string) => {
   const env = tmpEnv(), trace: string[] = [], previousTrace = process.env.RIGWELL_BROWSER_TRACE;
   process.env.RIGWELL_BROWSER_TRACE = "1";
   const manager = new AgentBrowserManager(undefined, { executable: pw.chromium.executablePath(), log: (message) => { trace.push(message); if (trace.length > 100) trace.shift(); } });
-  let phase = "open";
-  const diagnostic = setTimeout(() => console.error("[browser denied-output pending]", JSON.stringify({ phase, trace })), 8000);
-  const ctx: ToolContext = { cwd: env.root, sessionId: "browser-files", readFiles: new Map(), signal: new AbortController().signal };
-  const web = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) { return new URL(req.url).pathname === "/download" ? new Response("Must not be written", { headers: { "content-disposition": 'attachment; filename="blocked.txt"' } }) : new Response('<title>Downloads</title><a href="/download" download>Download fixture</a>', { headers: { "content-type": "text/html" } }); } });
+  let phase = "open", requests = 0;
+  const controller = new AbortController();
+  const diagnostic = setTimeout(() => { console.error("[browser denied-output pending]", JSON.stringify({ phase, requests, trace })); controller.abort(); }, 8000);
+  const ctx: ToolContext = { cwd: env.root, sessionId: "browser-files", readFiles: new Map(), signal: controller.signal };
+  const web = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) { requests++; return new URL(req.url).pathname === "/download" ? new Response("Must not be written", { headers: { "content-disposition": 'attachment; filename="blocked.txt"' } }) : new Response('<title>Downloads</title><a href="/download" download>Download fixture</a>', { headers: { "content-type": "text/html" } }); } });
   try {
     writeJson(join(env.rigwellHome, "settings.json"), { sandbox: { filesystem: { denyWrite: [join(env.root, ".rigwell")] } } });
     const opened = await manager.run("browser_open", { url: `http://127.0.0.1:${web.port}` }, ctx); expect(opened.isError).not.toBe(true);
