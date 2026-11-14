@@ -1,0 +1,3 @@
+Fix parseQuery(text): strip an optional leading ?, decode percent escapes and + as space, collect repeated keys into arrays, preserve empty values, use own safe keys including __proto__. Malformed escapes throw.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

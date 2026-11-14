@@ -1,0 +1,3 @@
+Copy source path argument to target path, creating parents. Preserve bytes and source. Refuse existing target unless --force is present. Invalid arguments or missing source exit 2. Use a sibling temporary file and rename; clean failed temporary files. Implement cli.js with built-in Node modules only.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

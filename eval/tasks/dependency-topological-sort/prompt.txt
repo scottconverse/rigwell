@@ -1,0 +1,3 @@
+Implement topologicalSort(graph), where own object keys map to dependency arrays. Return dependencies before dependents, preserving key/dependency encounter order for otherwise unconstrained nodes. Include dependency-only nodes; throw on cycles.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

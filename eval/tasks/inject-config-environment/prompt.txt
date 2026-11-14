@@ -1,0 +1,3 @@
+Make config parsing deterministic: add parseConfig(env) in config.js with PORT default 8080 (valid integer 1..65535) and DEBUG true only for 1 or true. lib.js loadConfig() must delegate with process.env, not capture it at import time.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

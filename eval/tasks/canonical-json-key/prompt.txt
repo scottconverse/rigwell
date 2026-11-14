@@ -1,0 +1,3 @@
+Implement canonicalKey(value): deterministic JSON for finite JSON values, sorting object keys recursively while retaining array order. Reject cycles and unsupported undefined/function/nonfinite values. Repeated references without cycles are allowed.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

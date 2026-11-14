@@ -1,0 +1,1 @@
+export class LruCache{constructor(capacity){this.capacity=capacity;this.items=new Map();}get(k){return this.items.get(k);}set(k,v){this.items.set(k,v);if(this.items.size>this.capacity)this.items.delete(this.items.keys().next().value);}}

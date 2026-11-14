@@ -1,0 +1,3 @@
+Test isLeapYear(year): Gregorian 4-year rule, century exception and 400-year exception. Include ordinary years, 1900, 2000 and negative proleptic years. Keep lib.js unchanged. Use node:test in checks.cjs. Check with node --test checks.cjs.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

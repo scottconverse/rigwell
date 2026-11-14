@@ -1,0 +1,3 @@
+Support --name VALUE or --name=VALUE, --count VALUE or --count=VALUE (positive integer, default 1), and -- to stop option parsing. Name defaults world. Print Hello, NAME! count times. Unknown options, positionals, missing values and invalid counts exit 2 with stderr. Implement cli.js with built-in Node modules only.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

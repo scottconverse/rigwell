@@ -8,16 +8,18 @@ import { basename, join } from "node:path";
 import type { TaskDef } from "./types.ts";
 
 export function defaultTasksDir(): string {
-  return join(import.meta.dir, "../../evals/tasks");
+  return join(import.meta.dir, "../../eval/tasks");
 }
 
 export function loadTask(dir: string): TaskDef {
   const meta = JSON.parse(readFileSync(join(dir, "task.json"), "utf8"));
   if (typeof meta.grader !== "string" || !meta.grader.trim()) throw new Error(`${dir}/task.json: grader is required`);
+  if (meta.category !== undefined && !["bug-fix", "feature", "refactor", "tests", "terminal", "multi-file"].includes(meta.category)) throw new Error(`${dir}/task.json: invalid category`);
   const fixtureDir = join(dir, "repo");
   if (!existsSync(fixtureDir)) throw new Error(`${dir}: missing repo/ fixture`);
   return {
     name: basename(dir),
+    ...(meta.category ? { category: meta.category } : {}),
     dir,
     fixtureDir,
     prompt: readFileSync(join(dir, "prompt.txt"), "utf8").trim(),

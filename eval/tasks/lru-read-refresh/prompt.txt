@@ -1,0 +1,3 @@
+Fix LruCache(capacity), get(key), set(key,value). Reads and updates refresh recency, missing reads return undefined, least recently used is evicted, capacity must be a positive integer.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

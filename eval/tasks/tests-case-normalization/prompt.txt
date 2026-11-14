@@ -1,0 +1,3 @@
+Test normalizeTag(text): trim surrounding whitespace, lowercase, retain internal whitespace and return empty string for blank input. Keep lib.js unchanged. Use node:test in checks.cjs. Check with node --test checks.cjs.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

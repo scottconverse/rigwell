@@ -1,0 +1,3 @@
+Implement mapLimit(items,limit,fn), an async mapper with at most limit active callbacks. Preserve input order in returned results, reject callback errors, validate positive integer limit and support empty input.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

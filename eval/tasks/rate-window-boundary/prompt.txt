@@ -1,0 +1,3 @@
+Fix WindowLimiter(limit,windowMs). allow(now) counts only successful calls in (now-windowMs,now], expires exactly at the boundary, and rejects backward clock values. Validate positive integer parameters.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

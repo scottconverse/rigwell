@@ -1,0 +1,3 @@
+Extract invoice amount formatting into format.js export formatCents(cents). Keep lib.js export invoice(row) behavior, use the extracted helper and validate safe integer cents. Preserve negative and zero amounts.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

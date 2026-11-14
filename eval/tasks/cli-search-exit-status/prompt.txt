@@ -1,0 +1,3 @@
+Search stdin lines for the literal first argument, case-sensitive. Output matching lines, normalizing CRLF to LF. Exit 0 with matches, 1 with none, 2 for missing pattern. Preserve a final line without newline. Implement cli.js with built-in Node modules only.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

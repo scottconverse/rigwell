@@ -1,0 +1,3 @@
+Implement a TTL cache across cache.js and lib.js. createCache(clock) returns set(key,value,ttlMs), get(key), size(). Expire at now >= expiresAt, replacing resets TTL; size excludes expired entries. Validate nonnegative finite TTL. lib.js makeService(clock).remember(key,fn,ttlMs) caches results including false/undefined and calls fn again after expiry. Cache get returns undefined when absent, otherwise {value,expires}; expires is the absolute clock time.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

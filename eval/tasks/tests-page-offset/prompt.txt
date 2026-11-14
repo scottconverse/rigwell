@@ -1,0 +1,3 @@
+Test pageOffset(page,size): pages are one-based; both arguments must be positive safe integers; return (page-1)*size and reject unsafe results. Keep lib.js unchanged. Use node:test in checks.cjs. Check with node --test checks.cjs.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

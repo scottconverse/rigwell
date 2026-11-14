@@ -1,0 +1,3 @@
+Migrate input JSON file schemaVersion 1 ({users:[{name,enabled?}]}) to version 2 ({schemaVersion:2,accounts:[{displayName,active}]}), default active true and retain false. Write pretty JSON with newline to output argument. Copy version 2 semantically. Unsupported versions exit 2 and leave output unchanged. Implement cli.js with built-in Node modules only.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

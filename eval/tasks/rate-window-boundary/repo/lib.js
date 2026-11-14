@@ -1,0 +1,1 @@
+export class WindowLimiter{constructor(limit,windowMs){this.limit=limit;this.windowMs=windowMs;this.events=[];}allow(now){this.events=this.events.filter(t=>t>=now-this.windowMs);this.events.push(now);return this.events.length<=this.limit;}}

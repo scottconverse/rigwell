@@ -36,7 +36,7 @@ export interface EvalConfig {
   trials?: number;
   /** Per-trial wall-clock cap in ms (a task's own budget wins). */
   timeoutMs?: number;
-  /** Directory of task folders; default evals/tasks in the Rigwell checkout. */
+  /** Directory of task folders; default eval/tasks in the Rigwell checkout. */
   tasksDir?: string;
 }
 
@@ -48,6 +48,7 @@ export interface TaskBudget {
 
 export interface TaskDef {
   name: string;
+  category?: "bug-fix" | "feature" | "refactor" | "tests" | "terminal" | "multi-file";
   dir: string;
   /** The starting repo, copied for each trial. */
   fixtureDir: string;

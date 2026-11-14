@@ -1,0 +1,3 @@
+Implement createService(store).place(key,order) across lib.js and store.js. A nonempty key gives one durable order ID; repeating identical order returns the same result, conflicting order under same key throws. Validate quantity as positive integer before any store write. Equivalent object key order must not conflict. Store exports createStore() with get(key), put(key,record), size().
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

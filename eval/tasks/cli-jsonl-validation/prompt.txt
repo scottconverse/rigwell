@@ -1,0 +1,3 @@
+Read JSON Lines from stdin, ignore blank lines, and output compact JSON for records with active === true, one per line. Accept a final line without newline. Malformed JSON produces stderr and exit 2. Implement cli.js with built-in Node modules only.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

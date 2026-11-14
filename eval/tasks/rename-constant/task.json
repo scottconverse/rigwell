@@ -1,0 +1,8 @@
+{
+  "grader": "node \"$EVAL_TASK_DIR/grade.cjs\"",
+  "budget": {
+    "timeoutMs": 180000,
+    "maxRequests": 20
+  },
+  "category": "multi-file"
+}
