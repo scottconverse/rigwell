@@ -7,7 +7,7 @@ export function startFakeMcpOAuth() {
   const registrations: any[] = [], seen: { method: string; token: string | null; path: string }[] = [];
   const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
   const encoder = new TextEncoder();
-  const state = { dcr: true, pkce: true, issuerMatches: true, resourceMatches: true, oidcOnly: false, rejectTokens: false, redirect: "", expiresIn: 3600, legacy: false, endpoint: "/messages" };
+  const state = { dcr: true, pkce: true, issuerMatches: true, resourceMatches: true, oidcOnly: false, rejectTokens: false, redirect: "", tokenRedirect: "", expiresIn: 3600, legacy: false, endpoint: "/messages" };
   let base = "";
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     const u = new URL(req.url);
@@ -29,6 +29,7 @@ export function startFakeMcpOAuth() {
       return fetch(`${oauth.url}/authorize${u.search}`, { redirect: "manual" });
     }
     if (u.pathname === "/token") {
+      if (state.tokenRedirect) return new Response(null, { status: 307, headers: { location: state.tokenRedirect } });
       const body = await req.text();
       if (new URLSearchParams(body).get("resource") !== resource) return Response.json({ error: "invalid_target" }, { status: 400 });
       oauth.expiresIn = state.expiresIn;

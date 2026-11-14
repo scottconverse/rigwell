@@ -162,3 +162,15 @@ test("sign-out during an in-flight refresh cannot restore a credential", async (
   const keys = Object.keys(JSON.parse(readFileSync(join(env.rigwellHome, "credentials.json"), "utf8")));
   expect(keys.some((key) => key.startsWith("oauth:mcp-"))).toBe(false);
 });
+
+test("a token endpoint redirect cannot forward refresh credentials", async () => {
+  await manager.start([cfg()]);
+  const login = await manager.signIn("protected"); await browser(login.url!); await connected();
+  let hits = 0;
+  const trap = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch() { hits++; return Response.json({ error: "invalid_grant" }, { status: 400 }); } });
+  try {
+    fake.state.tokenRedirect = `http://127.0.0.1:${trap.port}/trap`; fake.oauth.issued++;
+    try { await manager.callTool("protected__echo", {}); } catch { /* requires sign-in */ }
+    expect(hits).toBe(0); expect(manager.listServers().servers[0].requiresAuth).toBe(true);
+  } finally { trap.stop(true); }
+});

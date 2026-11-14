@@ -168,7 +168,7 @@ export class AuthManager {
     }
     let res: Response;
     try {
-      res = await this.f(cfg.tokenEndpoint, { method: "POST", headers, body: body.toString(), signal: AbortSignal.timeout(30_000) });
+      res = await this.f(cfg.tokenEndpoint, { method: "POST", headers, body: body.toString(), redirect: "error", signal: AbortSignal.timeout(30_000) });
     } catch (e) {
       throw new AuthError("failed", `Could not reach the token endpoint of "${cfg.name}": ${(e as Error)?.message ?? e}`);
     }
