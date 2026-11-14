@@ -27,7 +27,7 @@ maybe("desktop app: final gaps", () => {
     await page.locator(".composer[data-ready=true]").first().waitFor({ timeout: 30_000 });
     const ta = page.getByLabel("Message").first();
     await ta.fill(text);
-    await ta.press("Enter");
+    await page.locator('button[aria-label="Send"]:not([disabled])').first().click();
   };
   const newSession = async () => {
     await page.getByRole("button", { name: "New Session" }).first().click();
@@ -65,8 +65,8 @@ maybe("desktop app: final gaps", () => {
     fake = await startFakeAnthropic(Array.from({ length: 200 }, () => route));
     home = makeHome([{ provider: "anthropic", url: fake.url, displayName: "Fake Anthropic" }]);
     mkdirSync(home, { recursive: true });
-    display = process.env.DISPLAY || `:${70 + Math.floor(Math.random() * 9)}`;
-    if (!process.env.DISPLAY) {
+    display = process.env.DISPLAY || (process.platform === "linux" ? `:${70 + Math.floor(Math.random() * 9)}` : "");
+    if (process.platform === "linux" && !process.env.DISPLAY) {
       xvfb = spawn("Xvfb", [display, "-screen", "0", "1280x900x24"], { stdio: "ignore" });
       for (let i = 0; i < 50 && !existsSync(`/tmp/.X11-unix/X${display.slice(1)}`); i++) await sleep(100);
     }
@@ -191,8 +191,10 @@ maybe("desktop app: final gaps", () => {
     const writes = page.getByLabel("Allow edits in this side chat");
     expect(await writes.isChecked()).toBe(false);
     await writes.check();
+    await page.waitForFunction(() => { const input = document.querySelector('.sc-tools input') as HTMLInputElement; return input.checked && !input.disabled; });
     expect(await writes.isChecked()).toBe(true);
     await writes.uncheck();
+    await page.waitForFunction(() => { const input = document.querySelector('.sc-tools input') as HTMLInputElement; return !input.checked && !input.disabled; });
 
     const btw = join(home, "sessions", "btw");
     expect(readdirSync(btw).filter((f) => f.endsWith(".jsonl")).length).toBeGreaterThan(0);

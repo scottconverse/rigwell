@@ -330,7 +330,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
   async function refreshStatusLine() {
     const cfg = statusLineConfig(settingsNow());
     if (!cfg) { if (state.statusLine || state.statusLineHint) dispatch({ type: "status_line", text: undefined }); return; }
-    const r = runStatusLine(cfg, statusLineInput(state), cwd);
+    const r = await runStatusLine(cfg, statusLineInput(state), cwd);
     slFailed = !r.ok;
     dispatch(r.ok ? { type: "status_line", text: r.text, padding: cfg.padding } : { type: "status_line", text: undefined, hint: r.hint, padding: cfg.padding });
   }

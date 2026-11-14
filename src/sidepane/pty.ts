@@ -125,7 +125,8 @@ export class TerminalManager {
         })();
       }
       term.io = {
-        write: (data) => { try { proc.stdin.write(data); proc.stdin.flush?.(); } catch { /* shell is gone */ } },
+        // xterm sends CR for Enter; the Windows pipe shell needs a complete CRLF line.
+        write: (data) => { try { proc.stdin.write(data.replace(/\r(?!\n)/g, "\r\n")); proc.stdin.flush?.(); } catch { /* shell is gone */ } },
         resize: () => { /* no PTY: the size is only recorded */ },
         close: () => { try { proc.stdin.end(); } catch { /* ignore */ } },
       };

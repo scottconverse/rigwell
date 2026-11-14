@@ -16,14 +16,18 @@ Branch `phase-1-core-loop`, draft PR scottconverse/rigwell#1 (base `main`). Do n
   Commit trailer: `Co-Authored-By: Claude <noreply@anthropic.com>` (or your session's attribution line).
 
 ## State
-- The whole spec (`spec/harness-spec.md`) is built: all 11 phases in §9, two audit gap waves, and the owner-approved §1 items
+- Windows takeover, 2026-11-13, based on bd94639 with uncommitted changes: the worktree failure is fixed in the test. Bun 1.4.4 on Windows stalls subprocess response handling when the pending RPC rejection is passed directly to expect(...).rejects.toThrow. Await the RPC rejection first, then assert its message and the actual in_use response envelope. With all product code and temporary traces restored, bun test test/e2e/worktree.test.ts passes 4 tests / 45 assertions in 8.30 s; the setup-profile case takes 1.75 s. Earlier instrumented 21 s passes were false positives because the timeout diagnostic contained the expected error text. They are invalid evidence.
+- Windows desktop acceptance: bun test test/desktop passes 167 tests, 5 expected Linux-package skips, 755 assertions in 55.71 s. Electron now runs natively on Windows. Fixed composer readiness, portable dictation/side-chat fixtures, Windows cookie-import refusal acceptance, and real terminal Enter handling (CRLF plus flush for the Windows pipe shell). The side-chat writes switch now disables while saving, with an explicit test wait for the acknowledged state; affected rerun passed (12 tests, 43 assertions, 9.20 s, including all final-gap UI and linked-root cases).
+- Upstream CI on bd94639: Linux test passed; Linux desktop failed on the first Dictate click; both trust/ask-user UI tests passed. Windows failed on the now locally fixed worktree assertion; macOS was cancelled. Local changes have no CI evidence yet. Next: finish affected desktop checks, run required suite/typechecks, log results, commit to phase-1-core-loop, push as authorized by the task, and watch all jobs. Then proceed through PARITY in order. The create_pr confirmation rule applies to the feature being built.
+- Tools: Bun 1.4.4, Node 22.23.5 (user-level Scoop nodejs22), Git, ripgrep and authenticated gh are available. Dependencies and Electron installed. For this shell prepend C:/Users/scott/scoop/apps/nodejs22/current to PATH. Full Windows suite finished: 988 pass, 25 expected platform skips, 1 fail (file-symlink creation EPERM), 5396 assertions, 255.08 s; log ../full-candidate.log. Both root and desktop typechecks passed. Final affected Electron/link rerun passed 12 tests / 43 assertions in 9.20 s; log ../last-affected.log. No owned test processes remain. Candidate is the baseline Windows/desktop fix commit containing decisions 321-324, queued for push and CI; next inspect every job, diagnose failures, then build create_pr only when baseline CI is green.
+- Historical baseline before the approved section 20 expansion: all 11 phases in §9, two audit gap waves, and the owner-approved §1 items
   (voice dictation, built-in skills, API keys/secrets/environments pages, automation templates, VISUAL.html, guided setup,
   tray icon, Chrome cookie import), plus OAuth sign-in (`credentialSource`, no shipped client IDs).
 - Choices where the spec was silent: `docs/decisions.md` (numbered; superseded entries are marked, not deleted).
-- Local Linux: `bun test` 1011 pass / 0 fail (run `cd desktop && npm install`, and `node node_modules/electron/install.js`
+- Historical local Linux baseline: `bun test` 1011 pass / 0 fail (run `cd desktop && npm install`, and `node node_modules/electron/install.js`
   if `node_modules/electron/dist` is missing, before the desktop tests; build the Linux package with
   `cd desktop && bun run package:linux` for the packaging tests). `bunx tsc --noEmit -p .` and `cd desktop && npx tsc -p .` clean.
-- CI (`.github/workflows/ci.yml`, `.github/workflows/platforms.yml`): Linux `test` green; macOS tests + app package green.
+- Historical CI baseline had Linux test and macOS package green; the current candidate requires fresh CI as recorded above.
 
 ## Next task: build `create_pr` (owner approved)
 Spec §18.6 (and §18.5 for the auto-delete rule). Scope:
@@ -55,24 +59,11 @@ delegation, remote machines, sync, phone access, wiki, academy, analytics, evalu
 profiles and release work. Spec §20 has the design; `docs/handoff/PARITY.md` is the build order (43 items).
 Build all of it; leave nothing out. Decision 320 records the approval.
 
-## Also note
-The `desktop` CI job still failed on a0f7175 even with the trust-dialog fallback (decision 318): read that run's
-`electron-handlers` diagnostic block first.
-
-## Open issues (start here)
-1. **Windows, 1 test:** `test/e2e/worktree.test.ts` "a setup profile runs with secrets stripped; REPO_ROOT_PATH set;
-   protocol list/status/remove" hangs ~21 s on a protocol call (RpcChild waits 20 s per call). Two fix attempts are in
-   (decisions "Platform fixes: Windows", entries 316 and 317). Latest failing job: Actions job 125070575048 (head dc52906).
-   RpcChild now captures child stderr live, so that log should name the stuck step: read the error above its "(fail)".
-   Suspects: a git subprocess waiting for input on Windows, a PowerShell setup/cleanup script that never exits, a grandchild
-   holding the stdout pipe, a file lock blocking `git worktree remove`.
-2. **Linux CI `desktop` job, 2 tests:** `test/desktop/electron-handlers.test.ts` (trust dialog; ask-user panel) fail only on
-   the GitHub runner: the composer keeps the typed text after Enter, 0 model requests, no `request_trust`. They pass locally,
-   also as a non-root user with a fresh HOME and CI=true. The latest commit (decision 318) verifies the send, falls back to
-   clicking Send, and logs every keydown, focus and data-ready. Read the next run's diagnostic block to see whether Enter
-   reaches the editor. Never skip these tests and never only raise timeouts.
-3. Occasional flake seen once locally under load: `test/desktop/electron-final.test.ts` "side chat: the writes switch" and
-   "Archive Project". Not investigated.
+## Current acceptance work
+- Worktree target is locally fixed (decision 322). Upstream trust and ask-user failures have passed on bd94639. Linux desktop now fails only at the first Dictate click waiting for stability; new diagnostics include native window visibility/focus and document visibility. No timeout increase or forced click.
+- macos-14 was retired on November 2, 2026; upstream job annotation says its configuration is unsupported. Matrix now uses macos-15; CI verification pending.
+- Full Windows suite exposed personal-skill contamination, POSIX-only test commands and two product shell assumptions. Tests now isolate personal home; graders and custom status lines use the platform shell. Status-line timeouts terminate the process tree. Affected checks passed, including all 43 TUI gap tests.
+- Real file-symlink fixtures still get EPERM on this unelevated machine. Owner asked to enable Windows Developer Mode. Directory fixtures use native junctions and remain active. Do not skip the file-symlink assertions. Continue independent work while waiting.
 
 ## Waiting on the owner (do not decide for them)
 - (Resolved) `create_pr` and PR status (§18.6): the owner APPROVED building it. See "Next task" below.

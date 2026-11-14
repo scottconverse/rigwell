@@ -85,11 +85,11 @@ export function chromiumStatus(label: string): { pw: any | null; reason: string 
 
 /** Same for the Electron tests: also needs the Electron binary and an X server. */
 export function electronStatus(label: string): { pw: any | null; electronBin: string; reason: string } {
-  const electronBin = join(import.meta.dir, "../../desktop/node_modules/electron/dist/electron");
+  const electronBin = join(import.meta.dir, "../../desktop/node_modules/electron/dist", process.platform === "win32" ? "electron.exe" : process.platform === "darwin" ? "Electron.app/Contents/MacOS/Electron" : "electron");
   const pw = loadPlaywright();
   const reason = !pw ? `playwright not resolvable from ${PW_BASES.join(", ")} (run npm install in desktop/)`
     : !existsSync(electronBin) ? `electron binary missing at ${electronBin} (npm install in desktop/ ran with --ignore-scripts? run node node_modules/electron/install.js)`
-    : !Bun.which("Xvfb") && !process.env.DISPLAY ? "no X server: neither Xvfb on PATH nor DISPLAY set" : "";
+    : process.platform === "linux" && !Bun.which("Xvfb") && !process.env.DISPLAY ? "no X server: neither Xvfb on PATH nor DISPLAY set" : "";
   if (reason) console.log(`[${label} skipped: ${reason}]`);
   return { pw, electronBin, reason };
 }

@@ -4,6 +4,7 @@ import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
+import { shellInvocation } from "../platform/shell.ts";
 import { cacheHitRate, costOf } from "./cost.ts";
 import type { EvalConfig, FailKind, ModelSpec, RunRecord, TaskDef, TokenCounts, TrialResult, Variant } from "./types.ts";
 
@@ -123,7 +124,12 @@ export async function driveSession(opts: {
 
 /** Runs the grader in the working copy. Exit 0 passes; the last lines of its output are the detail. */
 export function runGrader(task: TaskDef, workDir: string): { passed: boolean; detail: string } {
-  const r = spawnSync("sh", ["-c", task.grader], {
+  const command = process.platform === "win32"
+    ? task.grader.replace(/\$EVAL_TASK_DIR\b/g, "%EVAL_TASK_DIR%").replace(/\$EVAL_WORK_DIR\b/g, "%EVAL_WORK_DIR%")
+    : task.grader;
+  const shell = shellInvocation(command);
+  const r = spawnSync(shell.file, shell.args, {
+    windowsVerbatimArguments: shell.windowsVerbatimArguments,
     cwd: workDir, encoding: "utf8", timeout: GRADER_TIMEOUT_MS, env: { ...process.env, EVAL_TASK_DIR: task.dir, EVAL_WORK_DIR: workDir },
   });
   const out = `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().split("\n").slice(0, 2).join(" | ").slice(0, 300);

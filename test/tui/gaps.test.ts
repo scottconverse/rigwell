@@ -11,6 +11,7 @@ import { parseKeys } from "../../src/tui/keys.ts";
 import { render, stripAnsi } from "../../src/tui/render.ts";
 import { buildView, statusLineInput } from "../../src/tui/views.ts";
 import { matchCommands } from "../../src/tui/commands.ts";
+import { jsCommand, sleepCommand } from "../platform.ts";
 import { driver, ev, key, note, rawEv, type } from "./helpers.ts";
 
 let home: string, proj: string;
@@ -386,15 +387,15 @@ describe("custom status line", () => {
     expect(statusLineConfig({ statusLine: { type: "text", command: "x" } })).toBeNull();
   });
 
-  test("runs the command with JSON on stdin, caps rows, reports failures and timeouts", () => {
+  test("runs the command with JSON on stdin, caps rows, reports failures and timeouts", async () => {
     const input = statusLineInput(driver({ contextUsed: 500, contextLimit: 1000 }).s);
     expect(input.context).toEqual({ used_tokens: 500, limit_tokens: 1000, used_percent: 50 });
-    const cat = runStatusLine({ command: "cat", padding: 0, maxRows: 1 }, input, proj);
+    const cat = await runStatusLine({ command: jsCommand(proj, 'process.stdout.write(require("fs").readFileSync(0))'), padding: 0, maxRows: 1 }, input, proj);
     expect(cat.ok && JSON.parse(cat.text).model.id).toBe("m1");
-    const rows = runStatusLine({ command: "printf 'a\\nb\\nc\\n'", padding: 0, maxRows: 2 }, input, proj);
+    const rows = await runStatusLine({ command: jsCommand(proj, 'console.log("a\\nb\\nc")'), padding: 0, maxRows: 2 }, input, proj);
     expect(rows).toEqual({ ok: true, text: "a\nb" });
-    expect(runStatusLine({ command: "exit 3", padding: 0, maxRows: 1 }, input, proj)).toEqual({ ok: false, hint: "Status line exited 3. Run /statusline." });
-    const slow = runStatusLine({ command: "sleep 2", padding: 0, maxRows: 1 }, input, proj, 100);
+    expect(await runStatusLine({ command: "exit 3", padding: 0, maxRows: 1 }, input, proj)).toEqual({ ok: false, hint: "Status line exited 3. Run /statusline." });
+    const slow = await runStatusLine({ command: sleepCommand(proj, 2), padding: 0, maxRows: 1 }, input, proj, 100);
     expect(slow.ok).toBe(false);
     expect(!slow.ok && slow.hint).toContain("/statusline");
   });

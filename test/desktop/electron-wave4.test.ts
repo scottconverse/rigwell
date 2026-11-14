@@ -4,7 +4,7 @@
 // Skipped, with the reason printed, when Electron, Playwright or an X server are not available.
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import { startFakeOAuth, type FakeOAuth } from "../fakes/fake-oauth.ts";
@@ -13,6 +13,7 @@ import { CLI, makeHome, makeRepo } from "../e2e/helpers.ts";
 import { deriveKey } from "../../src/sidepane/chrome-cookies.ts";
 import { makeCookieDb, SECRET_SESSION_VALUE } from "./cookie-fixture.ts";
 import { diagnose, electronStatus, sleep, withDiagnosis } from "./helpers.ts";
+import { jsCommand } from "../platform.ts";
 
 const desktop = join(import.meta.dir, "../../desktop");
 const { pw, electronBin, reason } = electronStatus("electron wave 4 test");
@@ -24,7 +25,7 @@ const SECRET_VALUE = "sk-test-0123456789abcdef";
 
 maybe("desktop app: wave 4 features", () => {
   let fake: FakeServer, idp: FakeOAuth, xvfb: ChildProcess | undefined, app: any, page: any;
-  let repo: string, home: string, display: string, chromeDir: string, sttDir: string;
+  let repo: string, home: string, display: string, chromeDir: string, sttDir: string, sttCommand: string;
   let stderr = "";
 
   const hook = <T>(fn: string, ...args: unknown[]): Promise<T> => app.evaluate((_e: unknown, a: { fn: string; args: unknown[] }) => (globalThis as any).__rigwellTest[a.fn](...a.args), { fn, args });
@@ -34,13 +35,17 @@ maybe("desktop app: wave 4 features", () => {
     const ta = page.getByLabel("Message").first();
     await ta.fill(text);
     await page.locator('button[aria-label="Send"]:not([disabled])').first().waitFor({ timeout: 10_000 });
-    await ta.press("Enter");
+    await page.locator('button[aria-label="Send"]:not([disabled])').first().click();
   };
   const newSession = async () => {
     await go("/?folder=" + encodeURIComponent(repo));
     await page.locator(".home .composer[data-ready=true]").waitFor({ timeout: 30_000 });
   };
-  const why = (label: string, fn: () => Promise<unknown>) => withDiagnosis(page, home, () => ({ label, requests: fake.requests.length }), fn);
+  const why = (label: string, fn: () => Promise<unknown>) => withDiagnosis(page, home, async () => ({
+    label, requests: fake.requests.length,
+    windows: await app.evaluate(({ BrowserWindow }: any) => BrowserWindow.getAllWindows().map((w: any) => ({ visible: w.isVisible(), focused: w.isFocused(), minimized: w.isMinimized(), bounds: w.getBounds() }))),
+    pageState: await page.evaluate(() => ({ visibility: document.visibilityState, focused: document.hasFocus() })),
+  }), fn);
 
   beforeAll(async () => {
     spawnSync("bun", ["run", "build.ts"], { cwd: desktop, stdio: "ignore" });
@@ -66,20 +71,22 @@ maybe("desktop app: wave 4 features", () => {
     // A fake speech-to-text program and a synthetic Chrome profile.
     sttDir = join(home, "stt");
     mkdirSync(sttDir, { recursive: true });
-    const stt = join(sttDir, "fake-stt");
-    writeFileSync(stt, '#!/bin/sh\nif [ -s "$1" ]; then echo "dictated words from the fake backend"; fi\n');
-    chmodSync(stt, 0o755);
+    sttCommand = jsCommand(sttDir, 'if (require("fs").statSync(process.argv[2]).size) console.log("dictated words from the fake backend");');
     chromeDir = join(home, "chrome");
     mkdirSync(join(chromeDir, "Default", "Network"), { recursive: true });
     writeFileSync(join(chromeDir, "Local State"), JSON.stringify({ profile: { info_cache: { Default: { name: "Work" } } } }));
-    makeCookieDb(join(chromeDir, "Default", "Network", "Cookies"), deriveKey("peanuts", "linux"), true);
+    makeCookieDb(join(chromeDir, "Default", "Network", "Cookies"), deriveKey("peanuts", process.platform), true);
+    if (process.platform === "darwin") {
+      // Synthetic fixture key only; never query the signed-in user's browser Keychain entry.
+      writeFileSync(join(sttDir, "security"), '#!/bin/sh\ncase "$*" in *"Chrome Safe Storage"*) printf peanuts;; *) exit 1;; esac\n', { mode: 0o755 });
+    }
 
     // The organization sets `missions` and an autonomy ceiling: the settings pages say so.
     const orgFile = join(home, "org-settings.json");
     writeFileSync(orgFile, JSON.stringify({ managedSettings: { missions: { skipScrutiny: false }, maxAutonomyLevel: "high" } }));
 
-    display = process.env.DISPLAY || `:${60 + Math.floor(Math.random() * 9)}`;
-    if (!process.env.DISPLAY) {
+    display = process.env.DISPLAY || (process.platform === "linux" ? `:${60 + Math.floor(Math.random() * 9)}` : "");
+    if (process.platform === "linux" && !process.env.DISPLAY) {
       xvfb = spawn("Xvfb", [display, "-screen", "0", "1280x900x24"], { stdio: "ignore" });
       for (let i = 0; i < 50 && !existsSync(`/tmp/.X11-unix/X${display.slice(1)}`); i++) await sleep(100);
     }
@@ -88,6 +95,7 @@ maybe("desktop app: wave 4 features", () => {
       RIGWELL_TEST_HOOKS: "1", RIGWELL_FAKE_AUDIO: "1", RIGWELL_CHROME_USER_DATA_DIR: chromeDir, RIGWELL_ORG_MANAGED_SETTINGS_LOCAL_PATH: orgFile,
     };
     delete env.NODE_OPTIONS;
+    if (process.platform === "darwin") env.PATH = `${sttDir}:${env.PATH}`;
     app = await pw._electron.launch({ executablePath: electronBin, args: ["--no-sandbox", desktop, `--route=/?folder=${encodeURIComponent(repo)}`], env, timeout: 60_000 });
     app.process().stderr?.on("data", (b: Buffer) => { stderr += b.toString(); });
     page = await app.firstWindow();
@@ -102,14 +110,14 @@ maybe("desktop app: wave 4 features", () => {
 
   test("dictation: the button explains how to enable it, then a fake backend turns a recording into text", async () => {
     await page.locator(".home .composer[data-ready=true]").waitFor({ timeout: 30_000 });
-    await page.getByRole("button", { name: "Dictate", exact: true }).click();
+    await why("first dictation click", () => page.getByRole("button", { name: "Dictate", exact: true }).click());
     const note = page.getByRole("status", { name: "Dictation" });
     await note.waitFor({ timeout: 10_000 });
     expect(await note.textContent()).toContain("whisper.cpp");
     await note.getByRole("button", { name: "Close" }).click();
 
     // Configure the fake backend the way the settings page would (the desktop settings file).
-    await page.evaluate((cmd: string) => (window as any).rigwell.settings.update({ dictation: { backend: "command", command: cmd } }), `${join(sttDir, "fake-stt")} {file}`);
+    await page.evaluate((cmd: string) => (window as any).rigwell.settings.update({ dictation: { backend: "command", command: cmd } }), `${sttCommand} {file}`);
     await page.getByRole("button", { name: "Dictate", exact: true }).click();
     await page.getByRole("button", { name: "Stop dictation" }).waitFor({ timeout: 15_000 });
     await sleep(1200); // a moment of (fake) microphone audio
@@ -275,6 +283,14 @@ maybe("desktop app: wave 4 features", () => {
     expect(await dlg.getByRole("group", { name: "Sites" }).getByText("other.org").count()).toBe(0);
     for (const d of ["example.com", "app.example.com", "plain.example.com"]) await dlg.getByRole("group", { name: "Sites" }).getByLabel(new RegExp(`^${d.replace(/\./g, "\\.")}`)).check();
     await dlg.getByRole("button", { name: /^Import 3 sites/ }).click();
+    if (process.platform === "win32") {
+      await dlg.getByRole("alert").getByText(/not supported on Windows/).waitFor();
+      const cookies = await app.evaluate(async ({ session }: any) => await session.fromPartition("persist:browserpanel").cookies.get({}));
+      expect(cookies).toEqual([]);
+      expect(stderr).not.toContain(SECRET_SESSION_VALUE);
+      await dlg.getByRole("button", { name: "Close", exact: true }).click();
+      return;
+    }
     await why("import summary", () => dlg.getByText(/Imported 3 cookies/).waitFor({ timeout: 30_000 }));
     expect(await dlg.textContent()).toContain("1 could not be decrypted");
 

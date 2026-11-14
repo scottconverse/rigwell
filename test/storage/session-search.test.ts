@@ -1,6 +1,7 @@
 // Session search (spec 12.1): spans, bloom filters, triggers, lexical and semantic search, protocol method.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, readFileSync } from "node:fs";
+import { unlinkSync } from "node:fs";
 import path from "node:path";
 import { appendMessage, createSession } from "../../src/storage/transcript.ts";
 import { updateSessionSettings } from "../../src/storage/session-settings.ts";
@@ -125,7 +126,7 @@ test("a session that disappears takes its spans and filter with it", async () =>
   const f = await session("g1", ["gone soon"]);
   const db = openSessionIndex();
   refreshIndex(db);
-  Bun.spawnSync(["rm", f.transcriptPath]);
+  unlinkSync(f.transcriptPath);
   refreshIndex(db);
   expect((db.query("SELECT (SELECT COUNT(*) FROM session_spans) + (SELECT COUNT(*) FROM session_term_filters) n").get() as any).n).toBe(0);
   db.close();

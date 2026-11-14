@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { appendFileSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { unlinkSync } from "node:fs";
 import path from "node:path";
 import { appendMessage, createSession } from "../../src/storage/transcript.ts";
 import { updateSessionSettings } from "../../src/storage/session-settings.ts";
@@ -70,7 +71,7 @@ test("a shrunk transcript is read again from the start; a vanished file drops it
   writeFileSync(f.transcriptPath, start + "\n");
   refreshIndex(db, key);
   expect(db.query("SELECT messages_count c, has_user_visible_messages v FROM sessions WHERE session_id='s2'").get()).toEqual({ c: 0, v: 0 });
-  Bun.spawnSync(["rm", f.transcriptPath]);
+  unlinkSync(f.transcriptPath);
   refreshIndex(db, key);
   expect(db.query("SELECT COUNT(*) n FROM sessions").get()).toEqual({ n: 0 });
   expect(db.query("SELECT COUNT(*) n FROM session_ingest").get()).toEqual({ n: 0 }); // deleted along with the session

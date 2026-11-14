@@ -170,7 +170,7 @@ async function diagnosticsView(c: ViewCtx): Promise<View> {
 
 // ---------------------------------------------------------------- /statusline
 
-function statusLineView(c: ViewCtx): View {
+async function statusLineView(c: ViewCtx): Promise<View> {
   const loaded = loadSettings({ cwd: c.state.cwd, runtimeSettingsPath: c.settingsPath });
   const cfg = statusLineConfig(loaded.settings);
   const lines: string[] = [];
@@ -178,7 +178,7 @@ function statusLineView(c: ViewCtx): View {
     lines.push("No custom status line is configured.", "", 'Add to settings.json: "statusLine": { "type": "command", "command": "<your command>", "padding": 0, "maxRows": 1 }');
   } else {
     lines.push(`Command: ${cfg.command}`, `Rows: ${cfg.maxRows}   Padding: ${cfg.padding}`, "");
-    const r = runStatusLine(cfg, statusLineInput(c.state), c.state.cwd);
+    const r = await runStatusLine(cfg, statusLineInput(c.state), c.state.cwd);
     lines.push(r.ok ? "Output now:" : "Problem:", ...(r.ok ? (r.text ? r.text.split("\n").map((l) => "  " + l) : ["  (empty)"]) : ["  " + r.hint]));
   }
   lines.push("", "The command runs through the shell, gets this JSON on stdin and must finish within 2 seconds:",

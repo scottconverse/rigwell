@@ -2,7 +2,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { isWin } from "../platform.ts";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer } from "../fakes/types.ts";
@@ -85,8 +85,10 @@ describe("Files (spec 17.1)", () => {
     }
     const w: any = await c.call("daemon.write_workspace_file_content", { filePath: outside, content: "x" }).catch((x) => x);
     expect(w.code).toBe(-32602);
-    symlinkSync(outside, join(repo, "link.txt"));
-    const l: any = await c.call("daemon.write_workspace_file_content", { filePath: "link.txt", content: "x" }).catch((x) => x);
+    const linkPath = isWin ? join(repo, "outside-link") : join(repo, "link.txt");
+    if (isWin) symlinkSync(dirname(outside), linkPath, "junction"); // directory junctions need no symlink privilege
+    else symlinkSync(outside, linkPath);
+    const l: any = await c.call("daemon.write_workspace_file_content", { filePath: isWin ? "outside-link/outside.txt" : "link.txt", content: "x" }).catch((x) => x);
     expect(l.code).toBe(-32602);
     writeFileSync(join(repo, "bin.dat"), Buffer.from([1, 2, 0, 3]));
     const b = await c.call("daemon.get_workspace_file_content", { filePath: "bin.dat" });
@@ -130,7 +132,7 @@ describe("Terminal (spec 17.2)", () => {
     const bad: any = await c.call("daemon.create_terminal", { terminalId: "t2", cwd: join(repo, "nope") }).catch((e) => e);
     expect(bad.code).toBe(-32602);
     expect(bad.data?.reason).toBe("not_found");
-    await c.call("daemon.write_terminal_data", { terminalId: "t1", data: isWin ? "echo marker-42\r\n" : "echo marker-$((6*7)); pwd\n" });
+    await c.call("daemon.write_terminal_data", { terminalId: "t1", data: isWin ? "echo marker-42\r" : "echo marker-$((6*7)); pwd\n" });
     await c.waitFor((n) => n.type === "daemon.terminal_data" && n.terminalId === "t1" && n.data.includes("marker-42"));
     const out = c.notes.filter((n) => n.type === "daemon.terminal_data").map((n) => n.data).join("");
     expect(out).toContain("marker-42");

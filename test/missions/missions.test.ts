@@ -308,13 +308,14 @@ describe("file protection", () => {
     writeFileSync(join(dir, "state.json"), "{}");
     writeFileSync(join(dir, "features.json"), "{}");
     const link = join(home, "innocent.txt");
-    symlinkSync(join(dir, "state.json"), link);
-    expect(checkMissionPath(link, home, "orchestrator", "read")).toContain("Refused");
+    if (process.platform === "win32") symlinkSync(dir, link, "junction");
+    else symlinkSync(join(dir, "state.json"), link);
+    expect(checkMissionPath(process.platform === "win32" ? join(link, "state.json") : link, home, "orchestrator", "read")).toContain("Refused");
     expect(checkMissionPath(join(dir, "state.json"), home, "other", "write")).toContain("Refused");
     expect(checkMissionPath(join(dir, "features.json"), home, "worker", "write")).toContain("Refused");
     expect(checkMissionPath(join(dir, "features.json"), home, "worker", "read")).toBeNull();
     expect(checkMissionPath(join(dir, "features.json"), home, "orchestrator", "write")).toBeNull();
-    symlinkSync(join(home, "nowhere", "x"), join(home, "dangling"));
+    symlinkSync(join(home, "nowhere", "x"), join(home, "dangling"), process.platform === "win32" ? "junction" : "file");
     expect(checkMissionPath(join(home, "dangling"), home, "orchestrator", "read")).toContain("cannot be resolved");
     expect(checkMissionPath(join(home, "plain.txt"), home, "worker", "write")).toBeNull();
   });

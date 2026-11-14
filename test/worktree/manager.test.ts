@@ -47,7 +47,10 @@ describe("secret stripping", () => {
     expect(r.output).toContain("key=[unset] normal=[visible] repo=[/the/repo]");
   });
   test("output is capped at 4 KB and control chars removed", async () => {
-    const r = await runScript({ script: 'printf "\\033[31m"; head -c 9000 /dev/zero | tr "\\0" "a"', cwd: tmp("s"), repoRoot: "/r", timeoutMs: 10000 });
+    const script = process.platform === "win32"
+      ? '[Console]::Write(([char]27).ToString() + "[31m" + ("a" * 9000))'
+      : 'printf "\\033[31m"; head -c 9000 /dev/zero | tr "\\0" "a"';
+    const r = await runScript({ script, cwd: tmp("s"), repoRoot: "/r", timeoutMs: 10000 });
     expect(r.output.length).toBe(4096);
     expect(r.output).not.toContain("\u001b");
   });
@@ -69,7 +72,9 @@ describe(".worktreeinclude", () => {
     writeFileSync(join(repo, ".env"), "K=1\n");
     mkdirSync(join(repo, "secrets"));
     writeFileSync(join(repo, "secrets", "k.txt"), "k\n");
-    symlinkSync("/etc/hostname", join(repo, "link.env"));
+    const outside = tmp("include-outside");
+    writeFileSync(join(outside, "secret.txt"), "must not copy");
+    symlinkSync(outside, join(repo, "link.env"), process.platform === "win32" ? "junction" : "dir");
     writeFileSync(join(repo, ".worktreeinclude"), ".env\nsecrets\na.txt\nlink.env\nmissing\n");
     const dest = tmp("dest");
     writeFileSync(join(dest, "preexisting"), "x");

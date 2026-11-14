@@ -116,7 +116,9 @@ describe("worktrees end to end", () => {
     expect(listed.map((w: any) => w.path)).toEqual([init.worktree.path]);
 
     // in use: cannot remove while the session is live; after close it can
-    await expect(c.call("cleanup_worktree", { worktreePath: init.worktree.path })).rejects.toThrow(/live session/);
+    const inUseError = await c.call("cleanup_worktree", { worktreePath: init.worktree.path }).then(() => null, (e: Error) => e);
+    expect(inUseError?.message).toMatch(/live session/);
+    expect(c.messages.some((m) => m.type === "response" && m.error?.data?.code === "in_use")).toBe(true);
     await c.call("close_session", { reason: "other" });
     await c.close();
     const c2 = new RpcChild(["exec", "--input-format", "stream-jsonrpc", "--output-format", "stream-jsonrpc"], { cwd: repo, env: { RIGWELL_HOME: home } });

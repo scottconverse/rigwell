@@ -13,17 +13,15 @@ import { startSessionWorktree } from "../../src/worktree/connect.ts";
 function linkTo(real: string): string {
   const holder = mkdtempSync(join(realpathSync.native(tmpdir()), "rigwell-link-"));
   const link = join(holder, "via-link");
-  symlinkSync(real, link);
+  symlinkSync(real, link, process.platform === "win32" ? "junction" : "dir");
   return link;
 }
 
 describe("symlinked folders", () => {
   test("canonicalPath resolves links and keeps missing paths", () => {
     const repo = makeGitRepo();
-    // Windows may refuse to create links without the privilege (Developer Mode or admin); only that part is gated.
-    let link: string | null = null;
-    try { link = linkTo(repo); } catch (e) { console.log(`[symlink part skipped: cannot create a symlink here: ${(e as Error).message}]`); }
-    if (link) expect(canonicalPath(link)).toBe(repo);
+    const link = linkTo(repo);
+    expect(canonicalPath(link)).toBe(repo);
     expect(canonicalPath(join(repo, "nope"))).toBe(join(repo, "nope"));
   });
 
