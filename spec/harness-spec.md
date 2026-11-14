@@ -104,24 +104,10 @@ the user's machine, not only the harness. On top of goals 1–6 it includes:
 13. **Notifications and appearance** (§19): OS notifications and sounds for "needs input" and "done";
     theme and font settings.
 
-**Later phases (hosted parts; not in this build):** managed cloud computers / remote machines, fleet
-management, org billing and members, plan usage limits and the hosted fallback ("core") model pool,
-Slack and Teams delegation, cloud session sync and sharing links, the hosted inbox and email alerts.
-Workstreams (§15.10) is approved by Scott and built locally; only its remote-machine and cloud parts stay out.
-
-**Not decided: needs Scott's approval before it goes in** (seen in the app, but outside the agreed scope):
-
-- voice dictation in the composer;
-- which of the 23 built-in skills to ship (§5.8 builds the skill mechanism; the content is a separate choice);
-- GitHub-event and Slack-message automation triggers (they need a hosted relay or app);
-- API keys, secrets and environments pages;
-- which automation templates to ship, if any (§16.8).
-
-Optional extras, each marked "ask Scott" where it appears: tray icon (§14.2), Chrome cookie import in the
-browser pane (§17.3), `create_pr` and PR status (§18.6), per-automation `VISUAL.html` and the guided
-"create by chatting" setup (§16.8).
-
-Still out: PR / semantic-diff review UI, marketplace.
+**Everything else is approved (Nov 14 2026).** Scott approved every item that was left out, including the hosted
+parts as local versions, Workstreams (§15.10), the items that were on the approval list, the optional extras and the
+PR review UI and marketplace. §20 specs them. GitHub-event and Slack-message triggers were first declined and are
+now approved (§20.11).
 
 ---
 
@@ -1648,7 +1634,7 @@ From Factory's reported numbers [POST]; use as targets, not requirements.
 
 ---
 
-## 8. Eval loop ("agent factory") n/a phase 3
+## 8. Eval loop ("agent factory"), phase 3
 
 [POST] Process, adapted:
 
@@ -2580,18 +2566,18 @@ statically) or [WALK] (seen in the running app) unless tagged. Factory's app is 
   name and settings gear.
 - **Projects list** [WALK]: sessions grouped by project folder (title + age). Filters: last activity,
   type, project; group by project; sort recent or manual. Row menu: Archive Project; `+` starts a session
-  in that project; an add-folder button (runs the trust prompt, §5.6). Factory's "computer" filter is
-  hosted; leave it out.
+  in that project; an add-folder button (runs the trust prompt, §5.6). Factory's "computer" filter becomes
+  a machine filter over the user's own machines (§20.6).
 - **Command palette** (Ctrl+K; Search opens it) [WALK]: tabs All / Sessions / Pages / Settings / Actions;
   recent sessions across projects; create session or mission; go to Mission Control or Automations;
   toggle terminal; open tools panel; look-back filter 7d / 30d / 90d / All.
 - **Home** [WALK]: composer, folder chip (search, recent projects, add project). Factory's machine chip
-  (environments, cloud computers) is a later phase; show "Local" only.
+  (environments, cloud computers) picks "Local" or one of the user's machines (§20.6).
 - **Session screen** [WALK]: transcript rendered from §3 notifications (user bubbles; tool rows with icon,
   tool name, main argument; markdown with tables, code, links); edit diffs follow the diff settings
   (§19.4).
   - Header menu: Pin, Rename, Archive, Open terminal (§17.2), Copy working folder, Copy session id,
-    Copy session link (your deep link), Copy as Markdown. Share is hosted: later phase.
+    Copy session link (your deep link), Copy as Markdown. Share and export: §20.8.
   - Composer chips: attach (OS file picker; images per §3.1), model, autonomy, mode, reasoning,
     connectors, skills. Esc stops; Esc Esc clears; `?` opens Shortcuts & Modes help.
   - **Model picker:** search; "auto" first (§4.5); a pinned short list; then grouped by provider;
@@ -2601,7 +2587,7 @@ statically) or [WALK] (seen in the running app) unless tagged. Factory's app is 
     (§5.5). [WALK]
   - **Mode chip:** Normal, Spec (§5.5), Mission (§15). [WALK]
   - **Connectors dialog:** MCP servers with count, Refresh, Add MCP Server, and "edit `mcp.json`" (§5.7).
-    Factory's hosted connector catalog is a later phase. [WALK]
+    Catalog tab: §20.4. [WALK]
   - **Skills dialog:** search; tabs All / Personal / Built-in; list plus rendered `SKILL.md` preview
     (§5.8). [WALK]
 - **Shortcuts** [WALK]: toggle spec Shift+Tab, cycle reasoning Tab, cycle autonomy Ctrl+L, model selector,
@@ -2611,19 +2597,21 @@ statically) or [WALK] (seen in the running app) unless tagged. Factory's app is 
 - **Settings pages** in this build (local only): General (preferences, shortcuts, notifications and sounds
   §19), Appearance (§19.4), Session Defaults (§12.2), Missions (§15.4), Custom Models (form for §4.6),
   Worktrees (§18), Connectors (MCP only), Session Management (active / archived, search, filters, bulk
-  rename / archive), Usage (local token totals; plan limits are hosted), Support (version, build,
+  rename / archive), Usage (local token totals; spend limits §20.20), Support (version, build,
   Electron version, copy diagnostics).
   - General preferences [WALK]: language, loading statuses, auto-open file previews, keep running with
-    the screen off (`keepAwakeEnabled`). Factory's "role" field and code-provider connections are hosted.
-- **Not in this build:** Factory's inbox, review, wiki, academy, analytics, evaluations and
-  org pages are hosted or later phases (§1); so are cloud sync, Members and Billing. API Keys, Secrets,
-  Environments and dictation are on Scott's approval list (§1). [APP route list; DESIGN]
+    the screen off (`keepAwakeEnabled`). Factory's "role" field is a profile field (§20.20);
+    code-provider connections are §20.21.
+- **Also built (§20):** Inbox (§20.13), Review (§20.10), Wiki (§20.15), Academy (§20.17), Analytics (§20.18),
+  Evaluations (§20.19), Machines (§20.6, 20.7), Plugins (§20.14), Profiles and policy (§20.20), sync and share
+  (§20.8), Workstreams (§15.10). API Keys, Secrets, Environments and dictation are built (owner approved).
+  Billing has no local meaning (§20.20). [APP route list; DESIGN]
 
 ### 14.4 Desktop settings file
 
 Separate from agent settings (§12.2). Keys seen [APP]: `keepAwakeEnabled`, `desktopAutoUpdateEnabled`,
 `locale`, `windowZoomLevel`, `automationQuitWarningDismissed` (the "automations stop when the app quits"
-warning, §16), `menuBarEnabled` (tray, optional). `remoteAccessEnabled` is hosted: later phase. Per-window
+warning, §16), `menuBarEnabled` (tray, optional). `remoteAccessEnabled`: §20.9. Per-window
 zoom is kept in `window-zoom.json`.
 
 ### 14.5 Updates and diagnostics
@@ -2665,7 +2653,8 @@ States: `planning → awaiting_input → initializing → running ⇄ orchestrat
 1. **Enter mission mode.** The current session is upgraded to an orchestrator session (tag role
    `orchestrator`, `interactionMode: "mission"`). If the current model is not on the mission-allowed list,
    switch to the configured orchestrator model and effort. Run the readiness check first (15.7). Factory
-   also checks org mission policy and overage settings here; leave both out (hosted).
+   also checks org mission policy and overage settings here; Rigwell checks the local policy file and spend
+   limits (§20.20).
 2. **Planning.** The orchestrator talks with the user (ask-user flips the state to `awaiting_input` and
    back). Planning is guided by built-in orchestrator skills [CLI names: mission-planning,
    define-mission-skills, plus two playbooks]. Which built-in skills ship is on Scott's approval list (§1).
@@ -2758,7 +2747,7 @@ path whose symlink cannot be resolved, and test both the given and the real path
 - **Models** (`missionSettings` in session settings): `workerModel`, `workerReasoningEffort`,
   `validationWorkerModel`, `validationWorkerReasoningEffort`, `skipScrutiny`, `skipUserTesting`.
   Validators use the validation pair. Log any model substitution (`substitutedFromModelId`).
-  Factory's org model-policy check is hosted; leave it out.
+  Factory's org model-policy check is the local policy file (§20.20).
 - Per-role tool filtering: how Factory narrows each role's tool list was not checked [UNKNOWN].
   [DESIGN] Give orchestrators the four orchestrator tools and workers only EndFeatureRun from 15.5;
   EndFeatureRun already refuses any caller that is not the current worker of an in-progress feature [CLI].
@@ -2872,9 +2861,9 @@ Log `milestone_validation_triggered`.
 
 ### 15.9 Local vs hosted
 
-Everything in 15.1–15.8 runs locally except model calls. Left out as hosted: org mission policy and
+Everything in 15.1–15.8 runs locally except model calls. Factory's hosted parts (org mission policy and
 overage checks, org model policy, the cloud readiness-report lookup, cloud sync of mission metadata,
-feature flags. [CLI]
+feature flags) [CLI] have local versions in §20.20 and §20.8.
 
 ### 15.10 Workstreams (local; owner approved)
 
@@ -2882,7 +2871,8 @@ feature flags. [CLI]
 are off by default, spawns agents on other machines, and shares state through a hosted "shared space" [CLI]. Little
 else about it was observable, so most of the shape below is [DESIGN]; log each choice in `docs/decisions.md`.
 Rigwell keeps the tool names Factory uses [CLI] and replaces the cloud parts with a local shared folder and roster.
-Running agents on other machines is out of scope.
+Members can also run on the user's other machines over SSH (§20.6): `SpawnAgent` takes `machine?`, and the
+daemon on the lead's machine keeps the shared folder and relays messages.
 
 **What it is.** A workstream is a named goal worked on by several long-lived agents at once. One session is the
 **lead** (the orchestrator). It proposes the workstream, spawns **member** agents, messages them, waits on events,
@@ -2917,7 +2907,7 @@ Lead tools (given to the lead session; members get the member set below):
 | Tool | Does | Inputs, outputs |
 | --- | --- | --- |
 | `ProposeWorkstream` | Asks the user to approve a workstream; nothing spawns until they accept | `title`, `goal`, markdown `plan`, `agents?[{name, role, task}]` → `accepted`, `workstreamId`, `isEdited`, user's edits |
-| `SpawnAgent` | Starts a member session | `name`, `role`, `prompt`, `model?`, `reasoningEffort?`, `worktree?: boolean \| {branch}` (default true in a git repo), `cwd?`, `autonomyLevel?` (never above the lead's), `tools?` (allow-list) → `agentId`, `sessionId`, `worktreePath?` |
+| `SpawnAgent` | Starts a member session | `name`, `role`, `prompt`, `model?`, `reasoningEffort?`, `worktree?: boolean \| {branch}` (default true in a git repo), `cwd?`, `machine?` (§20.6), `autonomyLevel?` (never above the lead's), `tools?` (allow-list) → `agentId`, `sessionId`, `worktreePath?` |
 | `ListAgents` | Reads the roster | `status?` → roster entries with last summary and unread counts |
 | `SendMessage` | Messages a member, `all`, or the user | `to`, `message`, `priority?: now \| next \| later` (default `next`) → `messageId`, `delivered` |
 | `InterruptAgent` | Stops a member's current turn | `agentId`, `reason?` → `status` |
@@ -3144,7 +3134,8 @@ webhooks, so this part is your own design:
   `postMessage`; the guided-setup "create" session that builds an automation by chatting.
 - **Needs approval:** template content. Factory's CLI bundles one template; the app shows 16, served
   from elsewhere [CLI; WALK]. Which templates to ship, if any, is Scott's call.
-- **Later (hosted):** cloud sync of automations, Slack / GitHub / CI / chained triggers, remote runs.
+- **Also built (§20):** sync of automations (§20.8), Slack / GitHub / CI / chained triggers (§20.11), runs on
+  the user's other machines (§20.6).
 
 ## 17. Side pane: Files, Terminal, Browser, Side chat
 
@@ -3217,7 +3208,8 @@ terminals and side-chat sessions; the desktop app owns the browser. Facts are [C
   try to change the CDP target or profile skip the tagging. [CLI]
 - The agent drives the browser through a browser-automation tool (Factory: the agent-browser skill with
   a bundled CLI). Whether that skill ships is part of the built-in skills decision (§1). [CLI]
-- Not this pane: Factory's `daemon.desktop.*` methods are a VNC viewer for cloud machines (later phase).
+- Not this pane: Factory's `daemon.desktop.*` methods are a VNC viewer for cloud machines; Rigwell's remote desktop viewer
+  is §20.6.
   [CLI]
 
 ### 17.4 Side chat
@@ -3340,8 +3332,8 @@ archive sessions whose worktree folder is gone, remove orphaned ephemeral worktr
   `needs_resolution` with changed files when the tree is dirty; resolve by stash or commit),
   `get_git_branch_divergence` (ahead/behind), `git_commit {sessionId, message}`, `git_push {sessionId}`.
 - Nothing merges back to main automatically. The flow is commit → push → PR, branch kept.
-- **Optional (ask Scott):** `create_pr` and PR status (Factory uses the `gh` / `glab` CLIs). Without it,
-  the "open PR blocks auto-delete" rule is skipped.
+- **Approved:** `create_pr` and PR status (Factory uses the `gh` / `glab` CLIs); see HANDOFF "Next task". A
+  branch with an open PR is not auto-deleted.
 
 ## 19. Notifications, sounds and appearance
 
@@ -3366,7 +3358,7 @@ The daemon turns session notifications into attention events [CLI]:
 
 Factory writes these to an outbox and posts them to its backend, which fans out to inbox, email and
 desktop push [CLI]. **Your build:** the daemon sends them straight to connected desktop windows (and the
-TUI). Email and the inbox are hosted: later phase. [DESIGN]
+TUI). Email alerts and the Inbox: §20.13. [DESIGN]
 
 ### 19.2 Desktop notifications
 
@@ -3408,3 +3400,256 @@ TUI). Email and the inbox are hosted: later phase. [DESIGN]
 - **Zoom:** per window, saved in `window-zoom.json`. [APP]
 - **Fonts:** Factory ships Geist and Geist Mono; choose your own. [APP]
 - The TUI keeps the §13.7 cut (light and dark only).
+
+## 20. Full parity additions (owner approved, Nov 14 2026)
+
+Scott approved building everything that was still left out, so Rigwell matches Factory's CLI and desktop app.
+Where Factory's version is hosted, Rigwell builds a local version that runs on the user's own machines and
+accounts. Nothing here phones home. Each subsection is [DESIGN] unless tagged; log choices in `docs/decisions.md`.
+Tests use fake servers only (fake model, fake MCP authorization server, fake GitHub API, fake Slack and Teams, fake
+SMTP, local SSH server in a container or a fake `ssh`). Build order is in `docs/handoff/PARITY.md`.
+
+Two items need the owner to act, not just approve: registering Rigwell's own OAuth apps (§20.2) and buying signing
+certificates (§20.24). The code is built either way; the owner supplies the IDs and certificates.
+
+### 20.1 Agent quality program
+
+The machinery is tested; the agent's quality on real work is not.
+
+- **Real-model smoke run** on every adapter (Anthropic, OpenAI HTTP and WebSocket, Gemini, Bedrock, Chat
+  Completions with a local model such as Ollama). One short fix-the-bug task per adapter, through the real CLI.
+  Keys come from the owner through the credential store; never committed.
+- **Task suite** for `rigwell eval`: at least 40 real tasks across bug fixes, features, refactors, tests,
+  terminal tasks and multi-file changes, each with a check command. Tasks live in `eval/tasks/` with their repos.
+- **Head-to-head:** run Factory's CLI and Rigwell on the same tasks and models (owner's account for Factory),
+  three trials each. Compare pass rate, cost and time per passed task, tokens, requests and cache hit rate, only
+  on tasks both can run (§8).
+- **Tuning:** change Rigwell's own system prompts, tool descriptions, result shapes and guard thresholds through
+  the §8 loop until Rigwell is within the noise of Factory on every model family. Write new text; never copy
+  Factory's.
+- **Settle every "not checked" and [UNKNOWN] item** in this spec with a real run, or log a decision.
+- **Long-session checks:** compaction, prompt caching, cost reporting, routing, guards and the loop watchdog on
+  real sessions of 200+ turns.
+
+### 20.2 Subscription sign-in with Rigwell's own OAuth apps
+
+The OAuth code is generic (decision 267). For one-click sign-in with a subscription plan:
+
+- The owner registers a Rigwell OAuth client with each provider whose terms allow third-party clients. Never reuse
+  another product's client ID.
+- Ship those as built-in `oauthProviders` entries (client ID, endpoints, scopes, PKCE or device flow); users can
+  still add their own. A provider with no registered client shows "not available" in setup.
+- Guided setup (§16.8 style) offers "Sign in with <provider>" first, API key second.
+- Token refresh, sign-out, and the expired-token path tested with a fake authorization server.
+
+### 20.3 MCP OAuth
+
+Sign in to remote MCP servers that need it (today a 401 fails, decision 88).
+
+- Follow the MCP authorization spec: OAuth 2.1 with PKCE, protected resource metadata, authorization server
+  metadata discovery, and dynamic client registration when the server offers it; otherwise the config's
+  `clientId`/`clientSecret` (the `oauth` field already round-trips, §5.7).
+- Browser sign-in returns through the `mcp-callback` deep link (§14) or a loopback redirect for the CLI.
+- Tokens go in the credential store (keychain), keyed by server URL; refresh before expiry; on 401 refresh once,
+  then mark the server "needs sign-in" in the Connectors dialog and `/mcp`.
+- Protocol: `rigwell.mcp_sign_in {name}`, `rigwell.mcp_sign_out {name}`; status in the MCP server list.
+
+### 20.4 Connector catalog
+
+- A bundled `connectors.json`: name, description, category, transport, URL or command, auth kind, docs link.
+  Entries are well-known public MCP servers; each is an MCP config, nothing hosted by Rigwell.
+- Connectors dialog gets a Catalog tab: search, categories, one-click Add (prompts for any needed value, then
+  starts OAuth if needed).
+- Users can add extra catalog URLs (a JSON file in any git repo or web URL); fetched only when the tab opens.
+
+### 20.5 Browser automation for the agent
+
+- A `Browser` tool set the agent can use without the desktop app: `browser_open`, `browser_snapshot`
+  (accessibility tree with element refs), `browser_click`, `browser_type`, `browser_press`, `browser_scroll`,
+  `browser_screenshot`, `browser_wait`, `browser_evaluate` (asks permission), `browser_close`.
+- Driven over the Chrome DevTools Protocol: the bundled Electron's Chromium in the desktop app, else a system
+  Chrome or Chromium; headless by default.
+- When the desktop browser pane (§17.3) is open, the tools drive that tab so the user sees it.
+- Ship the `agent-browser` built-in skill (the one left out in decision 265), written for these tools.
+- Network and file access follow the permission rules; downloads go to the session's folder.
+
+### 20.6 Remote machines over SSH
+
+Factory runs sessions on managed cloud computers. Rigwell runs them on the user's own other computers.
+
+- **Machines:** `rigwell machine add <name> <user@host>` (or a Settings page). Auth through the user's ssh-agent
+  or key file; host keys checked against `known_hosts`.
+- **Bootstrap:** `rigwell machine bootstrap <name>` copies the matching Rigwell build, starts `rigwell daemon`
+  there, and records its version.
+- **Transport:** the local daemon talks to the remote daemon's JSON-RPC over an SSH channel (stdio); no port is
+  opened on the remote.
+- **Use:** new session, automation, mission worker or Workstream member can target a machine
+  (`machine?` field). The desktop shows a machine picker and a machine chip on each session.
+- Files and Terminal panes work against the remote machine; the browser pane can open the remote's ports through
+  an SSH tunnel.
+- **Remote desktop viewer** (the equivalent of Factory's `daemon.desktop.*` VNC viewer): an optional pane that
+  shows a remote machine's screen through a VNC server the user runs there, tunnelled over SSH.
+
+### 20.7 Fleet management
+
+A Machines page: every machine with online state, OS, Rigwell version, running sessions, load, last seen.
+Actions: update Rigwell, restart daemon, stop all sessions, remove. Bulk update. Same data from
+`rigwell machine list`.
+
+### 20.8 Session sync and share links
+
+- **Sync between the user's machines** through a sync target the user picks: a private git remote or a folder
+  (for example one kept by Syncthing or a cloud drive). Synced: session transcripts and index, automations,
+  mission and workstream metadata, and settings the user ticks. Never synced: credentials and secrets.
+- Each item has an owning machine; a session is only continued on one machine at a time (a lock record with a
+  stale timeout). Conflicts keep both copies.
+- **Share:** export a session as a self-contained HTML page or Markdown file (secrets redacted, §12 redaction
+  rules). Optional "Share as secret gist" with the user's GitHub token (confirm first). `rigwell import <file|url>`
+  opens a shared session read-only and can fork it.
+- Desktop: Copy share link / Export in the session menu (replaces the "Share is hosted" note in §14).
+
+### 20.9 Remote access from a phone
+
+- Off by default (`remoteAccessEnabled`). When on, the daemon also serves its WebSocket protocol and a small
+  mobile web client on a chosen interface (LAN or a Tailscale address), over TLS with a self-signed certificate.
+- **Pairing:** the desktop shows a QR code with a one-time code and the certificate fingerprint; the phone gets a
+  per-device token. Devices are listed and revocable.
+- Mobile client: session list, open session, send messages, approve or deny permission prompts, ask-user answers,
+  Workstreams roster and messages, notifications through the browser's notification API while open.
+
+### 20.10 PR and semantic-diff review
+
+- A Review page for a worktree branch or an open PR: file tree, inline and side-by-side diff (shiki), and a
+  semantic view that groups changes by symbol (tree-sitter: added, removed, changed functions and classes;
+  moved and renamed code shown as moves, not delete plus add).
+- Comment on any line and send the comments to the agent as a task ("address these"), or post them to the PR
+  with `gh` after a confirmation.
+- PR mode loads the PR's existing review comments and checks through `gh` or the API; Approve and Request
+  changes post a review after a confirmation.
+- `/review` in the TUI shows the summary and the semantic view as text.
+
+### 20.11 GitHub, Slack, CI and chained automation triggers
+
+The owner first declined these and now approves them. All local; no hosted relay.
+
+- **GitHub:** a trigger polls the GitHub API (or `gh`) for the repos the automation names, every N minutes
+  (default 2): issue opened or labelled, PR opened or updated, a comment that mentions a configured handle,
+  review requested, check run failed. An optional webhook mode uses the local webhook (§16) behind a tunnel the
+  user runs. Seen event IDs are stored so nothing fires twice.
+- **Slack:** the user creates their own Slack app; Rigwell connects with Socket Mode (no public URL). Triggers:
+  mention of the app, a DM, a message in a channel matching a pattern. Tokens in the credential store.
+- **CI:** a check or workflow failing on a watched branch (through the GitHub API), or any CI that can call the
+  local webhook.
+- **Chained:** an automation can trigger when another automation's run ends (filter on success or failure).
+- The run's result can be posted back (issue or PR comment, Slack thread reply) after the automation's
+  `postResult` setting allows it.
+
+### 20.12 Slack and Teams delegation
+
+- **Slack:** with the Slack app from §20.11, a message to the app starts a session in a chosen project folder.
+  Progress streams into the thread; permission prompts and ask-user questions appear as buttons; the final answer
+  is posted. Only allow-listed Slack user IDs can start sessions.
+- **Teams:** a Bot Framework bot the user registers. Teams must reach a public HTTPS endpoint, so the user runs a
+  tunnel to the local daemon (documented); same features as Slack.
+- Every delegated session is visible in the desktop like any other, tagged with its source.
+
+### 20.13 Inbox and email alerts
+
+- An Inbox page: one list of everything that needs the user or finished: permission prompts, ask-user questions,
+  turns done, automation runs, mission and workstream events. Read and unread, filters, open the source.
+- Email alerts through the user's own SMTP server (password in the credential store): per category, immediately
+  or as a daily digest.
+
+### 20.14 Plugins and marketplace
+
+- A plugin is a folder with `rigwell-plugin.json` and any of: skills, custom agents, hooks, MCP servers, slash
+  commands, automation templates.
+- Install from a git URL (pinned to a commit), a local path, or a marketplace index: a JSON file in any git repo
+  listing plugins. Rigwell ships no index by default; the user adds index URLs.
+- Install shows what the plugin adds and needs (hooks and MCP servers are trust-prompted as in §5). Update,
+  disable and uninstall. Desktop Plugins page and `rigwell plugin ...` commands.
+
+### 20.15 Project wiki
+
+- `rigwell wiki build` writes a wiki for the repo into `.rigwell/wiki/`: overview, architecture, one page per
+  module, mermaid diagrams, a glossary. `rigwell wiki update` refreshes only pages whose sources changed; an
+  optional automation runs it after commits.
+- A Wiki viewer page in the desktop with search; the agent can read the wiki through a skill.
+- Ship the wiki built-in skills left out in decision 265, rewritten for the local wiki: `wiki`, `install-wiki`
+  (sets up the update automation), `browse-wiki`, and `wiki-video-gen` (an HTML walkthrough; an MP4 when ffmpeg and
+  a local text-to-speech engine are installed).
+
+### 20.16 Local code review, triage and QA services
+
+Factory's `install-code-review`, `install-triage` and `install-qa` skills set up hosted services. Rigwell ships the
+same three skills, each setting up a local automation (§16, triggers from §20.11):
+
+- **Code review:** reviews new PRs or pushed branches with the review skill and posts comments (confirm or allow).
+- **Triage:** reads new issues, suggests labels, duplicates and owners, and posts or queues the suggestions.
+- **QA:** starts the project's dev server, tests the changed flows with the Browser tools (§20.5), and reports.
+
+### 20.17 Academy (built-in tutorials)
+
+Offline tutorial pages in the desktop Help menu and `rigwell learn`: getting started, models and keys, skills,
+hooks, MCP, worktrees, missions, workstreams, automations. Interactive lessons run in a sample repo the app
+creates in a temp folder.
+
+### 20.18 Analytics
+
+A local Analytics page from the session index: tokens and cost per day, model, project and session; tool use
+counts and failure rates; turn times; cache hit rate; automation and mission success rates. Export CSV. Nothing
+leaves the machine.
+
+### 20.19 Evaluations page
+
+- A desktop Eval page over `$RIGWELL_HOME/eval/runs/`: run history charts, per-task drill-down with transcripts,
+  side-by-side outputs of two models on the same task.
+- **Judge graders:** a task may add a rubric scored by a model the user picks (a local model works), next to its
+  check command.
+- **Datasets:** import CSV and JSONL, and Google Stax exports (the format checked against a real export file from
+  the owner); export results as CSV and JSONL.
+
+### 20.20 Organization-style controls, locally
+
+- **Policy file:** `policy.json` in a system folder (admin-owned) or `$RIGWELL_HOME`: allowed and blocked models,
+  maximum autonomy level, mission and workstream limits, MCP server allow-list, required hooks. It overrides user
+  and project settings (Factory's org model and mission policies).
+- **Spend limits:** daily and monthly cost caps overall and per model; warn at a threshold, stop new turns at the
+  cap (Factory's plan usage limits and overage checks).
+- **Fallback models:** an ordered fallback list used when a model errors, is rate limited or hits its cap
+  (Factory's hosted fallback pool).
+- **Profiles:** separate local profiles (for example work and personal), each with its own settings, credentials
+  and session index; switch in the app and with `--profile`. This is the local stand-in for org members.
+  Billing has no local meaning; Analytics (§20.18) and spend limits cover it.
+- **Feature flags:** a Labs settings page over a local `features` map, so experimental features ship off.
+- **Mission readiness report:** the local version of the cloud readiness lookup (§15.9): checks the repo builds,
+  tests run, and tools are present before a mission starts.
+
+### 20.21 Code-provider connections
+
+A Settings page to connect GitHub and GitLab: token, or OAuth device flow with Rigwell's registered app (§20.2).
+Used by `create_pr` (with `glab` for GitLab), triggers, review and share. Shows the signed-in account and scopes.
+
+### 20.22 Diagnostics
+
+Local crash reports (main, renderer and daemon) kept in `$RIGWELL_HOME/crashes/`, and Help, Report a bug, which
+builds a zip of logs, versions and the crash report with secrets redacted, for the user to send wherever they like.
+No automatic upload.
+
+### 20.23 Workstream notification categories
+
+As in §15.10 and §19: `workstream_needs_input`, `workstream_agent_failed`, `workstream_budget_reached`.
+
+### 20.24 Release readiness
+
+- Test on real macOS and Windows machines: OS keychains, clipboards, terminals, notifications, tray, deep links.
+- Code signing and notarization: macOS Developer ID and notarization; a Windows code-signing certificate. The owner
+  buys and holds these; CI signs with secrets.
+- Update feed: GitHub Releases as the electron-updater feed (and the Linux tarball with the Ed25519 check, §14.5);
+  test install, update and rollback end to end.
+- Installers for each OS, install docs, and a first-run check on a clean machine for each.
+
+### 20.25 Items with no local meaning
+
+Compaction limits and the 4-minute idle rule for Factory's vendor-hosted models (§4.2, §10) apply only to
+Factory's own hosted models; Rigwell has none, so these are recorded as not applicable, not skipped.

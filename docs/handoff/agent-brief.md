@@ -24,10 +24,11 @@ Your worktree may start from `main` (spec only). FIRST run `git merge --ff-only 
 - docs/decisions.md: numbered decision log.
 
 ## Rules (all agents)
-1. Build what your phase and the spec sections it points to require. Do not build items on the spec's §1
-   "needs Scott's approval" list or the "ask Scott" optional extras. List anything else you think is needed under
-   "Proposed additions" in your report instead of building it.
-2. No paid model usage, no real API keys, no network to real providers. Test with the local fakes (extend them in
+1. Build what your task and the spec sections it points to require. As of Nov 14 2026 Scott has approved
+   everything in the spec, including §15.10 and §20; `docs/handoff/PARITY.md` is the order. List anything you think
+   is needed beyond the spec under "Proposed additions" in your report instead of building it.
+2. Tests and CI: no paid model usage, no real API keys, no network to real providers. The only exception is the
+   §20.1 agent-quality runs, with keys the owner supplies through the credential store, run by hand, never in CI. Test with the local fakes (extend them in
    test/fakes/ if needed).
 3. Where the spec is [UNKNOWN] or silent, use its [DESIGN] default; else pick the simplest option and append it to
    docs/decisions.md under a heading "## Phase N: <name>" (numbered entries continuing from the last number).

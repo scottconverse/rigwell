@@ -21,8 +21,8 @@ Anthropic and an OpenAI Responses adapter, six direct tools, permissions, and se
 - Every fact carries a source tag, defined in §0 of the spec. **[DESIGN]** marks a choice for Rigwell, not
   something observed.
 - Paths such as `~/.factory/...` describe the reference product. Rigwell uses its own names (§11).
-- Scope (§1): everything that runs on the user's machine. Hosted parts are later phases. Items that need
-  an owner decision are listed in §1.
+- Scope (§1, §20): everything runs on the user's own machines. Hosted features in the reference product are built
+  as local versions (§20). Build order: `docs/handoff/PARITY.md`.
 
 ## Phase 1: running it
 

@@ -48,9 +48,12 @@ Tests per §15.10.8, fake model servers only. Decision 319 records the approval.
 (1) shared folder, roster and spawn; (2) messaging and delivery priorities; (3) listeners and `WaitForEvents`;
 (4) interrupt, rename, archive, budget, concurrency cap, restart recovery; (5) protocol and desktop page; (6) TUI.
 
-## Full parity list
-`docs/handoff/PARITY.md` lists everything left before Rigwell matches Factory's CLI and app, in order, with the
-items that need an owner decision marked.
+## Full parity: everything is approved
+The owner approved EVERY remaining item (Nov 14 2026): all hosted features as local versions, the PR review view,
+plugins and marketplace, GitHub/Slack/CI/chained triggers (previously declined, now approved), Slack and Teams
+delegation, remote machines, sync, phone access, wiki, academy, analytics, evaluations, policy, spend limits,
+profiles and release work. Spec §20 has the design; `docs/handoff/PARITY.md` is the build order (43 items).
+Build all of it; leave nothing out. Decision 320 records the approval.
 
 ## Also note
 The `desktop` CI job still failed on a0f7175 even with the trust-dialog fallback (decision 318): read that run's
@@ -75,8 +78,9 @@ The `desktop` CI job still failed on a0f7175 even with the trust-dialog fallback
 - (Resolved) `create_pr` and PR status (§18.6): the owner APPROVED building it. See "Next task" below.
 - License: decided by the owner: AGPL-3.0-only (`LICENSE`, package.json `license`, README, NOTICE).
 - (Resolved) Workstreams (§15.10): the owner APPROVED a local build. See "Next task 2".
-- Declined by the owner: GitHub-event and Slack-message triggers. Spec later phases (not built): hosted parts, MCP OAuth.
-- Open owner decisions are marked in `docs/handoff/PARITY.md` (groups 3, 4 and 6).
+- (Resolved) Everything else: APPROVED (spec §20, PARITY.md). Nothing is declined any more.
+- The owner must supply, when you reach them: Rigwell's own OAuth client IDs (§20.2), API keys for real-model
+  runs (§20.1), signing certificates (§20.24), a real Google Stax export file (§20.19). Ask; do not invent them.
 
 ## Not verified on real hardware
 macOS and Windows beyond CI, real OS keychains, real clipboards and terminals, signed and notarized installers, and the

@@ -1,7 +1,13 @@
 # Road to full parity with Factory's CLI and desktop app
 
-Written 2026-11-14. Work through the groups in order. Group 1 blocks the rest; group 3 is where most of the real
-parity gap is. Items marked **owner decision** need Scott's yes or no before anyone builds them.
+Updated 2026-11-14. **Everything on this list is approved by the owner. Build all of it; leave nothing out.**
+Hosted features are built as local versions (spec §20). Work in this order: group 1 blocks the rest. Within a
+group, finish one item (tests green, decision logged, HANDOFF updated) before the next.
+
+Two items need the owner to act, not only approve. Build the code anyway and ask the owner for the inputs:
+- §20.2: the owner registers Rigwell's own OAuth clients with each provider and gives you the client IDs.
+- §20.24: the owner buys the Apple Developer ID and Windows code-signing certificate and adds them as CI secrets.
+Real-model runs (§20.1) need API keys from the owner, through the credential store, never committed.
 
 ## 1. Finish what is built (blocking)
 
@@ -10,55 +16,71 @@ parity gap is. Items marked **owner decision** need Scott's yes or no before any
 3. Occasional flake in `test/desktop/electron-final.test.ts` (HANDOFF open issue 3).
 4. All CI jobs green on one commit: Linux `test` and `desktop`, macOS, Windows.
 
-## 2. Approved, not built
+## 2. Core features
 
-5. `create_pr` and PR status (spec §18.6, HANDOFF "Next task").
-6. **Workstreams, local** (spec §15.10). This is the feature the owner wanted Rigwell for. Build it right after
-   `create_pr`, or before it if the CI fixes are done and `create_pr` is blocked.
+5. `create_pr` and PR status, with `gh` and `glab` (spec §18.6, HANDOFF "Next task").
+6. **Workstreams, local** (spec §15.10, HANDOFF "Next task 2"). The feature the owner wanted Rigwell for.
+7. Code-provider connections page for GitHub and GitLab (§20.21).
+8. PR and semantic-diff review view, `/review` (§20.10).
 
-## 3. Agent quality (not measured yet; the biggest gap)
+## 3. Agent quality (the biggest gap; nothing measured yet)
 
-Every test so far uses scripted fake model servers, so the machinery is proven but the agent is not.
+9. Real-model smoke run on every adapter, including a free local model (§20.1).
+10. A task suite of 40+ real coding tasks for `rigwell eval` (§20.1).
+11. Head-to-head with Factory's CLI on the same tasks and models, three trials each (§20.1).
+12. Tune prompts, tool descriptions, result shapes and guards until Rigwell matches on every model family (§20.1).
+13. Settle every "not checked" and [UNKNOWN] item in the spec with a real run or a logged decision (§20.1).
+14. Long-session checks: compaction, caching, cost, routing, guards, watchdog (§20.1).
+15. Subscription sign-in with Rigwell's own OAuth clients (§20.2).
 
-7. Smoke run against real models on every adapter: Anthropic, OpenAI (HTTP and WebSocket), Gemini, Bedrock, and a
-   Chat Completions endpoint (a local model such as Ollama costs nothing). Needs keys from the owner.
-8. A real coding-task suite for `rigwell eval` (bug fixes, features, refactors, terminal tasks; a public
-   benchmark-style set is fine).
-9. Run the same suite with Factory's CLI and with Rigwell on the same models and compare pass rate, cost and time.
-10. Tune Rigwell's own system prompts, tool descriptions and per-model settings until the scores match. Write new
-    text; never copy Factory's.
-11. Check on long real sessions: compaction, prompt caching, cost reporting, routing, guards and the loop watchdog.
-    The spec has about 17 "not checked" and 2 [UNKNOWN] items; settle each with a real run or log a decision.
-12. Subscription sign-in: the OAuth code is generic and ships no client IDs (decision 267). For one-click
-    subscription sign-in, register Rigwell's own OAuth app with each provider that allows third-party apps, then
-    ship those IDs. **Owner decision:** which providers, under whose account.
+## 4. Connectors and tools
 
-## 4. Factory features left out of the spec that a solo user would notice
+16. MCP OAuth (§20.3).
+17. Connector catalog (§20.4).
+18. Browser automation tools for the agent and the `agent-browser` skill (§20.5).
 
-Each needs an **owner decision**. Recommendation in brackets.
+## 5. Your other machines
 
-13. MCP OAuth: sign in to hosted MCP servers (many connectors need it; today a 401 just fails). [Yes]
-14. A built-in connector catalog: a curated list of MCP servers to add with one click. [Yes, small]
-15. Browser automation skill (`agent-browser` was left out because Rigwell has no bundled browser CLI). The desktop
-    browser pane exists; this would give the agent a headless browser too. [Yes]
-16. Remote machines: run sessions or Workstream members on another of your own computers over SSH, in place of
-    Factory's cloud computers. [Later, after Workstreams]
-17. Session sync and share links between your own machines. [Later]
-18. Remote access: drive the desktop app from your phone. [Later]
-19. PR and semantic-diff review view in the desktop app. [Maybe, after `create_pr`]
-20. GitHub-event and Slack-message triggers for automations. [Declined by the owner; listed only for completeness]
-21. Marketplace for sharing skills and agents. [No]
+19. Remote machines over SSH, including sessions, automations, mission workers and Workstream members on them,
+    and the remote desktop viewer (§20.6).
+20. Fleet management page and `rigwell machine` commands (§20.7).
+21. Session sync between your machines, share and export, import (§20.8).
+22. Remote access from a phone with pairing (§20.9).
 
-## 5. Team and org features (skip for a solo build)
+## 6. Automations and delegation
 
-Org billing and members, fleet management, org model and mission policies, plan usage limits and the hosted model
-pool, Teams delegation, hosted inbox and email alerts, wiki, academy, analytics, hosted evaluations, remote feature
-flags. None of these matter to one person working locally.
+23. GitHub, Slack, CI and chained triggers (§20.11). Previously declined; now approved.
+24. Slack and Teams delegation (§20.12).
+25. Inbox page and email alerts (§20.13).
+26. Local code review, triage and QA services and their three skills (§20.16).
 
-## 6. Release readiness
+## 7. Knowledge, insight and extensibility
 
-22. Test on real macOS and Windows machines, not only CI: OS keychains, clipboards, terminals, notifications, tray.
-23. Code signing and notarization: an Apple Developer account for macOS and a code-signing certificate for Windows.
-    **Owner decision** (they cost money).
-24. Host the update feed and test the electron-updater install path end to end.
-25. Install docs and a first-run check on a clean machine for each OS.
+27. Plugins and marketplace indexes (§20.14).
+28. Project wiki and the four wiki skills (§20.15).
+29. Academy tutorials (§20.17).
+30. Analytics page (§20.18).
+31. Evaluations page: history, side-by-side, judge graders, CSV/JSONL and Google Stax import (§20.19).
+
+## 8. Organization-style controls, locally (§20.20)
+
+32. Policy file (org model and mission policies).
+33. Spend limits (plan usage limits and overage checks).
+34. Fallback model list (hosted fallback pool).
+35. Profiles (the local stand-in for org members and the "role" field).
+36. Feature flags and a Labs page.
+37. Mission readiness report.
+38. Local crash reports and Report a bug (§20.22).
+39. Workstream notification categories (§20.23).
+
+## 9. Release readiness (§20.24)
+
+40. Real macOS and Windows hardware tests: keychains, clipboards, terminals, notifications, tray, deep links.
+41. Code signing and notarization in CI (owner supplies certificates).
+42. Update feed on GitHub Releases; test install, update and rollback.
+43. Installers, install docs, first-run check on a clean machine for each OS.
+
+## Not applicable
+
+Billing has no local meaning; Analytics and spend limits cover it (§20.20). Compaction and idle-stream rules for
+Factory's own vendor-hosted models do not apply because Rigwell has no hosted models (§20.25).
