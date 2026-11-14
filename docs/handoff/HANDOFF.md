@@ -37,6 +37,21 @@ Spec §18.6 (and §18.5 for the auto-delete rule). Scope:
 - UI: a "Create PR" button and PR status chip in the desktop worktree panel (`desktop/`), and `/pr` in the TUI.
 - Tests with a local bare repo as origin and a fake `gh` script / fake API server; never call real GitHub.
 
+## Next task 2: build local Workstreams (owner approved; the main reason for Rigwell)
+Spec §15.10 has the full design: a lead session spawns long-lived member agents (own worktrees), messages them,
+waits on listeners, interrupts and archives them, through `ProposeWorkstream`, `SpawnAgent`, `ListAgents`,
+`SendMessage`, `InterruptAgent`, `RenameAgent`, `ArchiveAgent`, `CreateListener` and `WaitForEvents`. Shared state
+lives in `$RIGWELL_HOME/workstreams/<id>/`. Member permission prompts go to the user, never the lead. Desktop
+Workstreams page, TUI `/workstreams` and `/ws`, protocol methods and notifications as in §15.10.5 and 15.10.6.
+Reuse the daemon's multi-session support, `src/worktree/`, `src/missions/` (folder, watchdog) and `src/subagents/`.
+Tests per §15.10.8, fake model servers only. Decision 319 records the approval. Build it in slices, each green:
+(1) shared folder, roster and spawn; (2) messaging and delivery priorities; (3) listeners and `WaitForEvents`;
+(4) interrupt, rename, archive, budget, concurrency cap, restart recovery; (5) protocol and desktop page; (6) TUI.
+
+## Full parity list
+`docs/handoff/PARITY.md` lists everything left before Rigwell matches Factory's CLI and app, in order, with the
+items that need an owner decision marked.
+
 ## Also note
 The `desktop` CI job still failed on a0f7175 even with the trust-dialog fallback (decision 318): read that run's
 `electron-handlers` diagnostic block first.
@@ -59,7 +74,9 @@ The `desktop` CI job still failed on a0f7175 even with the trust-dialog fallback
 ## Waiting on the owner (do not decide for them)
 - (Resolved) `create_pr` and PR status (§18.6): the owner APPROVED building it. See "Next task" below.
 - License: decided by the owner: AGPL-3.0-only (`LICENSE`, package.json `license`, README, NOTICE).
-- Declined by the owner: GitHub-event and Slack-message triggers. Spec later phases (not built): hosted parts, §15.10 Workstreams, MCP OAuth.
+- (Resolved) Workstreams (§15.10): the owner APPROVED a local build. See "Next task 2".
+- Declined by the owner: GitHub-event and Slack-message triggers. Spec later phases (not built): hosted parts, MCP OAuth.
+- Open owner decisions are marked in `docs/handoff/PARITY.md` (groups 3, 4 and 6).
 
 ## Not verified on real hardware
 macOS and Windows beyond CI, real OS keychains, real clipboards and terminals, signed and notarized installers, and the

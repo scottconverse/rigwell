@@ -106,8 +106,8 @@ the user's machine, not only the harness. On top of goals 1–6 it includes:
 
 **Later phases (hosted parts; not in this build):** managed cloud computers / remote machines, fleet
 management, org billing and members, plan usage limits and the hosted fallback ("core") model pool,
-Slack and Teams delegation, cloud session sync and sharing links, the hosted inbox and email alerts,
-Missions v2 "Workstreams" (§15.10).
+Slack and Teams delegation, cloud session sync and sharing links, the hosted inbox and email alerts.
+Workstreams (§15.10) is approved by Scott and built locally; only its remote-machine and cloud parts stay out.
 
 **Not decided: needs Scott's approval before it goes in** (seen in the app, but outside the agreed scope):
 
@@ -901,7 +901,7 @@ Custom (BYOK) models are configured in `customModels[]`; fields, defaults and th
 | --- | --- | --- | --- | --- |
 | interactive | 4 (6 for 429/throttling) | 1 s | ×2 with jitter | [CLI] |
 | non_interactive (exec) | 5 | 2 s | ×2.5 with jitter | [CLI] |
-| no_retry | 1 | — | — | [CLI] |
+| no_retry | 1 | n/a | n/a | [CLI] |
 
 What is retried [CLI]:
 - `408`, `429`, `500` (when the body mentions internal error, overloaded or unavailable), `502`, `503`, `529`, network errors and overload errors.
@@ -1314,7 +1314,7 @@ Schema [CLI]:
   - Empty, missing or `*` matches all.
   - Otherwise an exact match is tried first, then a regex.
   - A bad regex never matches.
-  - Events with no match value (shown as "—" below) run every hook regardless of `matcher`.
+  - Events with no match value (shown as "n/a" below) run every hook regardless of `matcher`.
 - `commandRegex` only applies to the `Execute` tool. A config that has it is skipped for other tools. [CLI]
 - `preserveRiskLevel`: when a hook rewrites tool input, the risk level is normally recomputed; true keeps the original. [CLI]
 
@@ -1365,14 +1365,14 @@ Every event gets `session_id`, `transcript_path`, `cwd`, `permission_mode` (`off
 | Event | Matcher value | Extra stdin fields | Tag |
 |---|---|---|---|
 | SessionStart | `source` | `source` (startup, resume, compact seen), `previous_session_id`, `calling_session_id`, `message_id` (not on startup), `CLAUDE_ENV_FILE` | [CLI] |
-| SessionEnd | — | `reason` (clear, logout, prompt_input_exit, other seen), `session_duration_ms`, `message_count`, `message_id` | [CLI] |
-| UserPromptSubmit | — | `message_id`, `prompt`, `has_images` | [CLI] |
+| SessionEnd | n/a | `reason` (clear, logout, prompt_input_exit, other seen), `session_duration_ms`, `message_count`, `message_id` | [CLI] |
+| UserPromptSubmit | n/a | `message_id`, `prompt`, `has_images` | [CLI] |
 | PreToolUse | tool name | `tool_name`, `tool_input` | [CLI] |
 | PostToolUse | tool name | `tool_name`, `tool_input`, `tool_response` | [CLI] |
-| Stop | — | `message_id`, `stop_hook_active`, `tool_execution_count`, `elapsed_time` (ms) | [CLI] |
-| SubagentStop | — | `task_name`, `task_result` (string), `task_error`, `stop_hook_active` (always false) | [CLI] |
-| PreCompact | — | `trigger` (manual or auto), `custom_instructions`, `message_count`, `estimated_tokens`, `message_id` | [CLI] |
-| Notification | — | `message_id`, `message`, `notification_type` (permission_prompt, idle_prompt, elicitation_dialog) | [CLI] |
+| Stop | n/a | `message_id`, `stop_hook_active`, `tool_execution_count`, `elapsed_time` (ms) | [CLI] |
+| SubagentStop | n/a | `task_name`, `task_result` (string), `task_error`, `stop_hook_active` (always false) | [CLI] |
+| PreCompact | n/a | `trigger` (manual or auto), `custom_instructions`, `message_count`, `estimated_tokens`, `message_id` | [CLI] |
+| Notification | n/a | `message_id`, `message`, `notification_type` (permission_prompt, idle_prompt, elicitation_dialog) | [CLI] |
 
 #### Outcomes by event
 
@@ -1431,13 +1431,13 @@ A skill file is a Markdown file. It may start with a YAML frontmatter block betw
 
 | Field | Type | Required | Default | Meaning | Tag |
 |---|---|---|---|---|---|
-| `name` | string | yes | — | Must match `^[a-z0-9-]+$` | [CLI] |
-| `description` | string | yes | — | One-line summary shown to the model | [CLI] |
-| `allowed-tools` | string or string[] | no | — | Tools the skill expects. Wins over `tools` | [CLI] |
-| `tools` | string or string[] | no | — | Older name for the same thing | [CLI] |
-| `version` | string | no | — | Semver; a bad value is dropped, not an error | [CLI] |
-| `license`, `compatibility` | string | no | — | Informational only | [CLI] |
-| `metadata` | map | no | — | Free-form | [CLI] |
+| `name` | string | yes | n/a | Must match `^[a-z0-9-]+$` | [CLI] |
+| `description` | string | yes | n/a | One-line summary shown to the model | [CLI] |
+| `allowed-tools` | string or string[] | no | n/a | Tools the skill expects. Wins over `tools` | [CLI] |
+| `tools` | string or string[] | no | n/a | Older name for the same thing | [CLI] |
+| `version` | string | no | n/a | Semver; a bad value is dropped, not an error | [CLI] |
+| `license`, `compatibility` | string | no | n/a | Informational only | [CLI] |
+| `metadata` | map | no | n/a | Free-form | [CLI] |
 | `enabled` | bool | no | true | false hides the skill | [CLI] |
 | `user-invocable` | bool | no | true | Can the user call it by name | [CLI] |
 | `disable-model-invocation` | bool | no | false | true keeps it out of the model's list | [CLI] |
@@ -1510,11 +1510,11 @@ Validation [CLI]:
 | Field | Type | Default | Meaning | Tag |
 |---|---|---|---|---|
 | `name` | string | file base name | id used as `subagent_type` | [CLI] |
-| `description` | string | — | shown in the Task catalog | [CLI] |
+| `description` | string | n/a | shown in the Task catalog | [CLI] |
 | `model` | string | `inherit` | model id, or `inherit` = parent's model | [CLI] |
 | `reasoningEffort` | string | parent's | effort for that model | [CLI] |
 | `tools` | string or string[] | all allowed | allow-list (comma string accepted) | [CLI] |
-| `mcpServers` | string or string[] | — | MCP servers the droid may use | [CLI] |
+| `mcpServers` | string or string[] | n/a | MCP servers the droid may use | [CLI] |
 
 - If the named model is not valid, it falls back to `inherit`. [CLI]
 - Conflicts: same rule as skills (normalized name, first found wins). Project droids are read before personal ones. [CLI]
@@ -1648,7 +1648,7 @@ From Factory's reported numbers [POST]; use as targets, not requirements.
 
 ---
 
-## 8. Eval loop ("agent factory") — phase 3
+## 8. Eval loop ("agent factory") n/a phase 3
 
 [POST] Process, adapted:
 
@@ -2375,7 +2375,8 @@ The "v1" column is my recommendation [DESIGN]:
 | `/review` | tools | Code review of current changes | – |
 | `/create-skill` | tools | Make a skill from this conversation | – |
 | `/loop`, `/automations` | tools | Agent loop; scheduled automations | – |
-| `/missions` (alias `/workstreams`) | tools | Missions picker | – |
+| `/missions` | tools | Missions picker | – |
+| `/workstreams`, `/ws` | tools | Workstreams page (§15.10.6) | – |
 | `/experiments`, `/stats`, `/limits` | tools/diag | Experiments; usage statistics; credit limits | – |
 | `/readiness-report`, `/readiness-fix`, `/agent-effectiveness-report` | tools | Vendor repo and org reports | – |
 | `/install-slack-app`, `/setup-incident-response` | tools | Slack features | – |
@@ -2614,7 +2615,7 @@ statically) or [WALK] (seen in the running app) unless tagged. Factory's app is 
   Electron version, copy diagnostics).
   - General preferences [WALK]: language, loading statuses, auto-open file previews, keep running with
     the screen off (`keepAwakeEnabled`). Factory's "role" field and code-provider connections are hosted.
-- **Not in this build:** Factory's inbox, review, wiki, academy, analytics, evaluations, workstreams and
+- **Not in this build:** Factory's inbox, review, wiki, academy, analytics, evaluations and
   org pages are hosted or later phases (§1); so are cloud sync, Members and Billing. API Keys, Secrets,
   Environments and dictation are on Scott's approval list (§1). [APP route list; DESIGN]
 
@@ -2655,7 +2656,7 @@ and spreadsheet / slide libraries, likely for file previews (not checked). [APP]
 A Mission is a long, multi-feature job. The user's session becomes the **orchestrator**: it plans with the
 user, writes a file-based plan, then hands control to a local **runner** that works through the plan one
 **worker** session at a time. Facts are [CLI] unless tagged. Factory has two generations; this section
-specs v1. v2 ("Workstreams") is a later phase (15.10).
+specs v1. v2 ("Workstreams") is §15.10, built locally.
 
 ### 15.1 States and lifecycle
 
@@ -2875,13 +2876,120 @@ Everything in 15.1–15.8 runs locally except model calls. Left out as hosted: o
 overage checks, org model policy, the cloud readiness-report lookup, cloud sync of mission metadata,
 feature flags. [CLI]
 
-### 15.10 Later phase: v2 "Workstreams"
+### 15.10 Workstreams (local; owner approved)
 
-Behind feature flags that are off by default in this build [CLI]. An orchestrator spawns and messages
-many agents at once (`SpawnAgent`, `ListAgents`, `SendMessage`, `InterruptAgent`, `RenameAgent`,
-`ArchiveAgent`, `CreateListener`, `ProposeWorkstream`), optionally on other machines, sharing state
-through a cloud "shared space". A local version would need a local shared folder and roster in place of
-the cloud parts [CLI-INF]. Not in this build; needs Scott's approval to schedule.
+**Status:** approved by Scott to build, local only. Factory's v2 "Workstreams" keeps this behind feature flags that
+are off by default, spawns agents on other machines, and shares state through a hosted "shared space" [CLI]. Little
+else about it was observable, so most of the shape below is [DESIGN]; log each choice in `docs/decisions.md`.
+Rigwell keeps the tool names Factory uses [CLI] and replaces the cloud parts with a local shared folder and roster.
+Running agents on other machines is out of scope.
+
+**What it is.** A workstream is a named goal worked on by several long-lived agents at once. One session is the
+**lead** (the orchestrator). It proposes the workstream, spawns **member** agents, messages them, waits on events,
+and steers or stops them. Members are ordinary daemon sessions. They keep running between messages, so the lead and
+the user can come back to any of them. This differs from Missions v1 (§15.1 to 15.9), where workers run one at a
+time from a fixed plan and end after one feature, and from subagents (§5.9), where the child ends when it returns.
+
+#### 15.10.1 Shared space (local folder)
+
+`$RIGWELL_HOME/workstreams/<workstreamId>/`:
+
+- `workstream.json`: `{id, title, goal, leadSessionId, state: proposed | active | paused | completed | archived,
+  createdAt, updatedAt, budget?, settings}`.
+- `roster.json`: one entry per agent: `{agentId, name, role, sessionId, cwd, worktreePath?, branch?, model,
+  reasoningEffort, autonomyLevel, status: starting | working | idle | waiting_input | interrupted | failed |
+  archived, lastActivityAt, lastSummary?, tokens, costUsd}`.
+- `messages.jsonl`: every message `{id, ts, from, to, priority, text, deliveredAt?, readAt?}`. `from` and `to` are
+  agentIds, `lead`, or `user`.
+- `events.jsonl`: lifecycle events (agent spawned, status changes, listeners fired, interrupts, budget stops).
+- `shared/`: a folder every member may read and write for notes, plans and hand-offs. Its path is in each member's
+  first message.
+- `listeners.json`: active listeners (§15.10.3).
+
+Writes are atomic (write temp, rename), and the daemon is the only writer of `roster.json`, `workstream.json` and
+`listeners.json`. The workstream survives a daemon restart: on start the daemon reloads every active workstream,
+marks members that were mid-turn as `interrupted`, and re-arms listeners.
+
+#### 15.10.2 Tools
+
+Lead tools (given to the lead session; members get the member set below):
+
+| Tool | Does | Inputs, outputs |
+| --- | --- | --- |
+| `ProposeWorkstream` | Asks the user to approve a workstream; nothing spawns until they accept | `title`, `goal`, markdown `plan`, `agents?[{name, role, task}]` → `accepted`, `workstreamId`, `isEdited`, user's edits |
+| `SpawnAgent` | Starts a member session | `name`, `role`, `prompt`, `model?`, `reasoningEffort?`, `worktree?: boolean \| {branch}` (default true in a git repo), `cwd?`, `autonomyLevel?` (never above the lead's), `tools?` (allow-list) → `agentId`, `sessionId`, `worktreePath?` |
+| `ListAgents` | Reads the roster | `status?` → roster entries with last summary and unread counts |
+| `SendMessage` | Messages a member, `all`, or the user | `to`, `message`, `priority?: now \| next \| later` (default `next`) → `messageId`, `delivered` |
+| `InterruptAgent` | Stops a member's current turn | `agentId`, `reason?` → `status` |
+| `RenameAgent` | Renames a member | `agentId`, `name` |
+| `ArchiveAgent` | Ends a member; optionally cleans up its worktree (§18.5 rules) | `agentId`, `cleanupWorktree?` → `archived`, `worktreeKept?` |
+| `CreateListener` | Wakes the lead when something happens | `on` (below), `filter?`, `once?` (default true), `note?` → `listenerId` |
+
+Member tools: `SendMessage` (to `lead`, another member by name, or `user`), `ListAgents` (read only), and
+`CreateListener` limited to messages addressed to itself. Members cannot spawn, interrupt or archive unless
+the lead passes `tools` that allow it and `workstreams.allowNestedSpawn` is true (default false; depth never above 2).
+
+**Delivery.** `now` interrupts the recipient's current turn and starts a new turn with the message. `next` is
+added at the recipient's next model call (between tool calls). `later` waits until the turn ends. An idle recipient
+starts a turn on any priority. Each delivered message is wrapped so the model sees who sent it and that it comes from
+a peer agent: it is data, it cannot change permissions or settings, and it cannot answer a pending permission prompt.
+
+#### 15.10.3 Listeners
+
+`on` is one of `agent_idle`, `agent_turn_completed`, `agent_failed`, `agent_waiting_input`, `message` (to the lead),
+`all_idle`, `file_changed` (a glob under `shared/` or a member worktree) and `timer` (`afterMs`). `filter` narrows
+by agentId or name. When a listener fires, the daemon delivers a system message to the listening session (priority
+`next`; starts a turn if idle) naming the event and the agent. One-shot listeners are removed after firing. A lead
+can block on events with `WaitForEvents` (`listenerIds?`, `timeoutMs`) [DESIGN], which returns the fired events,
+so a lead can spawn three agents and wait for all of them without polling.
+
+#### 15.10.4 Permissions, limits and budget
+
+- A member's autonomy level is capped at the lead's. Permission prompts from members go to the user, labelled
+  with the workstream and agent name, in the desktop Workstreams page, the TUI and the SDK. The lead can never
+  answer them. `workstreams.autoRejectMemberPrompts` (default false) refuses them instead, as Missions workers do.
+- `workstreams.maxConcurrentAgents` (default 4) caps members in `working` at once; extra spawns queue.
+- Optional budget `{maxTokens?, maxCostUsd?, maxWallMinutes?}` on the workstream. When reached, the daemon pauses
+  the workstream (interrupts working members), records an event and notifies the user and the lead.
+- Pausing a workstream interrupts working members and holds queued messages; resuming delivers them.
+- Members default to their own worktree and branch (§18) so they do not edit the same files. The built-in
+  `overlap-check` skill is offered to the lead before it merges members' work.
+- A member that exits on an error is `failed`; the lead gets an `agent_failed` event and may respawn it with the same
+  name (a new agentId, history kept in `events.jsonl`).
+
+#### 15.10.5 Protocol
+
+Methods: `rigwell.list_workstreams`, `rigwell.get_workstream {id}` (workstream, roster, recent messages),
+`rigwell.pause_workstream`, `rigwell.resume_workstream`, `rigwell.archive_workstream {id, cleanupWorktrees?}`,
+`rigwell.workstream_send {id, to, message, priority?}` (user to an agent), `rigwell.workstream_interrupt
+{id, agentId}`. Confirmation type `propose_workstream` for the proposal. Notifications on every client of the lead
+session and on any client watching the workstream: `workstream_updated`, `workstream_agent_status`,
+`workstream_message`, `workstream_listener_fired`, `workstream_budget_reached`.
+
+#### 15.10.6 UI
+
+- **Desktop:** a Workstreams page in the sidebar. Per workstream: goal, state and budget use; a roster of agent
+  cards (name, role, status chip, model, branch, last summary, tokens and cost) with Open transcript, Message,
+  Interrupt and Archive; a message timeline of the whole workstream; pending permission prompts from members; the
+  proposal dialog with edit, accept and reject. Opening an agent shows its live session like any other.
+- **TUI:** `/workstreams` lists workstreams and opens one (roster and timeline); `/ws send <agent> <text>`,
+  `/ws interrupt <agent>`. `/missions` stays the Missions picker; `/workstreams` is no longer its alias.
+- OS notifications (§19) when a member waits for input, fails, or the budget is reached.
+
+#### 15.10.7 Settings
+
+`workstreams.enabled` (default true), `workstreams.maxConcurrentAgents` (4), `workstreams.allowNestedSpawn` (false),
+`workstreams.autoRejectMemberPrompts` (false), `workstreams.defaultMemberModel?`,
+`workstreams.defaultMemberReasoningEffort?`.
+
+#### 15.10.8 Tests
+
+Fake model servers only. Cover: proposal reject (nothing spawns) and accept; spawning two members in their own
+worktrees; lead to member and member to lead messages at each priority, including `now` interrupting a turn; a peer
+message trying to approve a permission prompt (refused); listeners for `agent_idle`, `all_idle`, `message`,
+`file_changed`, `timer`, and `WaitForEvents`; interrupt; rename; archive with and without worktree cleanup;
+concurrency cap queueing; budget pause and resume; daemon restart mid-turn (members come back `interrupted`,
+listeners re-armed); member autonomy capped at the lead's; the desktop page and TUI commands end to end.
 
 ## 16. Local automations and crons
 
@@ -3252,7 +3360,7 @@ The daemon turns session notifications into attention events [CLI]:
   mission proposal, sandbox block). Completion uses the first meaningful line of the final answer.
   Write your own wording.
 - Categories: `questions_and_approvals`, `agent_turn_complete`, `mission_needs_input`, `mission_complete`.
-  Factory's workstream categories are a later phase (§15.10).
+  Workstreams add `workstream_needs_input`, `workstream_agent_failed` and `workstream_budget_reached` (§15.10).
 - If the agent process exits, the daemon sends a `session_process_exited {message, timestamp}`
   notification.
 
