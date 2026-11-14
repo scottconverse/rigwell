@@ -592,7 +592,10 @@ async function boot() {
     void Promise.all([
       supervisor.stop().finally(() => log("[shutdown] daemon stopped")),
       proxy?.stop().finally(() => log("[shutdown] browser proxy stopped")),
-    ]).finally(() => { log("[shutdown] exiting"); app.exit(0); });
+    ]).finally(() => {
+      // Leave the cancelled native quit callback before starting the final exit.
+      setImmediate(() => { log("[shutdown] exiting"); app.exit(0); });
+    });
   });
 }
 

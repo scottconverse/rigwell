@@ -1,6 +1,7 @@
 // Helpers for the desktop-side service tests: an in-process daemon and raw protocol clients (no Electron).
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startDaemon } from "../../src/daemon/daemon.ts";
@@ -66,7 +67,14 @@ export async function closeElectron(app: any): Promise<void> {
   let tail = "";
   const collect = (chunk: Buffer) => { tail = (tail + chunk.toString()).slice(-4000); };
   proc.stderr?.on("data", collect);
-  const diagnostic = setTimeout(() => console.log(`[electron shutdown pending pid=${proc.pid}]\n${tail}`), 10_000);
+  const diagnostic = setTimeout(() => {
+    console.log(`[electron shutdown pending pid=${proc.pid}]\n${tail}`);
+    if (process.platform === "darwin") {
+      // Read the owned app's native stack if JS cleanup finished but native exit did not.
+      const sample = spawnSync("/usr/bin/sample", [String(proc.pid), "1", "1"], { encoding: "utf8", timeout: 5000 });
+      console.log(`[electron native shutdown sample]\n${String(sample.stdout).slice(0, 16000)}\n${sample.stderr}`);
+    }
+  }, 10_000);
   try { await app.close(); }
   finally { clearTimeout(diagnostic); proc.stderr?.off("data", collect); }
 }
