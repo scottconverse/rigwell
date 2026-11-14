@@ -1677,6 +1677,8 @@ Phases 8–11 start after phase 5 (they need the clients, MCP and skills). 9 and
 
 ## 10. Unknowns after the CLI analysis
 
+Rigwell implementation choices for the unresolved observations below and the later local-product pass are recorded in [Local clarifications](../docs/spec-clarifications.md), decision 364. Historical evidence labels remain unchanged; real quality and release acceptance remain separately required.
+
 **Resolved [CLI]:**
 
 | Question | Answer | Section |
