@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { tmpEnv, writeJson } from "../storage/helpers.ts";
@@ -56,7 +56,7 @@ test("persistent remote Workstream members exchange acknowledged messages and sh
     await service.listeners.whenReady(store, listener.listenerId);
     writeFileSync(join(spawned.worktreePath!, "watch.txt"), "Remote file event");
     const event = await service.listeners.wait(store, "lead", { listenerIds: [listener.listenerId], timeoutMs: 2000 });
-    expect(event.events[0]?.trigger).toMatchObject({ path: join(spawned.worktreePath!, "watch.txt") });
+    expect(event.events[0]?.trigger).toMatchObject({ path: realpathSync(join(spawned.worktreePath!, "watch.txt")) });
     view = new RpcClient(inProcessTransport({ sidePane: false, sharedRemoteSession: service.sharedRemoteSession }));
     const loaded = await view.request("load_session", { sessionId: spawned.sessionId });
     expect(loaded.machine).toBe("fixture"); expect(JSON.stringify(loaded.session.messages)).toContain("Initial remote task complete");
@@ -83,7 +83,7 @@ test("persistent remote Workstream members exchange acknowledged messages and sh
     expect(remote.requests.length).toBe(5);
     writeFileSync(join(spawned.worktreePath!, "after-restart.txt"), "Recovered remote listener");
     const recovered = await service.listeners.wait(store, "lead", { listenerIds: [recoveryListener.listenerId], timeoutMs: 2000 });
-    expect(recovered.events[0]?.trigger).toMatchObject({ path: join(spawned.worktreePath!, "after-restart.txt") });
+    expect(recovered.events[0]?.trigger).toMatchObject({ path: realpathSync(join(spawned.worktreePath!, "after-restart.txt")) });
     service.send(lead.connection.session!.id, { to: spawned.agentId, message: "Report after recovery", priority: "next" });
     await until(() => store.agent(spawned.agentId)?.lastSummary === "Recovered reply complete");
     expect(store.messages().some((m) => m.from === spawned.agentId && m.text === "Recovered progress")).toBe(true);
