@@ -69,10 +69,16 @@ export class DelegationService {
   }
   private ingest(event: Event) {
     if (this.stopped || !this.allowed(event.source) || !Number.isFinite(event.at) || Math.abs(Date.now() - event.at) > 24 * 60 * 60_000) return;
-    const pending = [...this.prompts].find((p) => sourceKey(p.runtime.binding.source) === sourceKey(event.source) && p.method === "ask_user");
-    if (pending) {
+    const pending = [...this.prompts].filter((p) => sourceKey(p.runtime.binding.source) === sourceKey(event.source) && p.method === "ask_user");
+    if (pending.length && event.text.trim() !== "/stop") {
       // Persist the event ID first so a provider retry cannot answer a later question.
-      if (this.store.enqueue(event)) { this.store.state(event.id, "answered"); this.questionAnswer(pending, event.text); } return;
+      if (this.store.enqueue(event)) {
+        const addressed = /^answer\s+(\S+):\s*([\s\S]+)$/i.exec(event.text);
+        const prompt = addressed ? pending.find((p) => p.params.requestId === addressed[1]) : pending.length === 1 ? pending[0] : undefined;
+        this.store.state(event.id, prompt ? "answered" : "filtered");
+        if (prompt) this.questionAnswer(prompt, addressed?.[2] ?? event.text);
+        else this.output(pending[0]!.runtime, "Several questions are pending, or that question is no longer available. Use its buttons or reply: answer <requestId>: your answer");
+      } return;
     }
     this.store.enqueue(event);
   }
@@ -164,16 +170,25 @@ export class DelegationService {
   }
   private notification(rt: Runtime, n: any) {
     if (!n || this.stopped) return;
+    if (n.type === "workstream_member_notification") {
+      this.resolvePrompts(rt, n.notification, n.agentId); return;
+    }
+    if (n.type === "workstream_prompt_resolved") {
+      this.resolvePrompts(rt, { type: "ask_user_resolved", requestId: n.requestId }, n.agentId); return;
+    }
     if (n.type === "assistant_text_delta") {
       if (rt.messageId !== n.messageId) { rt.messageId = n.messageId; rt.text = ""; }
       rt.text = (rt.text + String(n.textDelta ?? "")).slice(-60_000);
       if (!rt.timer) rt.timer = setTimeout(() => { rt.timer = undefined; if (rt.text) this.output(rt, `Progress\n${rt.text.slice(-3000)}`); }, 2000);
     } else if (n.type === "agent_turn_completed") {
       clearTimeout(rt.timer); rt.timer = undefined; this.output(rt, `Finished (${n.reason ?? "completed"})\n${rt.text || "Turn ended without a text answer. Open the session in Rigwell for its transcript."}`); rt.text = "";
-      for (const p of [...this.prompts]) if (p.runtime === rt) this.finishPrompt(p, p.method === "ask_user" ? { cancelled: true, answers: [] } : { selectedOption: "cancel" });
     } else if (n.type === "tool_call" && n.toolUse?.name && !rt.tools.has(n.toolUse.id)) { rt.tools.add(n.toolUse.id); if (rt.tools.size > 1000) rt.tools.delete(rt.tools.values().next().value!); this.output(rt, `Running ${n.toolUse.name}`); }
     else if (n.type === "error") this.output(rt, `Session error: ${String(n.message ?? n.error ?? "See Rigwell")}`);
-    else if (n.type === "permission_resolved" || n.type === "ask_user_resolved") for (const p of [...this.prompts]) if (p.runtime === rt && p.params.requestId === n.requestId) this.finishPrompt(p, p.method === "ask_user" ? { cancelled: true, answers: [] } : { selectedOption: "cancel" });
+    this.resolvePrompts(rt, n);
+  }
+  private resolvePrompts(rt: Runtime, n: any, agentId?: string) {
+    if (!n || !["agent_turn_completed", "permission_resolved", "ask_user_resolved"].includes(n.type)) return;
+    for (const p of [...this.prompts]) if (p.runtime === rt && p.params.agentId === agentId && (n.type === "agent_turn_completed" || p.params.requestId === n.requestId)) this.finishPrompt(p, p.method === "ask_user" ? { cancelled: true, answers: [] } : { selectedOption: "cancel" });
   }
   private token(p: Prompt, answer: any) { const token = randomBytes(24).toString("base64url"); this.actions.set(token, { prompt: p, answer }); p.tokens.add(token); return token; }
   private prompt(rt: Runtime, method: string, params: any): Promise<unknown> {
@@ -186,7 +201,7 @@ export class DelegationService {
       else {
         const details = redactSharedText(JSON.stringify(params, null, 2), this.secrets(rt.binding.cwd));
         if (method === "request_permission" && details.length > 2600) {
-          this.output(rt, `Permission details exceed the chat preview. Review and answer the complete request in Rigwell session ${rt.binding.sessionId}.`, [{ label: "Cancel", value: this.token(p, { selectedOption: "cancel" }) }]); return;
+          this.output(rt, `Permission details exceed the chat preview. Review and answer the complete request in ${params.agentId ? `Rigwell Workstream ${params.workstreamId}, member ${params.agentName ?? params.agentId}` : `Rigwell session ${rt.binding.sessionId}`}.`, [{ label: "Cancel", value: this.token(p, { selectedOption: "cancel" }) }]); return;
         }
         const options = method === "request_trust" ? [{ label: "Trust for this session", value: "trust" }, { label: "Continue untrusted", value: "untrusted" }] : params.options ?? [{ label: "Allow once", value: "proceed_once" }, { label: "Deny", value: "cancel" }];
         this.output(rt, `${method === "request_trust" ? "Trust project settings?" : "Permission required"}\n${details}`, options.slice(0, 20).map((o: any) => ({ label: String(o.label), value: this.token(p, method === "request_trust" ? { trust: o.value === "trust", remember: false } : { selectedOption: o.value }) })));
@@ -200,7 +215,7 @@ export class DelegationService {
     const choices = (q.options ?? []).slice(0, 18).map((o: string) => ({ label: `${p.selected.has(o) ? "[x] " : ""}${o}`, value: this.token(p, { option: o }) }));
     if (q.multiSelect) choices.push({ label: "Submit selections", value: this.token(p, { submit: true }) });
     choices.push({ label: "Cancel question", value: this.token(p, { cancel: true }) });
-    this.output(p.runtime, `${q.question}\n${q.multiSelect ? "Select choices, then Submit selections. " : ""}You may also reply in this thread with a text answer.`, choices);
+    this.output(p.runtime, `${p.params.agentId ? `Member ${p.params.agentName ?? p.params.agentId}\n` : ""}${q.question}\n${q.multiSelect ? "Select choices, then Submit selections. " : ""}You may also reply in this thread with a text answer. With several pending questions, use: answer ${p.params.requestId}: your answer`, choices);
   }
   private questionAnswer(p: Prompt, answer: string) { const q = p.params.questions?.[p.question]; if (!q) return; p.answers.push({ index: q.index, question: q.question, answer }); p.question++; p.selected.clear(); this.showQuestion(p); }
   private answer(token: unknown, source: Source) {
