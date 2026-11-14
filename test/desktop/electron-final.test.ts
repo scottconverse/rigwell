@@ -180,6 +180,15 @@ maybe("desktop app: final gaps", () => {
   }, 120_000);
 
   test("side chat: the writes switch, and Promote makes the side chat a normal session", async () => {
+    // Capture the actual refresh replies if promotion loses its sidebar row on a native runner.
+    await page.evaluate(() => {
+      const w = window as any, daemon = w.rigwell.daemon;
+      w.promotionTrace = [];
+      daemon.onMessage(({ connId, message }: any) => {
+        const m = JSON.parse(message);
+        if (Array.isArray(m.result?.sessions) || m.error) w.promotionTrace.push({ response: m, connId });
+      });
+    });
     // We are on the session of the previous test.
     const before = page.url().split("#/sessions/")[1];
     await page.getByRole("button", { name: "Side chat", exact: true }).first().click();
@@ -203,7 +212,12 @@ maybe("desktop app: final gaps", () => {
     const promoted = page.url().split("#/sessions/")[1].split(/[?#]/)[0];
     expect(promoted).not.toBe(before);
     expect(readdirSync(btw).filter((f) => f.endsWith(".jsonl"))).toEqual([]);
-    await page.locator(".side-row", { hasText: "Side chat: SIDEQ what is going on?" }).first().waitFor({ timeout: 20_000 });
+    try { await page.locator(".side-row", { hasText: "Side chat: SIDEQ what is going on?" }).first().waitFor({ timeout: 20_000 }); }
+    catch (e) {
+      console.error("[promotion diagnostic]", JSON.stringify(await page.evaluate(() => ({ trace: (window as any).promotionTrace, body: document.body.innerText }))));
+      console.error("[promotion transcripts]", transcripts());
+      throw e;
+    }
     await page.locator(".assistant", { hasText: "side answer: all quiet" }).first().waitFor({ timeout: 20_000 });
   }, 120_000);
 
