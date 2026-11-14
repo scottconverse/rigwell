@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { shellInvocation } from "../platform/shell.ts";
 import { cacheHitRate, costOf } from "./cost.ts";
-import type { EvalConfig, FailKind, ModelSpec, RunRecord, TaskDef, TokenCounts, TrialResult, Variant } from "./types.ts";
+import type { EvalConfig, ExternalHarness, FailKind, ModelSpec, RunRecord, TaskDef, TokenCounts, TrialResult, Variant } from "./types.ts";
 
 export const CLI_PATH = join(import.meta.dir, "../cli/main.ts");
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
@@ -27,14 +27,17 @@ export async function driveSession(opts: {
   cwd: string; modelId: string; autonomy: string; prompt: string; settingsPath?: string;
   toolExecutionMode?: string; timeoutMs: number; maxRequests?: number; maxCostUsd?: number;
   price?: ModelSpec["prices"]; env?: Record<string, string>;
+  harness?: ExternalHarness;
+  reasoningEffort?: ModelSpec["reasoningEffort"];
 }): Promise<SessionOutcome> {
   const args = ["exec", "--input-format", "stream-jsonrpc", "--output-format", "stream-jsonrpc", "--auto", opts.autonomy, "-m", opts.modelId, "--cwd", opts.cwd];
-  if (opts.settingsPath) args.push("--settings", opts.settingsPath);
-  const proc = Bun.spawn(["bun", CLI_PATH, ...args], {
+  const settingsPath = opts.harness?.settingsPath ?? opts.settingsPath;
+  if (settingsPath) args.push("--settings", settingsPath);
+  const proc = Bun.spawn([...(opts.harness?.command ?? ["bun", CLI_PATH]), ...args], {
     cwd: opts.cwd, env: { ...process.env, ...(opts.env ?? {}) }, stdin: "pipe", stdout: "pipe", stderr: "pipe",
   });
   const stderrP = new Response(proc.stderr as ReadableStream).text();
-  const send = (m: unknown) => { try { (proc.stdin as any).write(JSON.stringify(m) + "\n"); } catch { /* child gone */ } };
+  const send = (m: object) => { try { (proc.stdin as any).write(JSON.stringify({ ...opts.harness?.envelope, ...m }) + "\n"); } catch { /* child gone */ } };
 
   let usageEvents = 0;
   let lastUsageSig = "";
@@ -52,7 +55,7 @@ export async function driveSession(opts: {
     new Promise<any>((resolve) => {
       const id = `ev-${++n}`;
       pending.set(id, resolve);
-      send({ jsonrpc: "2.0", type: "request", id, method: `rigwell.${method}`, params });
+      send({ jsonrpc: "2.0", type: "request", id, method: `${opts.harness?.methodPrefix ?? "rigwell."}${method}`, params });
     });
 
   const kill = (why: "budget" | "timeout") => { if (killed === "none") { killed = why; try { proc.kill(); } catch { /* gone */ } finish(); } };
@@ -101,7 +104,7 @@ export async function driveSession(opts: {
 
   try {
     const init = await Promise.race([
-      request("initialize_session", { machineId: "default", cwd: opts.cwd, modelId: opts.modelId, ...(opts.toolExecutionMode ? { toolExecutionMode: opts.toolExecutionMode } : {}) }),
+      request("initialize_session", { machineId: "default", cwd: opts.cwd, modelId: opts.modelId, autonomyLevel: opts.autonomy, ...(opts.reasoningEffort ? { reasoningEffort: opts.reasoningEffort } : {}), ...(opts.toolExecutionMode ? { toolExecutionMode: opts.toolExecutionMode } : {}) }),
       done.then(() => null),
     ]);
     if (init?.error) error = `initialize_session: ${init.error.message}`;
@@ -148,6 +151,7 @@ function prepareWorkDir(task: TaskDef): string {
 
 export async function runTrial(opts: {
   task: TaskDef; model: ModelSpec; variant: Variant; trial: number; autonomy: string; timeoutMs: number; env?: Record<string, string>;
+  harness?: ExternalHarness;
 }): Promise<TrialResult> {
   const { task, model, variant } = opts;
   const work = prepareWorkDir(task);
@@ -160,9 +164,9 @@ export async function runTrial(opts: {
   let outcome: SessionOutcome;
   try {
     outcome = await driveSession({
-      cwd: work, modelId: model.id, autonomy: opts.autonomy, prompt: task.prompt, settingsPath,
+      cwd: work, modelId: opts.harness?.modelMap[model.id] ?? model.id, autonomy: opts.autonomy, prompt: task.prompt, settingsPath, harness: opts.harness,
       toolExecutionMode: variant.toolExecutionMode, timeoutMs: task.budget.timeoutMs ?? opts.timeoutMs,
-      maxRequests: task.budget.maxRequests, maxCostUsd: task.budget.maxCostUsd, price: model.prices, env: opts.env,
+      maxRequests: task.budget.maxRequests, maxCostUsd: task.budget.maxCostUsd, price: model.prices, env: opts.env, reasoningEffort: model.reasoningEffort,
     });
   } catch (e) {
     outcome = { turnReason: "error", requests: 0, tokens: zeroTokens(), killed: "none", error: String((e as Error).message) };
@@ -187,7 +191,7 @@ export async function runTrial(opts: {
   return {
     task: task.name, model: model.id, family: model.family ?? model.id, variant: variant.name, trial: opts.trial,
     passed, failKind, graderDetail: detail, turnReason: outcome.turnReason, wallMs, requests: outcome.requests,
-    tokens: outcome.tokens, costUsd: costOf(outcome.tokens, model.prices), priced: !!model.prices, cacheHitRate: cacheHitRate(outcome.tokens),
+    tokens: outcome.tokens, costUsd: costOf(outcome.tokens, model.prices), priced: !!model.prices, cacheHitRate: cacheHitRate(outcome.tokens), ...(model.reasoningEffort ? { reasoningEffort: model.reasoningEffort } : {}),
   };
 }
 

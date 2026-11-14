@@ -8,12 +8,14 @@ import { runEval } from "./runner.ts";
 import { currentBuildId, evalDir, loadRuns, saveRun } from "./store.ts";
 import { defaultTasksDir, loadTasks } from "./tasks.ts";
 import type { EvalConfig } from "./types.ts";
+import { runComparison } from "./comparison.ts";
 
 export const EVAL_USAGE = `Usage:
   rigwell eval run [--config <file>] [--tasks <dir>] [--task a,b] [--model id,id] [--trials n]
                    [--auto low|medium|high] [--build <id>]
   rigwell eval report [--since 7d] [--build <id>] [--against <id>] [--json] [--out <file>]
   rigwell eval tasks [--tasks <dir>]
+  rigwell eval compare --config <file> [--task a,b] [--model id,id] [--build <id>] [--json] [--out <file>]
 
 Config default: $RIGWELL_HOME/eval/config.json. Without one, every custom model in settings runs unpriced.
 Results: $RIGWELL_HOME/eval/runs/<build>/<timestamp>.json (build = git short sha, or --build).`;
@@ -48,6 +50,21 @@ export function loadConfig(path?: string): EvalConfig {
 export async function evalMain(argv: string[]): Promise<void> {
   const [sub, ...rest] = argv;
   const { opts, bools } = flags(rest);
+  if (sub === "compare") {
+    if (!opts.config) fail("compare requires an explicit config and external profile mappings");
+    const config = loadConfig(opts.config);
+    if (opts.model) config.models = config.models.filter((m) => opts.model!.split(",").includes(m.id));
+    if (opts.trials) config.trials = Number(opts.trials);
+    if (opts.auto) config.autonomy = opts.auto as EvalConfig["autonomy"];
+    const tasks = loadTasks(opts.tasks ? resolve(opts.tasks) : config.tasksDir ? resolve(config.tasksDir) : defaultTasksDir(), opts.task?.split(","));
+    const runs = await runComparison({ config, tasks, buildId: opts.build ?? currentBuildId(), onResult: (side, r) => process.stderr.write(`[compare] ${side} ${r.model} ${r.task} #${r.trial}: ${r.passed ? "pass" : "FAIL (" + r.failKind + ")"}\n`) });
+    const referenceFile = saveRun(runs.reference), candidateFile = saveRun(runs.candidate);
+    const report = buildReport(runs.candidate, runs.reference);
+    const output = bools.has("json") ? JSON.stringify({ ...runs, report }, null, 2) + "\n" : renderMarkdown(report);
+    if (opts.out) writeFileSync(resolve(opts.out), output); else process.stdout.write(output);
+    process.stderr.write(`[compare] candidate: ${candidateFile}\n[compare] reference: ${referenceFile}\n`);
+    process.exit(0);
+  }
   if (sub === "run") {
     const config = loadConfig(opts.config);
     if (opts.model) config.models = config.models.filter((m) => opts.model!.split(",").includes(m.id));

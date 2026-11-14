@@ -21,13 +21,13 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 5. `create_pr` and PR status, with `gh` and `glab` (spec §18.6, HANDOFF "Next task"). Complete on 4602ed6: 215 affected headless tests pass, all four CI jobs green.
 6. **Workstreams, local** (spec §15.10, HANDOFF "Next task 2"). Complete through TUI on c6c6b64: all four CI jobs and platform packages green. The intermittent macOS restart file-listener cause remains unresolved and instrumented (decision 354).
 7. Code-provider connections page for GitHub and GitLab (§20.21). Implemented on b0bb979, all four CI jobs and packages green; real device sign-in awaits the owner's public registered client IDs.
-8. PR and semantic-diff review view, `/review` (§20.10).
+8. PR and semantic-diff review view, `/review` (§20.10). Delivered on c2a7847: all four CI jobs/packages green; native file-save cause unresolved and instrumented (360).
 
 ## 3. Agent quality (the biggest gap; nothing measured yet)
 
-9. Real-model smoke run on every adapter, including a free local model (§20.1).
-10. A task suite of 40+ real coding tasks for `rigwell eval` (§20.1).
-11. Head-to-head with Factory's CLI on the same tasks and models, three trials each (§20.1).
+9. Real-model smoke run on every adapter, including a free local model (§20.1). Pending real runs: existing Google key/local servers located; private-runtime model-ID constraint clarification pending.
+10. A task suite of 40+ real coding tasks for `rigwell eval` (§20.1). Delivered on f32bc06: 43 graded tasks, six categories, all four CI jobs/packages green.
+11. Head-to-head with Factory's CLI on the same tasks and models, three trials each (§20.1). Comparison machinery implemented locally with fake CLI acceptance; real same-model/account comparison remains unverified.
 12. Tune prompts, tool descriptions, result shapes and guards until Rigwell matches on every model family (§20.1).
 13. Settle every "not checked" and [UNKNOWN] item in the spec with a real run or a logged decision (§20.1).
 14. Long-session checks: compaction, caching, cost, routing, guards, watchdog (§20.1).

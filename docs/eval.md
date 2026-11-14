@@ -106,3 +106,33 @@ The automation scheduler (spec section 16) runs it every Monday and catches up o
 ## Real adapter smoke acceptance
 
 After the owner configures profiles and credentials through settings and the credential store, use the existing eval run CLI with a one-trial config and --task fix-greeting-typo --trials 1. Select one owner-configured profile for each adapter: Anthropic, OpenAI HTTP and WebSocket, Gemini, configured Bedrock paths, and a free local Chat Completions endpoint. Keep credentials and real-run configuration outside the repository and CI. Report exact candidate, adapter/profile, command and grader result. Missing profiles remain pending acceptance. Fake CLI integration covers one task per category without real-provider requests.
+
+## Head-to-head comparison
+
+The compare subcommand runs both baseline harnesses on the same selected tasks, budgets, autonomy and explicitly declared equivalent model profiles. It requires exactly three trials per harness. Each trial gets a fresh Git working copy and the same actual grader. Pair order alternates to reduce fixed ordering effects. No tuning variant is shipped or applied by a comparison.
+
+Add comparison to a private eval config:
+
+~~~json
+{
+  "models": [
+    { "id": "custom:Primary-0", "reasoningEffort": "low", "family": "declared-family" }
+  ],
+  "trials": 3,
+  "autonomy": "low",
+  "comparison": {
+    "id": "reference",
+    "command": ["C:/path/to/reference-cli.exe"],
+    "settingsPath": "C:/private/reference-settings.json",
+    "methodPrefix": "reference.",
+    "modelMap": { "custom:Primary-0": "custom:Equivalent-0" },
+    "envelope": {}
+  }
+}
+~~~
+
+Use the installed external CLI's documented method prefix, required envelope/version fields and actual equivalent profile IDs. The example prefix is illustrative. The command is an executable argument array, optionally with interpreter/script arguments. The runner appends common exec/stream-jsonrpc options. Optional settingsPath selects an existing per-process external settings file without changing its user settings. Version is observed through --version before any trial; versionArgs selects a different documented version option. A failed version check or missing profile mapping starts no trials. API keys stay in each harness's normal credential configuration and are not copied into comparison records. Model equivalence is an operator declaration, not something aliases alone can prove.
+
+Run rigwell eval compare --config <private-file> --task <common-task-list> --json (or --out <file>). Both runs are saved in the normal eval store with harness identity and observed reference version. The report reuses pass rate, cost/time per pass, token/request counts and cache hit calculations. Cost/time pairing includes only tasks passing all three trials on both sides; unknown prices remain unpriced. Missing account or direct-provider acceptance stays pending even when fake-process tests pass.
+
+Autonomy and explicit reasoning effort are sent through initialize_session as well as CLI flags. A stream-jsonrpc CLI may ignore its --auto and -m flags. Run-scoped values do not change saved defaults. Permission requests are declined on both sides. Select only tasks and models both harnesses support.

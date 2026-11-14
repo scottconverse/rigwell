@@ -1,4 +1,5 @@
 // Eval loop types (spec section 8).
+import type { ReasoningEffort } from "../core/types.ts";
 
 /** Prices in USD per million tokens. Cached input is the cache-read price; cacheWrite defaults to the input price. */
 export interface Price {
@@ -27,10 +28,14 @@ export interface ModelSpec {
   /** Family used to group models in experiments; defaults to the id. */
   family?: string;
   prices?: Price;
+  /** Explicit run-scoped effort for comparisons; does not change saved profile defaults. */
+  reasoningEffort?: ReasoningEffort;
 }
 
 export interface EvalConfig {
   models: ModelSpec[];
+  /** Explicitly configured external headless CLI; real accounts are used only for hand-run quality checks. */
+  comparison?: ExternalHarness;
   variants?: Variant[];
   autonomy?: "low" | "medium" | "high";
   trials?: number;
@@ -38,6 +43,19 @@ export interface EvalConfig {
   timeoutMs?: number;
   /** Directory of task folders; default eval/tasks in the Rigwell checkout. */
   tasksDir?: string;
+}
+
+export interface ExternalHarness {
+  id: string;
+  /** Executable plus optional interpreter/script arguments; common exec protocol flags are appended. */
+  command: string[];
+  /** Per-process external settings; never rewrites the external application's user profile. */
+  settingsPath?: string;
+  /** Canonical Rigwell profile id to the equivalent profile id in the external CLI. */
+  modelMap: Record<string, string>;
+  methodPrefix: string;
+  envelope?: Record<string, unknown>;
+  versionArgs?: string[];
 }
 
 export interface TaskBudget {
@@ -78,6 +96,7 @@ export interface TrialResult {
   costUsd: number;
   priced: boolean;
   cacheHitRate: number;
+  reasoningEffort?: ReasoningEffort;
 }
 
 export interface RunRecord {
@@ -88,4 +107,5 @@ export interface RunRecord {
   autonomy: string;
   trials: number;
   results: TrialResult[];
+  harness?: { id: string; version: string };
 }
