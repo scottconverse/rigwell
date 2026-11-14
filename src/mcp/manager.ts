@@ -1,5 +1,6 @@
 // MCP manager: parallel server startup, status tracking, tool naming, drop suppression (spec §5.7, §6.2).
 import { McpClient } from "./client.ts";
+import { ConnectorCatalog } from "./catalog.ts";
 import { hasMcpTokens, McpAuthRequired, signInMcp, signOutMcp } from "./auth.ts";
 import { authManager } from "../auth/oauth.ts";
 import { fromAddParams, loadMcpConfig, removeUserServer, saveUserServer } from "./config.ts";
@@ -47,6 +48,7 @@ export interface McpManagerOptions {
 }
 
 export class McpManager {
+  private catalog = new ConnectorCatalog();
   private entries = new Map<string, Entry>();
   private pendingStarts: Promise<unknown>[] = [];
   private logins = new Map<string, string>();
@@ -238,6 +240,13 @@ export class McpManager {
   }
 
   // ---------------------------------------------------------------- add / remove
+  listCatalog(sources?: unknown) { return this.catalog.list(sources); }
+  async addCatalog(key: string, values?: Record<string, string>, name?: string) {
+    const cfg = this.catalog.prepare(key, values, name, (n) => this.entries.has(n) || loadMcpConfig({ cwd: this.o.cwd ?? process.cwd(), trustProject: this.o.projectTrusted }).servers.some((s) => s.name === n));
+    await this.addServer(cfg);
+    const login = cfg.oauth ? await this.signIn(cfg.name) : undefined;
+    return { name: cfg.name, login };
+  }
   /** add_mcp_server: validate, persist to the user mcp.json, start it. */
   async addServer(p: AddMcpServerParams): Promise<{ success: boolean }> {
     const cfg = fromAddParams(p);

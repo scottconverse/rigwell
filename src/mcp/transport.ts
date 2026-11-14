@@ -2,6 +2,7 @@
 // and legacy SSE (GET stream + POST endpoint). JSON-RPC 2.0.
 import { spawn, type ChildProcess } from "node:child_process";
 import { mcpFetch } from "./auth.ts";
+import { mcpSecret } from "./catalog.ts";
 import type { McpServerConfig } from "./types.ts";
 
 export class McpRpcError extends Error {
@@ -87,7 +88,8 @@ export class StdioConnection extends Base {
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
       const c = spawn(this.cfg.command!, this.cfg.args ?? [], {
-        cwd: this.cwd, env: { ...process.env, ...this.cfg.env }, stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+        cwd: this.cwd, env: { ...process.env, ...Object.fromEntries(Object.entries(this.cfg.env ?? {}).map(([k, v]) => [k, mcpSecret(v)])) }, stdio: ["pipe", "pipe", "pipe"],
       });
       this.child = c;
       c.once("spawn", () => resolve());

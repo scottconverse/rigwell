@@ -547,6 +547,13 @@ export function createConnection(write: (line: string) => void, opts: Connection
         }
       }
       case "list_mcp_servers": return need().listMcpServers();
+      case "mcp_catalog_list": {
+        try { return await need().listMcpCatalog(p.sources); } catch (e) { throw new RpcError(ErrorCodes.INVALID_PARAMS, (e as Error).message); }
+      }
+      case "mcp_catalog_add": {
+        if (typeof p.key !== "string" || (p.name !== undefined && typeof p.name !== "string")) throw new RpcError(ErrorCodes.INVALID_PARAMS, "key and optional name must be strings");
+        try { return await need().addMcpCatalog(p.key, p.values as Record<string, string> | undefined, p.name as string | undefined); } catch (e) { throw new RpcError(ErrorCodes.INVALID_PARAMS, (e as Error).message); }
+      }
       case "mcp_sign_in":
       case "mcp_sign_out":
       case "mcp_sign_in_status":

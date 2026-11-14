@@ -308,7 +308,7 @@ export function ConnectorSettings() {
   return (
     <>
       <h2>Connectors <ManagedNote keys={["mcpServers", "mcp"]} /></h2>
-      <p className="muted">MCP servers the agent can use. Hosted connector catalogs are not part of this build.</p>
+      <p className="muted">MCP servers the agent can use. Browse the Catalog tab in a session's Connectors dialog to add a connector.</p>
       {probe.none && <div className="banner warn" role="status">Start a session first. MCP servers are managed through a session.</div>}
       {probe.error && <div className="banner error" role="alert">{probe.error}</div>}
       {probe.request && (

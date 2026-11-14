@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { bridge } from "../lib/rpc.ts";
 import { app, useStore } from "../lib/app-model.ts";
 import { trustAsks, type SessionController } from "../lib/session.ts";
+import { ConnectorCatalog } from "./ConnectorCatalog.tsx";
 
 export function Dialog({ title, onClose, children, wide }: { title: string; onClose(): void; children: React.ReactNode; wide?: boolean }) {
   useEffect(() => {
@@ -95,6 +96,7 @@ export function useMcp(request: ((method: string, params?: Record<string, unknow
     signOut: (name: string) => run(async () => { await request!("mcp_sign_out", { name }); if (login?.name === name) setLogin(undefined); }),
     cancelLogin: () => run(async () => { if (login) { await request!("mcp_sign_in_cancel", { name: login.name, loginId: login.loginId }); setLogin({ ...login, state: "cancelled" }); } }),
     add: (p: Record<string, unknown>) => run(() => request!("add_mcp_server", p)),
+    addCatalog: (p: Record<string, unknown>) => run(async () => { const r = await request!("mcp_catalog_add", p); if (r.login) setLogin(r.login); }),
     remove: (name: string) => run(() => request!("remove_mcp_server", { serverName: name, settingsLevel: "user" })),
   };
 }
@@ -156,10 +158,13 @@ export function ServerList({ servers, onRemove, busy, onSignIn, onSignOut }: { s
 export function ConnectorsDialog({ ctl, onClose }: { ctl: SessionController; onClose(): void }) {
   const request = useMemo(() => ctl.request.bind(ctl), [ctl]);
   const m = useMcp(request);
+  const [tab, setTab] = useState("servers");
   const [q, setQ] = useState("");
   const shown = useMemo(() => m.servers.filter((s) => `${s.name} ${s.displayName ?? ""}`.toLowerCase().includes(q.toLowerCase())), [m.servers, q]);
   return (
     <Dialog title="Connectors" onClose={onClose} wide>
+      <div role="tablist" aria-label="Connector tabs"><button role="tab" aria-selected={tab === "servers"} onClick={() => setTab("servers")}>Installed</button><button role="tab" aria-selected={tab === "catalog"} onClick={() => setTab("catalog")}>Catalog</button></div>
+      {tab === "catalog" ? <ConnectorCatalog request={request} busy={m.busy} onAdd={m.addCatalog} /> : <>
       <div className="dlg-row">
         <input placeholder="Search" aria-label="Search connectors" value={q} onChange={(e) => setQ(e.target.value)} />
         <button onClick={() => void m.refresh()}>Refresh</button>
@@ -168,8 +173,9 @@ export function ConnectorsDialog({ ctl, onClose }: { ctl: SessionController; onC
       <h4>MCP Servers ({m.servers.length})</h4>
       {m.summary?.configError && <div className="banner warn" role="status">{m.summary.configError.path}: {m.summary.configError.message}</div>}
       <ServerList servers={shown} busy={m.busy} onRemove={(n) => void m.remove(n)} onSignIn={(n) => void m.signIn(n)} onSignOut={(n) => void m.signOut(n)} />
-      <McpLoginPanel login={m.login} onCancel={() => void m.cancelLogin()} />
       <AddServerForm busy={m.busy} onAdd={m.add} />
+      </>}
+      <McpLoginPanel login={m.login} onCancel={() => void m.cancelLogin()} />
       {m.error && <div className="banner error" role="alert">{m.error}</div>}
       <div className="dialog-actions"><button onClick={onClose}>Close</button></div>
     </Dialog>

@@ -1,5 +1,6 @@
 // Remote MCP authorization: resource/issuer discovery, PKCE registration and URL-bound credentials.
 import { createHash } from "node:crypto";
+import { mcpSecret } from "./catalog.ts";
 import { authManager, loadToken, type LoginStatus } from "../auth/oauth.ts";
 import { parseOAuthProviders, secureUrl, type OAuthProviderConfig } from "../auth/config.ts";
 import { lookupCredential, removeCredential, storeCredential } from "../storage/credentials.ts";
@@ -58,6 +59,7 @@ export async function mcpFetch(cfg: McpServerConfig, url: string, init: RequestI
   }
   const send = () => {
     const headers = new Headers(init.headers);
+    for (const [key, value] of headers) if (value.startsWith("keychain:")) headers.set(key, mcpSecret(value));
     if (token) headers.set("authorization", `Bearer ${token}`);
     return fetch(url, { ...init, headers, redirect: "manual" });
   };

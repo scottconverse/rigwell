@@ -35,8 +35,8 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 
 ## 4. Connectors and tools
 
-16. MCP OAuth (§20.3). Implemented: resource/issuer discovery, PKCE/DCR or owned clients, URL-bound credentials, refresh, Connectors/settings and /mcp sign-in/out. Fake-service and headless protocol/UI checks pass; candidate CI pending.
-17. Connector catalog (§20.4).
+16. MCP OAuth (§20.3). Delivered on 2c8d082: resource/issuer discovery, PKCE/DCR or owned clients, URL-bound credentials, refresh, Connectors/settings and /mcp sign-in/out. Fake-service/headless checks and all four CI jobs/packages pass. Workstream missed notifications reconciled (374); deletion assertion aliases corrected (375).
+17. Connector catalog (§20.4). Implemented: bundled public servers, search/categories, required values, credential references, OAuth start, explicit user sources fetched only on Catalog open. Affected 84 tests/438 assertions, both typechecks/headless build pass; candidate CI pending.
 18. Browser automation tools for the agent and the `agent-browser` skill (§20.5).
 
 ## 5. Your other machines

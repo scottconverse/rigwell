@@ -2035,6 +2035,8 @@ export class Session {
     return this.mcp;
   }
   listMcpServers() { return this.needMcp().listServers(); }
+  listMcpCatalog(sources?: unknown) { return this.needMcp().listCatalog(sources); }
+  addMcpCatalog(key: string, values?: Record<string, string>, name?: string) { return this.needMcp().addCatalog(key, values, name); }
   signInMcp(name: string) { return this.needMcp().signIn(name); }
   signOutMcp(name: string) { return this.needMcp().signOut(name); }
   mcpLoginStatus(name: string, id: string) { return this.needMcp().loginStatus(name, id); }
