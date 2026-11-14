@@ -48,6 +48,29 @@ async function mcpView(args: string, c: ViewCtx): Promise<View> {
   const w = words(args);
   const title = "MCP servers";
   try {
+    if (w[0] === "sign-in" || w[0] === "sign-out") {
+      const name = w[1];
+      if (!name) return { title, lines: [`Usage: /mcp ${w[0]} <name>`] };
+      if (w[0] === "sign-out") {
+        await c.request("mcp_sign_out", { name });
+        return { title, lines: [`Signed out of ${name}.`, "", ...(await mcpLines(c))] };
+      }
+      const login = await c.request("mcp_sign_in", { name });
+      c.openUrl?.(login.url);
+      void (async () => {
+        while (Date.now() < login.expiresAt) {
+          await new Promise((r) => setTimeout(r, c.loginPollMs ?? 1500));
+          try {
+            const st = await c.request("mcp_sign_in_status", { name, loginId: login.loginId });
+            if (st.state === "pending") continue;
+            c.notify?.(st.state === "complete" ? `Signed in to MCP server ${name}.` : `MCP sign-in ${st.state}: ${st.error ?? name}`, st.state === "complete" ? "info" : "error");
+          } catch (e) { c.notify?.(`MCP sign-in: ${errText(e)}`, "error"); }
+          return;
+        }
+        c.notify?.(`MCP sign-in to ${name} timed out.`, "error");
+      })();
+      return { title, lines: [`Sign in to MCP server ${name}:`, login.url, "Waiting for sign-in. You can keep using this session."] };
+    }
     if (w[0] === "add") {
       const [, name, target, ...rest] = w;
       if (!name || !target) return { title, lines: ["Usage: /mcp add <name> <url | command> [args...]", "  An http(s) URL adds a remote server (add --sse before the URL for SSE); anything else is a stdio command."] };
@@ -79,9 +102,10 @@ async function mcpLines(c: ViewCtx): Promise<string[]> {
   for (const s of servers) {
     out.push(`${s.name}  [${s.status}]  ${s.serverType}  from ${s.source}${s.toolCount !== undefined ? `  ${s.toolCount} tools` : ""}`);
     if (s.error) out.push(`    error: ${s.error}`);
+    if (s.requiresAuth) out.push(`    needs sign-in: /mcp sign-in ${s.name}`);
   }
   if (r?.summary?.configError) out.push("", `Config problem: ${r.summary.configError}`);
-  out.push("", "/mcp add <name> <url | command> [args...]   /mcp remove <name>", "Servers are stored in the user MCP config (add and remove act on the user level only).");
+  out.push("", "/mcp add <name> <url | command> [args...]   /mcp remove <name>", "/mcp sign-in <name>   /mcp sign-out <name>", "Servers are stored in the user MCP config (add and remove act on the user level only).");
   return out;
 }
 

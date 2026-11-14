@@ -16,8 +16,7 @@
 //     content and `isError` to tool_result isError. Permission: confirmationType `mcp_tool` with details
 //     {toolName: llmName, serverName: t.server, actualToolName: t.tool, impactLevel}; use `mcp.findTool(name)` to resolve.
 //   - A server that connects and drops 6+ times is reported status "failed" with a "suppressed" error and contributes no tools.
-//   - OAuth is NOT implemented (spec lists it as later): a 401/403 from an http server fails with a clear message;
-//     use `headers` for tokens.
+//   - Remote OAuth uses metadata discovery, PKCE and URL-bound credentials (spec 20.3).
 export * from "./types.ts";
 export * from "./config.ts";
 export { McpClient, contentToText, MCP_PROTOCOL_VERSION } from "./client.ts";

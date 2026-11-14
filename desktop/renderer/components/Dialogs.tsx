@@ -61,7 +61,8 @@ export function ConfirmDialog({ title, body, action, onConfirm, onCancel }: { ti
 
 // ------------------------------------------------------------------ Connectors
 
-export interface McpServer { name: string; status: string; serverType: string; source?: string; displayName?: string; error?: string; toolCount?: number; requiresAuth?: boolean }
+export interface McpServer { name: string; status: string; serverType: string; source?: string; displayName?: string; error?: string; toolCount?: number; requiresAuth?: boolean; hasAuthTokens?: boolean }
+interface McpLogin { name: string; loginId: string; state: string; url?: string; error?: string }
 
 /** MCP server list, refresh, add and remove over any `request` function (a session, or a temporary connection). */
 export function useMcp(request: ((method: string, params?: Record<string, unknown>) => Promise<any>) | undefined) {
@@ -69,17 +70,42 @@ export function useMcp(request: ((method: string, params?: Record<string, unknow
   const [summary, setSummary] = useState<{ total: number; connected: number; failed: number; configError?: { path: string; message: string } }>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [login, setLogin] = useState<McpLogin>();
   const refresh = useCallback(async () => {
     if (!request) return;
     try { const r = await request("list_mcp_servers"); setServers(r.servers ?? []); setSummary(r.summary); setError(""); } catch (e) { setError((e as Error).message); }
   }, [request]);
   useEffect(() => { void refresh(); }, [refresh]);
-  const run = async (fn: () => Promise<unknown>) => { setBusy(true); try { await fn(); setError(""); } catch (e) { setError((e as Error).message); } finally { setBusy(false); await refresh(); } };
+  useEffect(() => {
+    if (!request || login?.state !== "pending") return;
+    let stopped = false;
+    const timer = setInterval(() => {
+      void request("mcp_sign_in_status", { name: login.name, loginId: login.loginId }).then((s: McpLogin) => {
+        if (stopped) return;
+        setLogin(s);
+        if (s.state !== "pending") void refresh();
+      }).catch((e) => { if (!stopped) setLogin({ ...login, state: "failed", error: (e as Error).message }); });
+    }, 750);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [request, login, refresh]);
+  const run = async (fn: () => Promise<unknown>) => { setBusy(true); let failure = ""; try { await fn(); } catch (e) { failure = (e as Error).message; } finally { setBusy(false); await refresh(); setError(failure); } };
   return {
-    servers, summary, error, busy, refresh,
+    servers, summary, error, busy, refresh, login,
+    signIn: (name: string) => run(async () => { setLogin(await request!("mcp_sign_in", { name })); }),
+    signOut: (name: string) => run(async () => { await request!("mcp_sign_out", { name }); if (login?.name === name) setLogin(undefined); }),
+    cancelLogin: () => run(async () => { if (login) { await request!("mcp_sign_in_cancel", { name: login.name, loginId: login.loginId }); setLogin({ ...login, state: "cancelled" }); } }),
     add: (p: Record<string, unknown>) => run(() => request!("add_mcp_server", p)),
     remove: (name: string) => run(() => request!("remove_mcp_server", { serverName: name, settingsLevel: "user" })),
   };
+}
+
+export function McpLoginPanel({ login, onCancel }: { login?: McpLogin; onCancel(): void }) {
+  if (!login) return null;
+  return <div className="banner" role="status" aria-label="MCP sign-in">
+    <b>{login.name}: {login.state === "complete" ? "Signed in" : login.state === "pending" ? "Waiting for sign-in" : login.state}</b>
+    {login.state === "pending" && <><p><a href={login.url} onClick={(e) => { e.preventDefault(); if (login.url) void bridge().shell.openExternal(login.url); }}>Open the sign-in page</a></p><button onClick={onCancel}>Cancel sign-in</button></>}
+    {login.error && <p className="error-text">{login.error}</p>}
+  </div>;
 }
 
 export function AddServerForm({ onAdd, busy }: { onAdd(p: Record<string, unknown>): Promise<void>; busy: boolean }) {
@@ -107,7 +133,7 @@ export function AddServerForm({ onAdd, busy }: { onAdd(p: Record<string, unknown
   );
 }
 
-export function ServerList({ servers, onRemove, busy }: { servers: McpServer[]; onRemove(n: string): void; busy: boolean }) {
+export function ServerList({ servers, onRemove, busy, onSignIn, onSignOut }: { servers: McpServer[]; onRemove(n: string): void; busy: boolean; onSignIn?(n: string): void; onSignOut?(n: string): void }) {
   if (!servers.length) return <div className="muted pad">No MCP servers yet.</div>;
   return (
     <ul className="plain-list" aria-label="MCP servers">
@@ -118,6 +144,8 @@ export function ServerList({ servers, onRemove, busy }: { servers: McpServer[]; 
           <span className="muted small">{s.serverType} / {s.status}{s.toolCount != null ? ` / ${s.toolCount} tools` : ""}{s.requiresAuth ? " / needs sign-in" : ""}</span>
           {s.error && <span className="error-text small">{s.error}</span>}
           <span className="spacer" />
+          {s.requiresAuth && onSignIn && <button disabled={busy} aria-label={`Sign in to ${s.name}`} onClick={() => onSignIn(s.name)}>Sign in</button>}
+          {s.hasAuthTokens && onSignOut && <button disabled={busy} aria-label={`Sign out of ${s.name}`} onClick={() => onSignOut(s.name)}>Sign out</button>}
           {s.source === "user" || s.source === undefined ? <button disabled={busy} aria-label={`Remove ${s.name}`} onClick={() => onRemove(s.name)}>Remove</button> : <span className="muted small">{s.source}</span>}
         </li>
       ))}
@@ -139,7 +167,8 @@ export function ConnectorsDialog({ ctl, onClose }: { ctl: SessionController; onC
       </div>
       <h4>MCP Servers ({m.servers.length})</h4>
       {m.summary?.configError && <div className="banner warn" role="status">{m.summary.configError.path}: {m.summary.configError.message}</div>}
-      <ServerList servers={shown} busy={m.busy} onRemove={(n) => void m.remove(n)} />
+      <ServerList servers={shown} busy={m.busy} onRemove={(n) => void m.remove(n)} onSignIn={(n) => void m.signIn(n)} onSignOut={(n) => void m.signOut(n)} />
+      <McpLoginPanel login={m.login} onCancel={() => void m.cancelLogin()} />
       <AddServerForm busy={m.busy} onAdd={m.add} />
       {m.error && <div className="banner error" role="alert">{m.error}</div>}
       <div className="dialog-actions"><button onClick={onClose}>Close</button></div>

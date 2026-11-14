@@ -81,6 +81,7 @@ interface Login {
 export class AuthManager {
   private logins = new Map<string, Login>();
   private refreshing = new Map<string, Promise<StoredToken>>();
+  private generations = new Map<string, number>();
   private f: typeof fetch;
   private now: () => number;
 
@@ -99,6 +100,14 @@ export class AuthManager {
     return t.accessToken;
   }
 
+  /** Retry a rejected access token once; concurrent requests share a refresh. */
+  async refreshRejected(cfg: OAuthProviderConfig, rejected: string): Promise<string> {
+    const old = loadToken(cfg.name);
+    if (!old) throw new AuthError("not_logged_in", "Sign-in is required");
+    if (old.accessToken !== rejected) return this.accessToken(cfg);
+    return (await this.refresh(cfg, old)).accessToken;
+  }
+
   /** The request header that carries the token for this provider. */
   async headers(cfg: OAuthProviderConfig): Promise<Record<string, string>> {
     const tok = await this.accessToken(cfg);
@@ -112,11 +121,13 @@ export class AuthManager {
   private refresh(cfg: OAuthProviderConfig, old: StoredToken): Promise<StoredToken> {
     let p = this.refreshing.get(cfg.name);
     if (!p) {
+      const generation = this.generations.get(cfg.name) ?? 0;
       p = (async () => {
         if (!old.refreshToken) throw new AuthError("expired", `The "${cfg.name}" sign-in expired and has no refresh token: run \`rigwell auth login ${cfg.name}\``);
         try {
           const json = await this.tokenRequest(cfg, { grant_type: "refresh_token", refresh_token: old.refreshToken });
           const fresh = this.toStored(json, old);
+          if ((this.generations.get(cfg.name) ?? 0) !== generation) throw new AuthError("not_logged_in", "Sign-in changed while refreshing");
           saveToken(cfg.name, fresh);
           return fresh;
         } catch (e) {
@@ -147,6 +158,7 @@ export class AuthManager {
   /** POST to the token endpoint. Errors carry the OAuth error code and description only, never the request. */
   private async tokenRequest(cfg: OAuthProviderConfig, params: Record<string, string>): Promise<Record<string, unknown>> {
     const body = new URLSearchParams(params);
+    if (cfg.resource) body.set("resource", cfg.resource);
     const headers: Record<string, string> = { "content-type": "application/x-www-form-urlencoded", accept: "application/json" };
     if (cfg.tokenAuthMethod === "client_secret_basic" && cfg.clientSecret !== undefined) {
       headers.authorization = `Basic ${Buffer.from(`${encodeURIComponent(cfg.clientId)}:${encodeURIComponent(cfg.clientSecret)}`).toString("base64")}`;
@@ -187,17 +199,18 @@ export class AuthManager {
   }
 
   logout(name: string): boolean {
+    this.generations.set(name, (this.generations.get(name) ?? 0) + 1);
     for (const l of this.logins.values()) if (l.cfg.name === name && l.status.state === "pending") l.stop();
     return removeCredential(tokenKey(name));
   }
 
   /** Starts a login and returns what the user must do. `mode` defaults to the browser flow, else the device flow. */
-  async loginStart(cfg: OAuthProviderConfig, mode?: "browser" | "device"): Promise<LoginStatus> {
+  async loginStart(cfg: OAuthProviderConfig, mode?: "browser" | "device", prepareBrowser?: (redirectUri: string) => Promise<void>): Promise<LoginStatus> {
     const m = mode ?? (cfg.authorizationEndpoint ? "browser" : "device");
     if (m === "browser" && !cfg.authorizationEndpoint) throw new AuthError("unsupported", `"${cfg.name}" has no authorizationEndpoint: use the device flow`);
     if (m === "device" && !cfg.deviceAuthorizationEndpoint) throw new AuthError("unsupported", `"${cfg.name}" has no deviceAuthorizationEndpoint`);
     for (const l of this.logins.values()) if (l.cfg.name === cfg.name && l.status.state === "pending") l.stop(); // a new attempt replaces the old one
-    return m === "browser" ? this.startBrowser(cfg) : this.startDevice(cfg);
+    return m === "browser" ? this.startBrowser(cfg, prepareBrowser) : this.startDevice(cfg);
   }
 
   loginStatus(loginId: string): LoginStatus | undefined { return this.logins.get(loginId)?.status; }
@@ -246,16 +259,18 @@ export class AuthManager {
     return status;
   }
 
-  private async startBrowser(cfg: OAuthProviderConfig): Promise<LoginStatus> {
+  private async startBrowser(cfg: OAuthProviderConfig, prepare?: (redirectUri: string) => Promise<void>): Promise<LoginStatus> {
     const { verifier, challenge } = newPkce();
     const state = b64url(randomBytes(24));
     let finishRef!: (error?: string, cancelled?: boolean) => void;
+    let accepting = false;
     let redirectUri = "";
     const server = Bun.serve({
       hostname: "127.0.0.1", port: cfg.redirectPort ?? 0,
       fetch: async (req) => {
         const u = new URL(req.url);
         if (req.method !== "GET" || u.pathname !== cfg.redirectPath) return new Response("Not found", { status: 404 });
+        if (!accepting) return new Response("Sign-in is no longer pending", { status: 400 });
         const page = (msg: string, status = 200) => new Response(`<!doctype html><meta charset="utf-8"><title>Rigwell</title><p>${msg}</p>`, { status, headers: { "content-type": "text/html; charset=utf-8" } });
         // The state ties this redirect to our request: anything else (another local program, a stray tab) is refused.
         if (u.searchParams.get("state") !== state) return page("Unexpected sign-in response ignored.", 400);
@@ -265,6 +280,7 @@ export class AuthManager {
         if (!code) return page("Missing code.", 400);
         try {
           const json = await this.tokenRequest(cfg, { grant_type: "authorization_code", code, redirect_uri: redirectUri, code_verifier: verifier });
+          if (!accepting) return page("Sign-in was cancelled. You can close this tab.", 400);
           saveToken(cfg.name, this.toStored(json));
           finishRef();
           return page("Signed in to Rigwell. You can close this tab.");
@@ -275,6 +291,8 @@ export class AuthManager {
       },
     });
     redirectUri = `http://127.0.0.1:${server.port}${cfg.redirectPath}`;
+    // Registration must use the actual bound loopback URI, including its port.
+    try { await prepare?.(redirectUri); } catch (e) { await server.stop(true); throw e; }
     const url = new URL(cfg.authorizationEndpoint!);
     for (const [k, v] of Object.entries(cfg.authParams)) url.searchParams.set(k, v);
     url.searchParams.set("response_type", "code");
@@ -283,10 +301,15 @@ export class AuthManager {
     url.searchParams.set("state", state);
     url.searchParams.set("code_challenge", challenge);
     url.searchParams.set("code_challenge_method", "S256");
+    if (cfg.resource) url.searchParams.set("resource", cfg.resource);
     if (cfg.scopes.length) url.searchParams.set("scope", cfg.scopes.join(" "));
     return this.register(cfg, "browser", { url: url.toString() }, (finish) => {
       finishRef = finish;
-      (finish as any).onCleanup(() => setTimeout(() => void server.stop(true), 200)); // let the last response go out
+      accepting = true;
+      (finish as any).onCleanup(() => { accepting = false; });
+      // Stop listening immediately so a new attempt can reuse its registered port.
+      // Graceful stop lets the current callback response finish without a sleep.
+      (finish as any).onCleanup(() => void server.stop(false));
     });
   }
 

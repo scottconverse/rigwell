@@ -34,7 +34,7 @@ export const COMMANDS: SlashCommand[] = [
   { name: "btw", desc: "Ask a side question without interrupting the agent", args: "<question>" },
   { name: "copy", desc: "Copy the last assistant message" },
   { name: "cwd", aliases: ["cd"], desc: "Change the working folder", args: "<dir>", stopsRun: true },
-  { name: "mcp", desc: "MCP servers", args: "[add <name> <url|cmd> | remove <name>]" },
+  { name: "mcp", desc: "MCP servers", args: "[add <name> <url|cmd> | remove <name> | sign-in <name> | sign-out <name>]" },
   { name: "hooks", desc: "Manage hooks" },
   { name: "skills", desc: "Skills settings" },
   { name: "commands", desc: "Manage custom slash commands" },

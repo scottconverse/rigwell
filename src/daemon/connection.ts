@@ -547,6 +547,20 @@ export function createConnection(write: (line: string) => void, opts: Connection
         }
       }
       case "list_mcp_servers": return need().listMcpServers();
+      case "mcp_sign_in":
+      case "mcp_sign_out":
+      case "mcp_sign_in_status":
+      case "mcp_sign_in_cancel": {
+        const s = need();
+        if (typeof p.name !== "string" || !p.name) throw new RpcError(ErrorCodes.INVALID_PARAMS, "name is required");
+        if ((method === "mcp_sign_in_status" || method === "mcp_sign_in_cancel") && typeof p.loginId !== "string") throw new RpcError(ErrorCodes.INVALID_PARAMS, "loginId is required");
+        try {
+          if (method === "mcp_sign_in") return await s.signInMcp(p.name);
+          if (method === "mcp_sign_out") return await s.signOutMcp(p.name);
+          if (method === "mcp_sign_in_cancel") return s.cancelMcpLogin(p.name, p.loginId as string);
+          return s.mcpLoginStatus(p.name, p.loginId as string);
+        } catch (e) { throw new RpcError(ErrorCodes.INVALID_PARAMS, (e as Error).message); }
+      }
       case "add_mcp_server": {
         const s = need();
         try { return await s.addMcpServer(p as any); } catch (e) { throw new RpcError(ErrorCodes.INVALID_PARAMS, (e as Error).message); }

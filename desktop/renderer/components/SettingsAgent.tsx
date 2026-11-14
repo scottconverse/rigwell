@@ -7,7 +7,7 @@ import { DaemonConn, bridge } from "../lib/rpc.ts";
 import { bulkRename, managementRows, projectName, type SessionRow } from "../lib/sessions.ts";
 import { addUsage, fmt, percentUsed, total, zero, type TokenUsage } from "../lib/usage.ts";
 import { ManagedNote, OrgCeiling } from "./SettingsAccess.tsx";
-import { AddServerForm, Dialog, ServerList, TextDialog, useMcp } from "./Dialogs.tsx";
+import { AddServerForm, Dialog, McpLoginPanel, ServerList, TextDialog, useMcp } from "./Dialogs.tsx";
 import { WorktreePr } from "./WorktreePr.tsx";
 
 const Row = ({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => (
@@ -315,7 +315,8 @@ export function ConnectorSettings() {
         <>
           <div className="dlg-row"><h3>MCP Servers ({m.servers.length})</h3><span className="spacer" /><button onClick={() => void m.refresh()}>Refresh</button></div>
           {m.summary?.configError && <div className="banner warn" role="status">{m.summary.configError.path}: {m.summary.configError.message}</div>}
-          <ServerList servers={m.servers} busy={m.busy} onRemove={(n) => void m.remove(n)} />
+          <ServerList servers={m.servers} busy={m.busy} onRemove={(n) => void m.remove(n)} onSignIn={(n) => void m.signIn(n)} onSignOut={(n) => void m.signOut(n)} />
+          <McpLoginPanel login={m.login} onCancel={() => void m.cancelLogin()} />
           <AddServerForm busy={m.busy} onAdd={m.add} />
           {m.error && <div className="banner error" role="alert">{m.error}</div>}
         </>

@@ -1,5 +1,7 @@
 // MCP manager: parallel server startup, status tracking, tool naming, drop suppression (spec §5.7, §6.2).
 import { McpClient } from "./client.ts";
+import { hasMcpTokens, McpAuthRequired, signInMcp, signOutMcp } from "./auth.ts";
+import { authManager } from "../auth/oauth.ts";
 import { fromAddParams, loadMcpConfig, removeUserServer, saveUserServer } from "./config.ts";
 import type {
   AddMcpServerParams, McpCallResult, McpServerConfig, McpServerStatusInfo, McpStatus, McpStatusSummary, McpToolDef, McpToolInfo,
@@ -21,6 +23,7 @@ interface Entry {
   cfg: McpServerConfig;
   status: McpStatus;
   error?: string;
+  requiresAuth?: boolean;
   client?: McpClient;
   defs: McpToolDef[];
   drops: number;
@@ -46,6 +49,7 @@ export interface McpManagerOptions {
 export class McpManager {
   private entries = new Map<string, Entry>();
   private pendingStarts: Promise<unknown>[] = [];
+  private logins = new Map<string, string>();
   configError?: { path: string; message: string };
   warnings: string[] = [];
 
@@ -96,12 +100,14 @@ export class McpManager {
       const defs = await client.listTools(this.o.connectTimeoutMs ?? 30000);
       if (e.epoch !== epoch) { void client.close(); return; }
       e.client = client; e.defs = defs;
+      e.requiresAuth = false;
       client.onClose = (reason) => this.onDrop(e, epoch, reason);
       this.set(e, "connected");
     } catch (err) {
       void client.close().catch(() => {});
       if (e.epoch !== epoch) return;
       e.defs = [];
+      e.requiresAuth = err instanceof McpAuthRequired;
       this.set(e, "failed", (err as Error).message);
     }
   }
@@ -136,6 +142,7 @@ export class McpManager {
       name: e.cfg.name, status: e.status, source: e.cfg.source, isManaged: false, serverType: e.cfg.type,
     };
     if (e.error) i.error = e.error;
+    if (e.cfg.type !== "stdio") { i.requiresAuth = !!e.requiresAuth; i.hasAuthTokens = hasMcpTokens(e.cfg); }
     if (e.status === "connected") i.toolCount = e.defs.length;
     return i;
   }
@@ -178,7 +185,56 @@ export class McpManager {
     if (!t) throw new Error(`MCP tool not available: ${name}`);
     const e = this.entries.get(t.server);
     if (!e?.client || e.status !== "connected") throw new Error(`MCP server "${t.server}" is not connected`);
-    return e.client.callTool(t.tool, args, opts);
+    try { return await e.client.callTool(t.tool, args, opts); }
+    catch (err) {
+      if (err instanceof McpAuthRequired) {
+        await this.stopEntry(e); e.requiresAuth = true; this.set(e, "failed", err.message);
+      }
+      throw err;
+    }
+  }
+
+  private named(name: string) {
+    const e = this.entries.get(name);
+    if (!e) throw new Error("Unknown MCP server");
+    return e;
+  }
+
+  async signIn(name: string) {
+    const e = this.named(name);
+    if (e.cfg.disabled) throw new Error("This MCP server is disabled");
+    const epoch = e.epoch;
+    const st = await signInMcp(e.cfg);
+    if (this.entries.get(name) !== e || e.epoch !== epoch) { authManager().cancelLogin(st.loginId); throw new Error("MCP server changed during sign-in"); }
+    this.logins.set(st.loginId, name);
+    void authManager().waitLogin(st.loginId).then(async (done) => {
+      if (done.state !== "complete" || this.entries.get(name) !== e || e.epoch !== epoch) return;
+      await this.stopEntry(e); this.set(e, "connecting"); await this.connect(e);
+    }).catch(() => {});
+    return { ...st, name };
+  }
+
+  loginStatus(name: string, loginId: string) {
+    this.named(name);
+    if (this.logins.get(loginId) !== name) throw new Error("Unknown MCP login");
+    const st = authManager().loginStatus(loginId);
+    if (!st) throw new Error("Unknown MCP login");
+    return { ...st, name };
+  }
+
+  cancelLogin(name: string, loginId: string) {
+    this.loginStatus(name, loginId);
+    return { cancelled: authManager().cancelLogin(loginId) };
+  }
+
+  async signOut(name: string) {
+    const e = this.named(name);
+    if (e.cfg.type === "stdio") throw new Error("OAuth is unavailable for this MCP server");
+    await this.stopEntry(e);
+    const loggedOut = signOutMcp(e.cfg);
+    e.requiresAuth = true;
+    this.set(e, "disconnected", "Signed out");
+    return { loggedOut };
   }
 
   // ---------------------------------------------------------------- add / remove
@@ -194,12 +250,15 @@ export class McpManager {
   async removeServer(serverName: string, settingsLevel: "user" = "user"): Promise<{ success: boolean }> {
     if (settingsLevel !== "user") throw new Error('only settingsLevel "user" is supported');
     const e = this.entries.get(serverName);
+    for (const [id, name] of this.logins) if (name === serverName) { authManager().cancelLogin(id); this.logins.delete(id); }
     const existed = removeUserServer(serverName);
     if (e) { await this.stopEntry(e); this.entries.delete(serverName); }
     return { success: existed || !!e };
   }
 
   async shutdown(): Promise<void> {
+    for (const id of this.logins.keys()) authManager().cancelLogin(id);
+    this.logins.clear();
     await Promise.all([...this.entries.values()].map((e) => this.stopEntry(e)));
     this.entries.clear();
   }

@@ -197,3 +197,40 @@ Real sign-in availability and account-plan coverage depend on the provider's reg
 [provider sign-in guidance](https://support.claude.com/en/articles/13189465-log-in-to-your-claude-account) and
 [Google's own-client OAuth setup](https://ai.google.dev/gemini-api/docs/oauth). Fake authorization/model servers test
 the implementation; those tests do not prove that a real subscription is enabled for Rigwell.
+
+
+## Remote MCP sign-in
+
+A remote HTTP or SSE server that answers with an authorization challenge is shown as needing sign-in. Use its
+Sign in button in Connectors or Settings > Connectors, then open the sign-in page. The CLI equivalent is
+/mcp sign-in <name>. The desktop and TUI show completion without receiving access or refresh tokens.
+/mcp sign-out <name> removes that server URL's saved registration and tokens; other server URLs keep theirs.
+
+Rigwell discovers protected-resource metadata from the challenge, or the standard path/root locations, then
+OAuth or OpenID authorization-server metadata. It checks the resource and issuer identity and requires PKCE S256.
+HTTPS is required for authorization endpoints, with HTTP permitted on loopback for local services. Authorization
+and token requests include the server's resource indicator. Browser responses return to a loopback listener at
+/mcp-callback with state and PKCE validation. No visible browser is launched by the daemon.
+
+When oauth.clientId is absent and dynamic registration is offered, Rigwell registers its actual bound callback
+URI as a public native client. Registration is private and reused only with the same issuer/endpoints/redirect.
+Otherwise configure an owned registration in the server's oauth object in mcp.json:
+
+~~~json
+{"mcpServers":{"private-tools":{"type":"http","url":"https://tools.example/mcp","oauth":{"clientId":"your-own-client-id","redirectPort":8765}}}}
+~~~
+
+For a confidential registration, clientSecret accepts a keychain reference or environment reference, and
+tokenAuthMethod accepts client_secret_basic or client_secret_post. oauth: false disables OAuth and retains static
+headers. Tokens and private registration metadata use the credential store, scoped by canonical server URL. The
+store uses an available OS backend or its private-file fallback; native Windows keychain acceptance remains open.
+
+Each HTTP leg sends the bearer token, refreshes before expiry, and retries a rejected token once. A second 401
+or failed refresh removes the server's available tools and restores its sign-in action. Cleanup does not refresh.
+Redirects and cross-origin legacy SSE endpoints never forward credentials. Cancelling/removing a pending login
+closes its callback; sign-out during refresh cannot restore a removed credential.
+
+Protocol methods are mcp_sign_in {name}, mcp_sign_out {name}, mcp_sign_in_status {name,loginId}, and
+mcp_sign_in_cancel {name,loginId}, under the normal rigwell. prefix. list_mcp_servers includes requiresAuth and
+hasAuthTokens. Sign-in returns only a URL and pollable login status. The implementation follows the
+[MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).

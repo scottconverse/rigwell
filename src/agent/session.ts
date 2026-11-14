@@ -2035,6 +2035,10 @@ export class Session {
     return this.mcp;
   }
   listMcpServers() { return this.needMcp().listServers(); }
+  signInMcp(name: string) { return this.needMcp().signIn(name); }
+  signOutMcp(name: string) { return this.needMcp().signOut(name); }
+  mcpLoginStatus(name: string, id: string) { return this.needMcp().loginStatus(name, id); }
+  cancelMcpLogin(name: string, id: string) { return this.needMcp().cancelLogin(name, id); }
   addMcpServer(p: Parameters<McpManager["addServer"]>[0]) { return this.needMcp().addServer(p); }
   removeMcpServer(name: string, level: "user" = "user") { return this.needMcp().removeServer(name, level); }
 

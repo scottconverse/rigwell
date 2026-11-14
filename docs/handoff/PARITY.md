@@ -35,7 +35,7 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 
 ## 4. Connectors and tools
 
-16. MCP OAuth (§20.3).
+16. MCP OAuth (§20.3). Implemented: resource/issuer discovery, PKCE/DCR or owned clients, URL-bound credentials, refresh, Connectors/settings and /mcp sign-in/out. Fake-service and headless protocol/UI checks pass; candidate CI pending.
 17. Connector catalog (§20.4).
 18. Browser automation tools for the agent and the `agent-browser` skill (§20.5).
 
