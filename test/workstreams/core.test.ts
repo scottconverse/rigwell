@@ -70,7 +70,7 @@ test("two real member sessions use separate worktrees, stay live when idle, and 
     const member = service.members.get(one.agentId)!;
     await member.call("update_session_settings", { autonomyLevel: "high", interactionMode: "mission" });
     expect(member.connection.session!.settings.autonomyLevel).toBe("low");
-    const leadTools = attached.wrapTools([]); expect(leadTools.map((t) => t.name)).toEqual(["ProposeWorkstream", "SpawnAgent", "ListAgents", "SendMessage"]);
+    const leadTools = attached.wrapTools([]); expect(leadTools.map((t) => t.name)).toEqual(["ProposeWorkstream", "SpawnAgent", "ListAgents", "SendMessage", "CreateListener", "WaitForEvents"]);
     expect((await leadTools.find((t) => t.name === "ListAgents")!.run({}, {} as any)).data).toMatchObject({ agents: [{ name: "First" }, { name: "Second" }] });
     const prompt = JSON.stringify(fake.requests);
     expect(prompt).toContain(store.path("shared").replace(/\\/g, "\\\\"));

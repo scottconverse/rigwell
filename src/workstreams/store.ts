@@ -33,6 +33,12 @@ export interface WorkstreamMessage {
   id: string; ts: number; from: string; to: string; priority: MessagePriority; text: string;
   deliveredAt?: number; readAt?: number;
 }
+export type ListenerOn = "agent_idle" | "agent_turn_completed" | "agent_failed" | "agent_waiting_input" | "message" | "all_idle" | "file_changed" | "timer";
+export interface WorkstreamListener {
+  id: string; owner: string; on: ListenerOn; once: boolean; note?: string; createdAt: number;
+  filter: { agentId?: string; name?: string; to?: string; glob?: string; afterMs?: number };
+  lastFiredAt?: number;
+}
 
 export const workstreamsRoot = () => join(rigwellHome(), "workstreams");
 const safeId = (id: string) => { if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error("Invalid workstream id"); return id; };
@@ -89,6 +95,8 @@ export class WorkstreamStore {
     appendFileSync(this.path("messages.jsonl"), JSON.stringify(message) + "\n", { mode: 0o600 });
     return message;
   }
+  listeners(): WorkstreamListener[] { return JSON.parse(readFileSync(this.path("listeners.json"), "utf8")); }
+  writeListeners(listeners: WorkstreamListener[]) { atomicJson(this.path("listeners.json"), listeners); }
 }
 export function listWorkstreamStores(root = workstreamsRoot()): WorkstreamStore[] {
   let ids: string[]; try { ids = readdirSync(root); } catch { return []; }

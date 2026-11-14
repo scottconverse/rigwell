@@ -64,6 +64,8 @@ export function decide(tool: string, input: Record<string, unknown>, ctx: Permis
     case "SpawnAgent":
     case "ListAgents":
     case "SendMessage":
+    case "CreateListener":
+    case "WaitForEvents":
       return { decision: "allow" };
     case "load_tools":
     case "ToolSearch":
