@@ -58,7 +58,7 @@ maybe("desktop app: trust dialog and ask-user panel", () => {
       RIGWELL_TRUST_CWD: "0", // the test setup trusts every folder; this one must ask
     };
     delete env.NODE_OPTIONS;
-    app = await pw._electron.launch({ executablePath: electronBin, args: ["--no-sandbox", desktop, `--route=/?folder=${encodeURIComponent(repo)}`], env, timeout: 60_000 });
+    app = await pw._electron.launch({ executablePath: electronBin, args: ["--no-sandbox", ...(process.platform === "darwin" ? ["--use-mock-keychain"] : []), desktop, `--route=/?folder=${encodeURIComponent(repo)}`], env, timeout: 60_000 });
     page = await app.firstWindow();
     page.on("console", (m: any) => { if (["error", "warning"].includes(m.type())) pageLog.push(`${m.type()}: ${m.text().slice(0, 300)}`); });
     page.on("pageerror", (e: Error) => pageLog.push(`pageerror: ${e.message.slice(0, 300)}`));

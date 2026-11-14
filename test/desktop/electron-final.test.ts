@@ -72,7 +72,7 @@ maybe("desktop app: final gaps", () => {
     }
     const env: Record<string, string> = { ...(process.env as Record<string, string>), RIGWELL_HOME: home, DISPLAY: display, RIGWELL_DAEMON_CMD: JSON.stringify(["bun", CLI]) };
     delete env.NODE_OPTIONS;
-    app = await pw._electron.launch({ executablePath: electronBin, args: ["--no-sandbox", desktop, `--route=/?folder=${encodeURIComponent(repo)}`], env, timeout: 60_000 });
+    app = await pw._electron.launch({ executablePath: electronBin, args: ["--no-sandbox", ...(process.platform === "darwin" ? ["--use-mock-keychain"] : []), desktop, `--route=/?folder=${encodeURIComponent(repo)}`], env, timeout: 60_000 });
     page = await app.firstWindow();
     await page.waitForSelector(".dot.running", { timeout: 40_000 });
     await page.getByText("Fake Anthropic").first().waitFor({ timeout: 20_000 });

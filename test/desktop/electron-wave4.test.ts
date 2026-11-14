@@ -96,7 +96,7 @@ maybe("desktop app: wave 4 features", () => {
     };
     delete env.NODE_OPTIONS;
     if (process.platform === "darwin") env.PATH = `${sttDir}:${env.PATH}`;
-    app = await pw._electron.launch({ executablePath: electronBin, args: ["--no-sandbox", desktop, `--route=/?folder=${encodeURIComponent(repo)}`], env, timeout: 60_000 });
+    app = await pw._electron.launch({ executablePath: electronBin, args: ["--no-sandbox", ...(process.platform === "darwin" ? ["--use-mock-keychain"] : []), desktop, `--route=/?folder=${encodeURIComponent(repo)}`], env, timeout: 60_000 });
     app.process().stderr?.on("data", (b: Buffer) => { stderr += b.toString(); });
     page = await app.firstWindow();
     await page.waitForSelector(".dot.running", { timeout: 40_000 });
