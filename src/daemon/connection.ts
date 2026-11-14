@@ -43,6 +43,7 @@ const parkMs = () => Number(process.env.RIGWELL_PARK_MS) || 30 * 60_000;
 
 export interface ConnectionOptions {
   fleetOptions?: import("../machines/fleet.ts").FleetOptions;
+  shareDeps?: import("../sharing/transfer.ts").ShareTransferDeps;
   machineControl?: { stopSessions(): Promise<unknown>; shutdown(build: unknown): unknown };
   /** Injected SSH connection factory for fake-process acceptance; production uses the saved machine. */
   connectMachine?: (name: string) => Promise<RpcClient>;
@@ -474,6 +475,27 @@ export function createConnection(write: (line: string) => void, opts: Connection
         return { ...paths, models: listModelInfo(env.models), defaultModel: env.s.sessionDefaultSettings?.model ?? env.models[0]?.id };
       }
       case "machine_runtime_info": return (await import("../machines/runtime-info.ts")).machineRuntimeInfo();
+      case "export_session": {
+        const id = typeof p.sessionId === "string" ? p.sessionId : need().id;
+        if (p.format !== "html" && p.format !== "markdown") throw new RpcError(ErrorCodes.INVALID_PARAMS, "format must be html or markdown");
+        const sharing = await import("../sharing/session.ts");
+        return { content: sharing.renderSharedSession(sharing.sharedSession(id, { secrets: opts.shareDeps?.secrets }), p.format), format: p.format };
+      }
+      case "import_shared_session": {
+        if (typeof p.source !== "string") throw new RpcError(ErrorCodes.INVALID_PARAMS, "source is required");
+        return (await import("../sharing/transfer.ts")).importSharedSource(p.source, opts.shareDeps);
+      }
+      case "get_shared_session": case "fork_shared_session": {
+        if (typeof p.importId !== "string") throw new RpcError(ErrorCodes.INVALID_PARAMS, "importId is required");
+        const sharing = await import("../sharing/session.ts");
+        if (method === "get_shared_session") return { readOnly: true, session: sharing.readImportedSession(p.importId) };
+        if (typeof p.cwd !== "string" || !p.cwd) throw new RpcError(ErrorCodes.INVALID_PARAMS, "A working directory is required to fork an import");
+        return sharing.forkImportedSession(p.importId, p.cwd);
+      }
+      case "share_session": {
+        const id = typeof p.sessionId === "string" ? p.sessionId : need().id;
+        return (await import("../sharing/transfer.ts")).shareSecretGist(id, opts.canPrompt ? (params) => peer.request(METHOD_PREFIX + "request_permission", params) : undefined, opts.shareDeps);
+      }
       case "machine_fleet": return { machines: await (await fleet()).list() };
       case "machine_update_all": return (await fleet()).updateAll();
       case "machine_stop_sessions": {

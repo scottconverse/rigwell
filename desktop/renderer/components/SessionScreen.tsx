@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { app, useApp, useStore } from "../lib/app-model.ts";
 import { SessionController } from "../lib/session.ts";
-import { toMarkdown } from "../lib/transcript.ts";
+import { bridge } from "../lib/rpc.ts";
 import { readinessText } from "../lib/missions.ts";
 import { Composer } from "./Composer.tsx";
 import { toParams } from "../lib/attachments.ts";
@@ -108,6 +108,20 @@ function Loaded({ ctl }: { ctl: SessionController }) {
     try { await fn(); say(done); void app.refresh(); } catch (e) { say((e as Error).message); }
   };
 
+  const exportSession = async (format: "html" | "markdown") => {
+    setMenu(false);
+    try { const result = await ctl.request("export_session", { format }); const file = await bridge().dialog.saveSessionExport(format, result.content); say(file ? "Exported redacted session" : "Export canceled"); }
+    catch (e) { say((e as Error).message); }
+  };
+  const shareSession = async () => {
+    setMenu(false);
+    try { const result = await ctl.request("share_session"); if (result.shared) await copy(result.url, "share link"); else say("Share canceled"); }
+    catch (e) { say((e as Error).message); }
+  };
+  const copyMarkdown = async () => {
+    setMenu(false); try { const result = await ctl.request("export_session", { format: "markdown" }); await copy(result.content, "redacted Markdown"); } catch (e) { say((e as Error).message); }
+  };
+
   if (state.phase === "error") return <div className="center-note">Could not connect: {state.error}</div>;
 
   return (
@@ -132,7 +146,10 @@ function Loaded({ ctl }: { ctl: SessionController }) {
                 <button role="menuitem" className="menu-item" onClick={() => void copy(state.cwd, "working folder")}>Copy working folder</button>
                 <button role="menuitem" className="menu-item" onClick={() => void copy(id, "session id")}>Copy session id</button>
                 <button role="menuitem" className="menu-item" onClick={() => void copy(`rigwell://sessions/${id}`, "session link")}>Copy session link</button>
-                <button role="menuitem" className="menu-item" onClick={() => void copy(toMarkdown(state.items), "as Markdown")}>Copy as Markdown</button>
+                <button role="menuitem" className="menu-item" onClick={() => void copyMarkdown()}>Copy as Markdown</button>
+                <button role="menuitem" className="menu-item" onClick={() => void exportSession("html")}>Export redacted HTML</button>
+                <button role="menuitem" className="menu-item" onClick={() => void exportSession("markdown")}>Export redacted Markdown</button>
+                <button role="menuitem" className="menu-item" onClick={() => void shareSession()}>Copy share link</button>
               </div>
             )}
           </div>

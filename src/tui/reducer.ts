@@ -121,6 +121,7 @@ export function permissionPanel(id: string, params: any, display: DisplaySetting
   const u = uses[0] ?? {};
   const d = u.details ?? {};
   switch (u.confirmationType) {
+    case "share_session": return { ...base, kind: "permission", title: "Share session as an unlisted gist?", body: [`Title: ${d.title}`, `Destination: ${d.destination}`, `Size: ${d.bytes} bytes`, "", String(d.warning)], options: opts };
     case "propose_workstream": return { ...base, kind: "exit_spec", title: `Workstream for approval: ${d.title}`, body: [`Goal: ${d.goal}`, ...(d.budget ? [`Budget: ${JSON.stringify(d.budget)}`] : []), ...(d.agents?.length ? [`Members: ${JSON.stringify(d.agents)}`] : []), "", ...String(d.plan ?? "").split("\n")], planText: String(d.plan ?? ""), options: opts };
     case "create_pr": return { ...base, kind: "permission", title: "Push branch and create PR?", body: [`Repository: ${d.repository}`, `Branch: ${d.branch}`, `Base: ${d.base}`, `Title: ${d.title}`, `Draft: ${d.draft ? "yes" : "no"}`, "", String(d.body)], options: opts };
     case "code_review": return { ...base, kind: "permission", title: "Post review to the PR?", body: [`Repository: ${d.repository}`, `PR: #${d.number}`, `Head: ${d.head}`, `Action: ${d.event}`, "", String(d.body), ...(d.comments ?? []).map((c: any) => `${c.path}:${c.line} (${c.side})\n${c.body}`)], options: opts };

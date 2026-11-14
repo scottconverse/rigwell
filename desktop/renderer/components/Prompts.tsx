@@ -13,6 +13,7 @@ function describe(params: any): { title: string; lines: string[] } {
   const card = setupCard(u);
   if (card) return card;
   switch (u.confirmationType) {
+    case "share_session": return { title: "Share session as an unlisted gist?", lines: [`Title: ${d.title}`, `Destination: ${d.destination}`, `Size: ${d.bytes} bytes`, "", String(d.warning)] };
     case "create_pr": return { title: "Push branch and create PR?", lines: [`Repository: ${d.repository}`, `Branch: ${d.branch}`, `Base: ${d.base}`, `Title: ${d.title}`, `Draft: ${d.draft ? "yes" : "no"}`, "", String(d.body)] };
     case "code_review": return { title: "Post review to the PR?", lines: [`Repository: ${d.repository}`, `PR: #${d.number}`, `Head: ${d.head}`, `Action: ${d.event}`, "", String(d.body), ...(d.comments ?? []).map((c: any) => `${c.path}:${c.line} (${c.side})\n${c.body}`)] };
     case "exec": return { title: u.toolUse?.name === "Browser" ? "Use the browser pane" : "Command to approve", lines: [String(d.fullCommand ?? d.command ?? JSON.stringify(u.toolUse?.input ?? {})), ...(d.impactLevel ? [`${d.impactLevel} risk`] : []), ...(d.riskLevelReason ? [String(d.riskLevelReason)] : [])] };

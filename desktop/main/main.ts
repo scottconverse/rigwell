@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { badgeCount, notificationFor, soundFor, type SoundAction, type WindowState } from "./alerts.ts";
 import { initialWindowOptions, overlayFor } from "./appearance.ts";
 import { DaemonBroker } from "./broker.ts";
+import { saveSessionExport } from "./session-export.ts";
 import { daemonCommand as buildDaemonCommand } from "./daemon-cmd.ts";
 import { checkForUpdate, describeCheck, type UpdateCheck } from "./update-feed.ts";
 import { downloadAndVerify, installAppImage, UpdateRefused } from "./update-verify.ts";
@@ -383,6 +384,11 @@ function registerIpc() {
     const r = await dialog.showOpenDialog(w!, { properties: ["openFile"], filters });
     return r.canceled ? null : r.filePaths[0];
   }));
+  ipcMain.handle("dialog:saveSessionExport", guard(async (e, format: unknown, content: unknown) => saveSessionExport(format, content, async (extension) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const result = await dialog.showSaveDialog(win!, { title: "Export redacted session", defaultPath: `rigwell-session.${extension}`, filters: [{ name: "Session export", extensions: [extension] }] });
+    return result.canceled ? null : result.filePath ?? null;
+  })));
   ipcMain.handle("shell:openExternal", guard((_e, url: string) => {
     if (!isAllowedExternal(url)) throw new Error("Link not allowed");
     if (testHooks) { openedExternal.push(url); return; } // the test runner follows the link itself

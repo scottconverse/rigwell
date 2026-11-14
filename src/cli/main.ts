@@ -18,6 +18,8 @@ const USAGE = `Usage:
   rigwell daemon --stdio [--socket <path>]   bridge to an already running daemon
   rigwell [tui] [options]        interactive terminal UI (default when no subcommand is given)
   rigwell eval <run|report|tasks> [options]   (see rigwell eval --help)
+  rigwell export <session-id> <file.html|file.md>
+  rigwell import <file|url> [--fork --cwd <folder>]
   rigwell machine add <name> <user@host> | bootstrap <name>
   rigwell machine list | update <name> | restart <name> | stop <name> | remove <name> | update-all
 
@@ -297,6 +299,7 @@ async function main() {
     process.exit(0);
   }
   if (cmd === "eval") return (await import("../eval/cli.ts")).evalMain(argv);
+  if (cmd === "import" || cmd === "export") return (await import("../sharing/cli.ts")).sharingMain(cmd, argv);
   if (cmd === "daemon") {
     const i = argv.indexOf("--socket");
     const path = i >= 0 ? resolve(argv[i + 1] ?? fail("--socket needs a value")) : defaultSocketPath();
