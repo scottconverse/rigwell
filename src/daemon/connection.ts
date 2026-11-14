@@ -6,7 +6,7 @@ import { ErrorCodes, METHOD_PREFIX, RpcError, RpcPeer } from "../protocol/rpc.ts
 import { Session, SessionBusyError, type SessionHost, type SessionSettings } from "../agent/session.ts";
 import { applyCompaction } from "../agent/compaction.ts";
 import { AUTO_MODEL_ID, type RouterConfig } from "../agent/router.ts";
-import { autonomyAllowed, modelAllowed } from "../storage/org.ts";
+import { autonomyAllowed, clampAutonomy, modelAllowed } from "../storage/org.ts";
 import { handoffBrief, isHandoffId, loadHandoff } from "../agent/handoff.ts";
 import { hasProjectConfig, isFolderTrusted, loadSettings, trustFolder } from "../storage/settings.ts";
 import { findModel, listModelInfo, resolveModels, validateCustomModels } from "../storage/models.ts";
@@ -39,6 +39,8 @@ const parked = new Map<string, { session: Session; files: SessionFiles; worktree
 const parkMs = () => Number(process.env.RIGWELL_PARK_MS) || 30 * 60_000;
 
 export interface ConnectionOptions {
+  /** An owned member session cannot raise its autonomy above its lead's cap. */
+  maxAutonomy?: AutonomyLevel;
   /** The client can answer rigwell.request_permission (stream-jsonrpc). False for plain `exec "prompt"`. */
   canPrompt: boolean;
   runtimeSettingsPath?: string;
@@ -194,7 +196,8 @@ export function createConnection(write: (line: string) => void, opts: Connection
 
   function build(id: string, cwd: string, settings: SessionSettings, p: Record<string, unknown>, env: ReturnType<typeof environment>, override: ToolExecutionMode | undefined, restored?: { previousSessionId?: string; callingSessionId?: string; allowSubagentsInScripts?: boolean; messages: Message[]; tokenUsage?: any; deferred?: { loaded: string[]; announced: string[] }; archived?: Message[]; anchor?: string; todos?: any; title?: { value: string; manual: boolean } }) {
     // An org autonomy ceiling below high also rules out skip-permissions (it is the highest level of all).
-    const skip = (opts.forced?.skipPermissions ?? p.skipPermissionsUnsafe === true) && autonomyAllowed("high", env.s.maxAutonomyLevel);
+    const maxAutonomy = opts.maxAutonomy ? clampAutonomy(opts.maxAutonomy, env.s.maxAutonomyLevel) : env.s.maxAutonomyLevel;
+    const skip = (opts.forced?.skipPermissions ?? p.skipPermissionsUnsafe === true) && autonomyAllowed("high", maxAutonomy);
     const f = files!;
     const hooksConfig = loadHooksConfig({ cwd, trustProject: env.trusted });
     const sessionEnv = sessionEnvironment(p);
@@ -203,7 +206,9 @@ export function createConnection(write: (line: string) => void, opts: Connection
       ...(sessionEnv ? { extraEnv: sessionEnv.env, redact: (t: string) => redactSecrets(t, sessionEnv.secrets) } : {}),
       resolveModel: (mid) => findModel(env.models, mid),
       createAdapter, streamWithRetry: streamWithRetry as any,
-      toolsFor: ((base) => (opts.wrapTools ? (o: Parameters<typeof toolsForSession>[0]) => opts.wrapTools!(base(o)) : base))(opts.extraTools ? (o: Parameters<typeof toolsForSession>[0]) => [...toolsForSession(o), ...opts.extraTools!()] : toolsForSession), decide, lists: env.lists,
+      toolsFor: ((base) => (opts.wrapTools ? (o: Parameters<typeof toolsForSession>[0]) => opts.wrapTools!(base(o)) : base))(opts.extraTools ? (o: Parameters<typeof toolsForSession>[0]) => [...toolsForSession(o), ...opts.extraTools!()] : toolsForSession), decide: opts.maxAutonomy && !autonomyAllowed("high", maxAutonomy)
+        ? (tool, input, ctx) => decide(tool, input, { ...ctx, interactionMode: ctx.interactionMode === "mission" ? "auto" : ctx.interactionMode })
+        : decide, lists: env.lists,
       scriptToolModels: env.s.scriptToolModels, scriptLimits: env.s.scriptLimits,
       toolExecutionModeOverride: override,
       skipPermissions: skip,
@@ -223,7 +228,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
       enterMissionMode: opts.extraMethods?.enter_mission_mode ? async () => (await opts.extraMethods!.enter_mission_mode!({})) as Record<string, unknown> : undefined,
       modelUpgradePath: Array.isArray(env.s.modelUpgradePath) ? (env.s.modelUpgradePath as unknown[]).filter((x): x is string => typeof x === "string") : undefined,
       compaction: env.s.compaction as any, compactionTokenLimit: env.s.compactionTokenLimit,
-      maxAutonomy: env.s.maxAutonomyLevel, enableSecretScan: env.s.enableSecretScan === true,
+      maxAutonomy, enableSecretScan: env.s.enableSecretScan === true,
       compactionModelMode: env.s.compactionModelMode === "current-model" ? "current-model" : "default",
       compactionThresholdCheckEnabled: env.s.compactionThresholdCheckEnabled, router: routerOf(env),
       persistence: persistenceFor(f),

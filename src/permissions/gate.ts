@@ -59,6 +59,10 @@ export function decide(tool: string, input: Record<string, unknown>, ctx: Permis
     case "StartMissionRun":
     case "DismissHandoffItems":
     case "EndFeatureRun":
+    // Workstreams enforce role boundaries and proposal approval in their service.
+    case "ProposeWorkstream":
+    case "SpawnAgent":
+    case "ListAgents":
       return { decision: "allow" };
     case "load_tools":
     case "ToolSearch":

@@ -1,22 +1,24 @@
 # Handoff: Rigwell build state
 
-Branch `phase-1-core-loop`, draft PR scottconverse/rigwell#1 (base `main`). Do not merge without the owner.
+Branch `phase-1-core-loop`, draft PR scottconverse/rigwell#1 (base `main`). Commit and push only to this branch. Never merge or push main.
 
 ## First: set up the session
-- Repo: `https://github.com/scottconverse/rigwell`. Work on branch `phase-1-core-loop` (this file does not exist on `main`):
-  `git clone https://github.com/scottconverse/rigwell && cd rigwell && git checkout phase-1-core-loop`.
-  Commit and push to `phase-1-core-loop`; it feeds draft PR #1. Never push to `main`.
-- Tools: Bun 1.4.4, Node 22.23.5 (Scoop nodejs22), Git, ripgrep and authenticated gh. Dependencies, Electron and Chromium installed. Prepend C:/Users/scott/scoop/apps/nodejs22/current to PATH for Node 22. Owner-authorized CodexElevatedDevHelper job c30ef34e03594787b19f3649dfcfa851 enabled Developer Mode, exit 0. Prior registry state is ../developer-mode-before.json. File-symlink assertions pass. Full local Windows baseline: 989 pass, 25 expected skips, 0 fail, 5401 assertions, 259.34 s (../full-devmode.log). Later exact baseline candidate is verified by the four green CI jobs above. Current feature checks: core/TUI/headless UI 14 pass, 0 fail, 76 assertions, 12.37 s; both typechecks pass after moving the UI fixture under the desktop JSX project. Final headless checks passed as recorded above; exact-candidate CI is next.
-- Historical baseline before the approved section 20 expansion: all 11 phases in §9, two audit gap waves, and the owner-approved §1 items
-  (voice dictation, built-in skills, API keys/secrets/environments pages, automation templates, VISUAL.html, guided setup,
-  tray icon, Chrome cookie import), plus OAuth sign-in (`credentialSource`, no shipped client IDs).
-- Choices where the spec was silent: `docs/decisions.md` (numbered; superseded entries are marked, not deleted).
-- Historical local Linux baseline: `bun test` 1011 pass / 0 fail (run `cd desktop && npm install`, and `node node_modules/electron/install.js`
-  if `node_modules/electron/dist` is missing, before the desktop tests; build the Linux package with
-  `cd desktop && bun run package:linux` for the packaging tests). `bunx tsc --noEmit -p .` and `cd desktop && npx tsc -p .` clean.
-- Historical CI baseline had Linux test and macOS package green; the current candidate requires fresh CI as recorded above.
+- Repo: https://github.com/scottconverse/rigwell. The handoff files are on phase-1-core-loop, not main.
+- Windows Halo: Bun 1.4.4, Node 22.23.5 (Scoop nodejs22), Git, ripgrep and authenticated gh are installed. Dependencies, Electron and Chromium are installed. Prepend C:/Users/scott/scoop/apps/nodejs22/current to PATH for Node 22.
+- Read this file fully, agent-brief.md, PARITY.md and the relevant source specification before the next item. User instructions supersede older workflow rules in agent-brief.md.
+- Required checks: bunx tsc --noEmit -p .; cd desktop and npx tsc -p .; bun test; relevant CI in ci.yml and platforms.yml. Native local test windows are forbidden while desktop occupancy is unknown or the owner is using Halo. Use headless affected tests and native CI jobs.
+- Never use U+2014 or put model names in added files or commits. Never copy text from evidence/. Tests use fake model/provider servers and local bare remotes only. Log design choices in decisions.md.
 
-## Next task: build `create_pr` (owner approved)
+## State
+- PR feature delivered candidate: 4602ed69beda5e3f503271f2bf2a74f970cf0f6c. ci 43563455830 Linux test/desktop SUCCESS; platforms 43563455849 macOS/Windows tests and unsigned packages SUCCESS. Final affected local headless checks: 215 pass, 0 fail, 785 assertions, 71.47 s (../pr-final-headless.log). Both typechecks pass. No owned local or CI jobs remain. Decisions 330-331 cover implementation and fixtures.
+- Current work: Workstreams slice 1 implemented (durable shared folder, approved proposal, roster and persistent member spawning). Headless affected suite: 72 pass, 0 fail, 297 assertions, 28.16 s (../ws-slice1-affected.log). After tightening the mission-mode autonomy ceiling, the six Workstream tests pass, 38 assertions, 4.76 s (../ws-slice1-cap.log); both typechecks pass. Decision 332. Next push this slice and wait for all four required CI jobs before slice 2. Native tests run only on CI. No owned local jobs remain.
+- Group 1 delivered baseline: 026068942212670896129801ad56f0371003becb. ci 43561500066 Linux test/desktop SUCCESS; platforms 43561500068 macOS/Windows tests and unsigned packages SUCCESS. macOS 992 pass, 23 expected platform skips, 0 fail, 87.54 s; Windows suite zero failures, 207.70 s.
+- Original Windows worktree root cause: Bun's expect(...).rejects.toThrow stalled subprocess response processing. Await the rejected RPC first and assert its actual in_use response envelope, avoiding false positives from timeout text. bun test test/e2e/worktree.test.ts: 4 pass, 45 assertions, 8.30 s; target setup-profile case 1.75 s. No transport workaround or raised deadline (decision 322).
+- Baseline desktop fixes: native visibility fallback on did-finish-load; discard stale overlapping sidebar refreshes; acknowledge side-chat write toggles; portable fixtures and Windows shell Enter handling. macOS native stack proved cookie-key creation waited in SecItemAdd/defaultKeychainUI/AuthorizationCopyRights. Unsigned UI tests now use Chromium's mock Keychain, with shutdown assertions active. The unproven deferred-exit hypothesis was reverted (decisions 325-329).
+- Owner-authorized CodexElevatedDevHelper job c30ef34e03594787b19f3649dfcfa851 enabled Developer Mode, exit 0. Prior registry state: ../developer-mode-before.json. File-symlink tests then passed 8 tests/32 assertions. Full local Windows baseline: 989 pass, 25 expected platform skips, 0 fail, 5401 assertions, 259.34 s (../full-devmode.log). All symlink assertions remain active.
+- Remaining order: Workstreams six green slices, then every remaining PARITY item in order. All are approved. Owner-provided keys/OAuth IDs/Stax/signing inputs are needed when those acceptance items are reached. Do not stop while independent authorized work remains.
+
+## Completed: `create_pr` (owner approved, green on 4602ed6)
 Spec §18.6 (and §18.5 for the auto-delete rule). Scope:
 - Daemon method `rigwell.create_pr {worktreePath, title?, body?, base?, draft?}`: push the session's worktree branch
   (`git push -u origin <branch>`), then open the PR with the `gh` CLI if present (`gh pr create`), else the GitHub REST API
@@ -28,7 +30,7 @@ Spec §18.6 (and §18.5 for the auto-delete rule). Scope:
 - UI: a "Create PR" button and PR status chip in the desktop worktree panel (`desktop/`), and `/pr` in the TUI.
 - Tests with a local bare repo as origin and a fake `gh` script / fake API server; never call real GitHub.
 
-## Next task 2: build local Workstreams (owner approved; the main reason for Rigwell)
+## Next task: build local Workstreams (owner approved; the main reason for Rigwell)
 Spec §15.10 has the full design: a lead session spawns long-lived member agents (own worktrees), messages them,
 waits on listeners, interrupts and archives them, through `ProposeWorkstream`, `SpawnAgent`, `ListAgents`,
 `SendMessage`, `InterruptAgent`, `RenameAgent`, `ArchiveAgent`, `CreateListener` and `WaitForEvents`. Shared state
@@ -48,7 +50,7 @@ Build all of it; leave nothing out. Decision 320 records the approval.
 
 ## Current acceptance work
 - Group 1 is complete on 0260689: Windows worktree, Linux native visibility, sidebar refresh race, macOS Keychain test isolation, and all four CI jobs green. See State and decisions 322-329.
-- create_pr is the current candidate. Headless affected checks and exact-candidate CI must pass before Workstreams begins.
+- create_pr is delivered on 4602ed6 with all four CI jobs green. Workstreams slice 1 is current.
 
 ## Waiting on the owner (do not decide for them)
 - (Resolved) `create_pr` and PR status (§18.6): the owner APPROVED building it. See "Next task" below.

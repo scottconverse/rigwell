@@ -8,6 +8,7 @@ import { onWorktreeNotification, startWorktreeHousekeeping } from "../worktree/c
 import { loadSettings } from "../storage/settings.ts";
 import { METHOD_PREFIX } from "../protocol/rpc.ts";
 import { createMissionService } from "../missions/index.ts";
+import { createWorkstreamService } from "../workstreams/index.ts";
 import { createSidePane, type ConnCtx, type SidePaneOptions } from "../sidepane/index.ts";
 import { DEFAULT_WS_PORT, removeDaemonInfo, startWsServer, writeDaemonInfo } from "./ws.ts";
 
@@ -58,6 +59,8 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
     ...opts.sidepane,
   });
   const missions = createMissionService({ log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs });
+  const workstreams = createWorkstreamService({ log: opts.log });
+  const workstreamClients = new Map<ReturnType<typeof createConnection>, () => void>();
   const ctxs = new Map<ReturnType<typeof createConnection>, ConnCtx>();
   const mkConn = (write: (line: string) => void) => {
     let conn!: ReturnType<typeof createConnection>;
@@ -70,17 +73,20 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
       session: () => conn.session, notify: ctx.notify,
       request: (m, p) => conn.peer.request(METHOD_PREFIX + m, p),
     });
+    const stream = workstreams.attach({ session: () => conn.session, notify: ctx.notify, request: (m, p) => conn.peer.request(METHOD_PREFIX + m, p) });
     conn = createConnection(write, {
       canPrompt: true, log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs,
       extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx), ...mission.methods },
-      wrapTools: mission.wrapTools,
+      wrapTools: (tools) => stream.wrapTools(mission.wrapTools(tools)),
       extraTools: sidepane || autoTools.length ? () => [...(sidepane ? sidepane.tools() : []), ...autoTools] : undefined,
     });
     conns.add(conn);
     ctxs.set(conn, ctx);
+    workstreamClients.set(conn, stream.close);
     return conn;
   };
   const dropConn = (conn: ReturnType<typeof createConnection>) => {
+    workstreamClients.get(conn)?.(); workstreamClients.delete(conn);
     conns.delete(conn);
     const ctx = ctxs.get(conn);
     if (ctx) sidepane?.connectionClosed(ctx);
@@ -134,8 +140,10 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
     wsUrl: wsServer?.url,
     wsToken: wsServer?.token,
     automations: auto,
+    workstreams,
     get sessionCount() { return [...conns].filter((c) => c.session).length; },
     stop() {
+      void workstreams.stop();
       auto?.stop();
       offWorktree();
       housekeeping.stop();
