@@ -5,12 +5,14 @@ import { join, resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import { rigwellHome } from "../storage/paths.ts";
 import { ScheduleError, machineTimeZone, normalizeSchedule, parseSchedule, validTimeZone, type Schedule } from "./schedule.ts";
+import { externalKind, validateEventTrigger, type EventTrigger, type ExternalKind } from "./triggers/config.ts";
+import type { TriggerEvent } from "./triggers/events.ts";
 
 export type RunStatus = "in_progress" | "success" | "failure" | "cancelled";
 export type FailureReason =
   | "dispatch_timed_out" | "automation_files_missing" | "host_resources" | "dispatch_exception" | "agent_error"
   | "model_timed_out" | "mcp_unavailable" | "host_slept" | "daemon_restarted" | "session_closed_by_user" | "closed_before_completion";
-export type TriggerKind = "schedule" | "webhook" | "manual";
+export type TriggerKind = "schedule" | "webhook" | "manual" | ExternalKind;
 
 export interface Frontmatter {
   name: string;
@@ -23,7 +25,9 @@ export interface Frontmatter {
   paused?: boolean;
   tags?: string[];
   targetSessionId?: string;
-  trigger?: "schedule" | "webhook";
+  trigger?: "schedule" | "webhook" | ExternalKind;
+  eventTrigger?: EventTrigger;
+  postResult?: boolean;
   /** IANA zone the cron is evaluated in. Default: the machine zone at creation. */
   timezone?: string;
   /** off | low | medium | high. Default high. Never skip-all-permissions. */
@@ -49,10 +53,12 @@ export interface AutomationState {
   /** When the user last resumed it; the missed-run clock restarts here. */
   resumedAt?: number;
   /** A failed first attempt waits here for its one retry. */
-  retry?: { at: number; trigger: TriggerKind; payload?: string; scheduledFor?: number };
+  retry?: { at: number; trigger: TriggerKind; payload?: string; scheduledFor?: number; event?: TriggerEvent };
 }
 
 export interface RunRecord {
+  eventId?: string;
+  chain?: string[];
   runId: string;
   sessionId?: string;
   status: RunStatus;
@@ -102,6 +108,7 @@ function scalar(v: string): unknown {
   if (t === "true") return true;
   if (t === "false") return false;
   if (/^-?\d+(\.\d+)?$/.test(t)) return Number(t);
+  if (t.startsWith("{")) return JSON.parse(t);
   if (t.startsWith("[") && t.endsWith("]")) return t.slice(1, -1).split(",").map((x) => String(scalar(x))).filter((x) => x !== "");
   if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
     try { return t.startsWith('"') ? JSON.parse(t) : t.slice(1, -1); } catch { return t.slice(1, -1); }
@@ -127,7 +134,7 @@ export function serializeHeartbeat(fm: Frontmatter, body: string): string {
   const lines: string[] = [];
   for (const [k, v] of Object.entries(fm)) {
     if (v === undefined) continue;
-    if (Array.isArray(v)) lines.push(`${k}: [${v.map((x) => JSON.stringify(x)).join(", ")}]`);
+    if (v !== null && typeof v === "object") lines.push(`${k}: ${JSON.stringify(v)}`);
     else if (typeof v === "string") lines.push(`${k}: ${JSON.stringify(v)}`);
     else lines.push(`${k}: ${String(v)}`);
   }
@@ -144,11 +151,14 @@ const AUTONOMY = ["off", "low", "medium", "high"];
 export function validateFrontmatter(fm: Frontmatter): Schedule | undefined {
   if (typeof fm.name !== "string" || !fm.name.trim()) throw new Error("name is required");
   if (fm.machine !== undefined && (typeof fm.machine !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$/.test(fm.machine))) throw new Error("Invalid machine name");
-  if (fm.trigger !== undefined && fm.trigger !== "schedule" && fm.trigger !== "webhook") throw new Error("trigger must be schedule or webhook");
+  if (fm.trigger !== undefined && fm.trigger !== "schedule" && fm.trigger !== "webhook" && !externalKind(fm.trigger)) throw new Error("Unknown automation trigger");
+  if (externalKind(fm.trigger)) validateEventTrigger(fm.trigger, fm.eventTrigger);
+  if (fm.postResult !== undefined && typeof fm.postResult !== "boolean") throw new Error("postResult must be a boolean");
   if (fm.timezone !== undefined && !validTimeZone(fm.timezone)) throw new Error(`unknown time zone: ${fm.timezone}`);
   if (fm.autonomy !== undefined && !AUTONOMY.includes(fm.autonomy)) throw new Error("autonomy must be off, low, medium or high");
   if (fm.payloadRegex !== undefined) { try { new RegExp(fm.payloadRegex); } catch { throw new Error("payloadRegex is not a valid regular expression"); } }
   if (fm.maxRunsPerHour !== undefined && (!Number.isInteger(fm.maxRunsPerHour) || fm.maxRunsPerHour < 1)) throw new Error("maxRunsPerHour must be a positive integer");
+  if (externalKind(fm.trigger)) return undefined;
   if (fm.trigger === "webhook" && !fm.schedule) return undefined;
   if (typeof fm.schedule !== "string") throw new ScheduleError("schedule is required");
   return parseSchedule(fm.schedule);
@@ -257,7 +267,7 @@ export function createAutomationFolder(root: string, fmIn: Frontmatter, body: st
   atomicWrite(join(dir, "HEARTBEAT.md"), serializeHeartbeat(fm, body));
   const a = loadAutomation(dir, folder, source);
   writeState(a, { createdAt: Date.now() });
-  if (fm.trigger === "webhook") writeSecrets(a, { webhookSecret: newSecret() });
+  if (fm.trigger === "webhook" || ((fm.trigger === "github" || fm.trigger === "ci") && (fm.eventTrigger as { transport?: string })?.transport === "webhook")) writeSecrets(a, { webhookSecret: newSecret() });
   return a;
 }
 
@@ -265,6 +275,7 @@ export function updateAutomationFolder(a: Automation, fmPatch: Partial<Frontmatt
   const fm = { ...a.fm, ...fmPatch } as Frontmatter;
   for (const k of Object.keys(fm) as (keyof Frontmatter)[]) if (fm[k] === undefined || fm[k] === null) delete fm[k];
   validateFrontmatter(fm);
+  if ((fm.trigger === "webhook" || ((fm.trigger === "github" || fm.trigger === "ci") && (fm.eventTrigger as { transport?: string })?.transport === "webhook")) && !readSecrets(a).webhookSecret) writeSecrets(a, { ...readSecrets(a), webhookSecret: newSecret() });
   atomicWrite(join(a.dir, "HEARTBEAT.md"), serializeHeartbeat(withSavedSchedule(fm), body ?? a.body));
 }
 

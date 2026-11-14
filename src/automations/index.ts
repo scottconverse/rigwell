@@ -13,6 +13,7 @@ import { startWebhookServer, type WebhookServer } from "./webhook.ts";
 import { CronRunner, CronStore, loopIntervalToCron, type CronHost, type CronRecord, type CronStatus } from "./crons.ts";
 import { readSecrets, type Automation, type Frontmatter } from "./store.ts";
 import { instantiateTemplate, listTemplates, TemplateError } from "./templates.ts";
+import { AutomationTriggers, type TriggerDeps } from "./triggers/service.ts";
 
 export { automationTools } from "./tools.ts";
 export { AUTOMATION_TEMPLATES, instantiateTemplate, listTemplates } from "./templates.ts";
@@ -21,6 +22,7 @@ export { renderVisual } from "./visual.ts";
 export { AutomationManager, CronRunner, CronStore, createHeadlessRunner, startWebhookServer };
 
 export interface ServiceOptions {
+  triggers?: TriggerDeps;
   clock?: Clock;
   runner?: HeadlessRunner;
   limits?: Partial<Limits>;
@@ -42,12 +44,14 @@ const notFound = (e: unknown) => new RpcError(ErrorCodes.ENTITY_NOT_FOUND, (e as
 const str = (p: Params, k: string) => (typeof p[k] === "string" && p[k] ? (p[k] as string) : undefined);
 const need = (p: Params, k: string) => str(p, k) ?? (() => { throw bad(`${k} is required`); })();
 
-const FM_KEYS = ["name", "schedule", "description", "model", "reasoningEffort", "workingDirectory", "machine", "paused", "tags", "targetSessionId", "trigger", "timezone", "autonomy", "payloadRegex", "maxRunsPerHour"] as const;
+const FM_KEYS = ["name", "schedule", "description", "model", "reasoningEffort", "workingDirectory", "machine", "paused", "tags", "targetSessionId", "trigger", "eventTrigger", "postResult", "timezone", "autonomy", "payloadRegex", "maxRunsPerHour"] as const;
 
 export function createAutomationService(opts: ServiceOptions = {}) {
   const runner = opts.runner ?? createHeadlessRunner({ log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs });
   const mgr = new AutomationManager({ runner, clock: opts.clock, limits: opts.limits, projectDirs: opts.projectDirs, log: opts.log,
     onAutoPaused: (a, reason) => opts.onAutoPaused?.({ id: a.id, name: a.fm.name, reason }) });
+  const triggers = new AutomationTriggers(mgr, opts.triggers, opts.log);
+  mgr.onRunCompleted = (a, run, text, event) => triggers.completed(a, run, text, event);
   const emitCron = (c: CronRecord) => { try { opts.onCronChanged?.(c); } catch { /* a listener never breaks the store */ } return c; };
   const crons = new CronStore(opts.clock);
   const cronRunner = opts.cronHost ? new CronRunner(crons, opts.cronHost, opts.clock, (c) => emitCron(c)) : undefined;
@@ -58,7 +62,7 @@ export function createAutomationService(opts: ServiceOptions = {}) {
     const want = mgr.hasWebhooks();
     if (want && !webhook) {
       try {
-        webhook = startWebhookServer(mgr, { port: opts.webhookPort, host: opts.webhookHost });
+        webhook = startWebhookServer(mgr, { port: opts.webhookPort, host: opts.webhookHost, external: (a, raw, headers) => triggers.webhook(a, raw, headers) });
         opts.log?.(`[automations] webhook listening on ${webhook.host}:${webhook.port}`);
       } catch (e) { opts.log?.(`[automations] webhook server failed to start: ${(e as Error).message}`); }
     } else if (!want && webhook) { webhook.stop(); webhook = undefined; }
@@ -69,13 +73,14 @@ export function createAutomationService(opts: ServiceOptions = {}) {
     id: a.id, folder: a.folder, name: a.fm.name, description: a.fm.description, isValid: a.isValid,
     invalidReason: a.invalidReason, error: a.error, source: a.source,
     schedule: a.fm.schedule, timezone: a.timezone, trigger: a.fm.trigger ?? "schedule", paused: a.fm.paused === true,
+    eventTrigger: a.fm.eventTrigger, postResult: a.fm.postResult === true,
     status: !a.isValid ? "invalid" : a.fm.paused ? "paused" : a.state.health === "degraded" ? "degraded" : "active",
     ...(a.state.pausedReason ? { pausedReason: a.state.pausedReason, pausedAt: a.state.pausedAt } : {}),
     consecutiveFailures: a.state.consecutiveFailures ?? 0,
     nextRunAt: mgr.nextRunAt(a), lastRunAt: a.state.lastRunAt, lastRunId: a.state.lastRunId,
     lastRunSessionId: a.state.lastRunSessionId, lastRunStatus: a.state.lastRunStatus, runCount: a.state.runCount,
     retryAt: a.state.retry?.at, instructions: a.body, machine: a.fm.machine, workingDirectory: a.fm.workingDirectory,
-    ...(a.fm.trigger === "webhook" ? { webhookPath: `/hooks/${a.id}`, webhookPort: webhook?.port } : {}),
+    ...(a.fm.trigger === "webhook" || ((a.fm.trigger === "github" || a.fm.trigger === "ci") && (a.fm.eventTrigger as { transport?: string })?.transport === "webhook") ? { webhookPath: `/hooks/${a.id}`, webhookPort: webhook?.port } : {}),
   });
 
   const fmFrom = (p: Params): Partial<Frontmatter> => {
@@ -102,7 +107,7 @@ export function createAutomationService(opts: ServiceOptions = {}) {
         instructions ||= t.instructions;
       }
       const a = mgr.create(fm, instructions, str(p, "projectDir"));
-      const secret = fm.trigger === "webhook" ? readSecrets(a).webhookSecret : undefined;
+      const secret = readSecrets(a).webhookSecret;
       return { automation: view(a), ...(secret ? { webhookSecret: secret } : {}) };
     }),
     list_automation_templates: () => ({ templates: listTemplates() }),
@@ -119,6 +124,7 @@ export function createAutomationService(opts: ServiceOptions = {}) {
     }),
     get_automation_history: (p) => guard(() => ({ runs: mgr.history(need(p, "id")), deliveries: mgr.deliveries(need(p, "id")) })),
     rotate_automation_secret: (p) => guard(() => ({ webhookSecret: mgr.rotateSecret(need(p, "id")) })),
+    get_automation_trigger_status: (p) => guard(() => ({ trigger: triggers.status(mgr.find(need(p, "id"))) })),
 
     list_crons: (p) => ({ crons: crons.list({ sessionId: str(p, "sessionId"), scope: str(p, "scope"), includeInactive: p.includeInactive === true }) }),
     create_cron: (p) => guard(() => {
@@ -134,11 +140,11 @@ export function createAutomationService(opts: ServiceOptions = {}) {
   };
 
   return {
-    manager: mgr, crons, cronRunner,
+    manager: mgr, crons, cronRunner, triggers,
     methods, view, emitCron, clock: opts.clock ?? { now: Date.now },
     get webhookPort() { return webhook?.port; },
-    start() { mgr.start(); cronRunner?.start(); syncWebhook(); },
-    stop() { mgr.stop(); cronRunner?.stop(); webhook?.stop(); webhook = undefined; },
+    start() { mgr.start(); cronRunner?.start(); syncWebhook(); triggers.start(); },
+    stop() { triggers.stop(); mgr.stop(); cronRunner?.stop(); webhook?.stop(); webhook = undefined; },
     syncWebhook,
   };
 }

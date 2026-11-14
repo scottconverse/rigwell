@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { SharedSessions } from "../components/SharedSessions.tsx";
 import { Sync } from "../components/Sync.tsx";
 import { PhoneAccessPage } from "../components/PhoneAccess.tsx";
+import { Automations, AutomationDetail } from "../components/Automations.tsx";
 import { SessionScreen } from "../components/SessionScreen.tsx";
 import { app } from "../lib/app-model.ts";
 const sockets = new Map<number, WebSocket>(); let seq = 0;
@@ -27,7 +28,9 @@ const off = () => () => {};
 Object.defineProperty(navigator, 'clipboard', { value: { async writeText(text: string) { (window as any).fixtureClipboard = text; } } });
 function Fixture() {
   if (window.location.pathname === "/phone") return <PhoneAccessPage />;
-  const [route, go] = useState(window.location.pathname === "/sync" ? "/sync" : "/imports");
+  const [route, go] = useState(window.location.pathname === "/sync" ? "/sync" : window.location.pathname === "/automations" ? "/automations" : "/imports");
+  if (route === "/automations") return <Automations go={go} />;
+  if (route.startsWith("/automations/")) return <AutomationDetail id={route.split("/")[2]!} go={go} />;
   if (route === "/sync") return <Sync go={go} />;
   return route.startsWith("/sessions/") ? <SessionScreen sessionId={route.split("/")[2]!} /> : <SharedSessions id={route.split("/")[2]} go={go} />;
 }

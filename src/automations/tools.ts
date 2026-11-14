@@ -33,11 +33,13 @@ const FIELDS = {
   machine: { type: "string", description: "Saved remote machine name. Omit to run locally. Remote runs use that machine's settings and credentials." },
   timezone: { type: "string", description: "IANA zone the schedule is read in. Defaults to the machine zone." },
   autonomy: { type: "string", enum: ["off", "low", "medium", "high"], description: "Autonomy for runs (default high). Anything needing approval is denied." },
-  trigger: { type: "string", enum: ["schedule", "webhook"] },
+  trigger: { type: "string", enum: ["schedule", "webhook", "github", "ci", "slack", "chained"] },
+  eventTrigger: { type: "object", description: "Event trigger configuration: GitHub/CI repos, events, branch and optional polling/webhook; Slack stored credential names, events, channels and text pattern; chained source automation IDs and status. Never include tokens." },
+  postResult: { type: "boolean", description: "Allow results to be posted to the verified source issue, PR or Slack thread. Default false." },
   targetSessionId: { type: "string", description: "Add each run's prompt to this existing session instead of starting a new one." },
 } as const;
 
-const FM_KEYS = ["name", "schedule", "description", "model", "reasoningEffort", "workingDirectory", "machine", "timezone", "autonomy", "trigger", "targetSessionId"] as const;
+const FM_KEYS = ["name", "schedule", "description", "model", "reasoningEffort", "workingDirectory", "machine", "timezone", "autonomy", "trigger", "eventTrigger", "postResult", "targetSessionId"] as const;
 
 function pick(input: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};

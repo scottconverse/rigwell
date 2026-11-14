@@ -1,8 +1,10 @@
 // Automations page logic (spec §16.7). Pure functions.
+import { externalKind, validateEventTrigger, type EventTrigger, type ExternalKind } from "../../../src/automations/triggers/config.ts";
 export interface AutomationRow {
   id: string; name: string; description?: string; isValid: boolean; invalidReason?: string; schedule?: string; timezone?: string; trigger: string;
   paused: boolean; status: string; nextRunAt?: number; lastRunAt?: number; lastRunStatus?: string; lastRunSessionId?: string; runCount: number;
   instructions?: string; workingDirectory?: string; machine?: string; webhookPath?: string; webhookPort?: number;
+  eventTrigger?: EventTrigger; postResult?: boolean;
 }
 export interface RunRow { runId: string; sessionId?: string; status: string; trigger: string; attempt: number; startedAt: number; finishedAt?: number; failureReason?: string; errorMessage?: string }
 
@@ -14,7 +16,7 @@ export const SCHEDULE_PRESETS: { id: string; label: string; value: string }[] = 
   { id: "custom", label: "Custom", value: "" },
 ];
 
-export interface CreateForm { name: string; preset: string; custom: string; instructions: string; workingDirectory: string; machine?: string; trigger: "schedule" | "webhook" }
+export interface CreateForm { name: string; preset: string; custom: string; instructions: string; workingDirectory: string; machine?: string; trigger: "schedule" | "webhook" | ExternalKind; eventTrigger?: EventTrigger; postResult?: boolean }
 
 /** Validates the form; returns the create_automation params or an error message. */
 export function buildCreate(f: CreateForm): { params: Record<string, unknown> } | { error: string } {
@@ -22,6 +24,7 @@ export function buildCreate(f: CreateForm): { params: Record<string, unknown> } 
   if (!name) return { error: "Give the automation a name." };
   if (!f.instructions.trim()) return { error: "Write the instructions the agent should follow." };
   const params: Record<string, unknown> = { name, instructions: f.instructions, trigger: f.trigger };
+  if (externalKind(f.trigger)) { try { params.eventTrigger = validateEventTrigger(f.trigger, f.eventTrigger); } catch (e) { return { error: (e as Error).message }; } params.postResult = f.postResult === true; }
   if (f.workingDirectory.trim()) params.workingDirectory = f.workingDirectory.trim();
   if (f.machine && f.machine !== "local") params.machine = f.machine;
   if (f.trigger === "schedule") {
