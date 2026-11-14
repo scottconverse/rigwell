@@ -33,7 +33,10 @@ export function spawnRemoteWorkerSession(req: WorkerRequest): WorkerHandle {
       const plan = missionPlanFiles(req.missionDir);
       let libraryBaseline = Object.fromEntries(Object.entries(plan).filter(([path]) => path.startsWith("library/")));
       const syncLibrary = async () => {
-        const files = await remote.request("mission_worker_library_snapshot", { sessionId: req.sessionId });
+        const files = await Promise.race([
+          remote.request("mission_worker_library_snapshot", { sessionId: req.sessionId }),
+          stopped.then(() => { throw new Error("Worker stopped while returning mission notes"); }),
+        ]);
         libraryBaseline = mergeMissionLibrary(req.missionDir!, libraryBaseline, files);
       };
       const end = req.wrapTools([], { workingDirectory: () => remoteCwd, verifyCommit: async (repo, commit) => {

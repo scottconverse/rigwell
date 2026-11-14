@@ -66,3 +66,31 @@ test("interrupt during SSH startup returns and closes a late connection without 
   await opening; await new Promise((r) => setTimeout(r, 0));
   expect(closed).toBe(true);
 });
+
+test("worker watchdog closes an owned channel that stalls while returning mission notes", async () => {
+  const env = tmpEnv(), id = crypto.randomUUID(), calls: string[] = [];
+  let closed = false;
+  const wire: import("../../src/sdk/transport.ts").Transport = { onMessage() {}, onClose() {},
+    write(line) {
+      const message = JSON.parse(line), method = message.method.replace(/^rigwell\./, ""); calls.push(method);
+      if (method === "mission_worker_library_snapshot") return;
+      const result = method === "prepare_mission_worker" ? { dir: env.root, cwd: env.root, prompt: "fixture" } : {};
+      queueMicrotask(() => {
+        wire.onMessage(JSON.stringify({ jsonrpc: "2.0", type: "response", id: message.id, result }));
+        if (method === "add_user_message") wire.onMessage(JSON.stringify({ jsonrpc: "2.0", type: "notification", method: "rigwell.session_notification", params: { notification: { type: "agent_turn_completed", reason: "completed" } } }));
+      });
+    }, async close() { closed = true; wire.onClose(); },
+  };
+  const client = new RpcClient(wire), missionDir = join(env.root, "mission"); mkdirSync(missionDir);
+  writeFileSync(join(missionDir, "mission.md"), "Fixture");
+  const handle = spawnWorkerSession({ sessionId: id, resume: false, machine: "fixture", cwd: env.root, modelId: "fake", missionId: "fixture", role: "worker", missionDir,
+    feature: { id: "fixture", description: "Fixture", skillName: "fixture", milestone: "one", status: "pending" }, prompt: "", inactivityMs: 20, startGraceMs: 1000,
+    wrapTools: () => [{ name: "EndFeatureRun", description: "fixture", inputSchema: { type: "object" }, category: "other", async run() { return { content: "done" }; } }], connectMachine: async () => client,
+  });
+  let watchdogCheck: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const outcome = await Promise.race([handle.done, new Promise<null>((resolve) => { watchdogCheck = setTimeout(() => resolve(null), 500); })]);
+    expect(outcome?.status).toBe("timeout"); expect(closed).toBe(true);
+    expect(calls).toContain("close_session");
+  } finally { clearTimeout(watchdogCheck); await client.close(); await handle.done; env.cleanup(); }
+});

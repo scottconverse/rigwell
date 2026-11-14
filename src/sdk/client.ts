@@ -8,7 +8,7 @@ export type IncomingRequestHandler = (method: string, params: Record<string, unk
 const TIMEOUTS: Record<string, number> = {
   machine_runtime_info: 10_000,
   prepare_automation_workspace: 30_000,
-  prepare_mission_worker: 30_000, mission_worker_verify_commit: 10_000, owned_session_snapshot: 30_000,
+  prepare_mission_worker: 30_000, mission_worker_verify_commit: 10_000, mission_worker_library_snapshot: 30_000, owned_session_snapshot: 30_000,
   prepare_workstream_member: 30_000,
   machine_workspace_info: 10_000, cleanup_owned_member_worktree: 30_000,
   watch_owned_member_files: 10_000, unwatch_owned_member_files: 10_000,
