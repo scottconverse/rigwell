@@ -177,7 +177,17 @@ function createWindow(route = "/"): BrowserWindow {
   windows.add(win);
   slots.set(win, freeSlot(slots.values()));
   const id = win.webContents.id;
-  win.once("ready-to-show", () => { if (b?.maximized) win.maximize(); win.show(); updateTray(); });
+  // Some Linux display/GPU combinations never emit ready-to-show for a hidden window.
+  // The loaded page already has its startup theme from preload, so it is safe to show then too.
+  let initiallyShown = false;
+  const showInitially = () => {
+    if (initiallyShown || win.isDestroyed()) return;
+    initiallyShown = true;
+    if (b?.maximized) win.maximize();
+    win.show(); updateTray();
+  };
+  win.once("ready-to-show", showInitially);
+  win.webContents.once("did-finish-load", showInitially);
   win.on("show", () => updateTray()); win.on("hide", () => updateTray());
   win.webContents.setWindowOpenHandler(({ url }) => { if (isAllowedExternal(url)) void shell.openExternal(url); return { action: "deny" }; });
   win.webContents.on("will-navigate", (e, url) => { if (!isTrustedSender(url, [APP_PAGE])) { e.preventDefault(); if (isAllowedExternal(url)) void shell.openExternal(url); } });

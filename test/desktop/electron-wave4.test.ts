@@ -100,6 +100,7 @@ maybe("desktop app: wave 4 features", () => {
     app.process().stderr?.on("data", (b: Buffer) => { stderr += b.toString(); });
     page = await app.firstWindow();
     await page.waitForSelector(".dot.running", { timeout: 40_000 });
+    expect(await app.evaluate(({ BrowserWindow }: any) => BrowserWindow.getAllWindows()[0].isVisible())).toBe(true);
   });
 
   afterAll(async () => {
