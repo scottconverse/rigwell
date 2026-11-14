@@ -100,6 +100,9 @@ export interface ModelConfig {
   provider: ProviderKind;
   baseUrl: string;       // e.g. "http://127.0.0.1:4010" (adapter appends /v1/messages or /v1/responses)
   apiKey?: string;       // already env-expanded
+  /** Signed-in official client, invoked by Rigwell's session loop instead of direct HTTP. */
+  executionBackend?: "claude-cli" | "codex-cli";
+  cliExecutable?: string;
   /** Spec 12.2 credentialSource: the OAuth provider whose token authenticates requests (never together with apiKey). */
   oauth?: import("../auth/config.ts").OAuthProviderConfig;
   extraHeaders?: Record<string, string>;
@@ -133,6 +136,7 @@ export interface ToolSpec {
 export interface ModelRequest {
   model: ModelConfig;
   sessionId: string;
+  nativeExecution?: { cwd: string; readOnly: boolean; skipPermissions: boolean; synthesis?: boolean };
   /**
    * Explicit prompt cache key (spec 4.6.5); the Responses and Chat adapters send `cacheKey ?? sessionId` as prompt_cache_key.
    * A side-chat fork sets it to its parent session id so both share the cached prefix without sharing any session state (spec 17.4).

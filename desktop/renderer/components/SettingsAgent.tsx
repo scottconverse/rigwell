@@ -134,7 +134,7 @@ export function CustomModels() {
         {list.map((m, i) => (
           <li key={i} className="srv">
             <span className="srv-name">{m.displayName ?? m.model}</span>
-            <span className="muted small">{m.provider} / {m.baseUrl} / {(m.credentialSource ? `Account: ${m.credentialSource}` : keyHint(m.apiKey ?? ""))}</span>
+            <span className="muted small">{m.provider} / {m.executionBackend ? "Signed-in official client" : `${m.baseUrl} / ${m.credentialSource ? `Account: ${m.credentialSource}` : keyHint(m.apiKey ?? "")}`}</span>
             <span className="spacer" />
             <button aria-label={`Edit ${m.displayName ?? m.model}`} onClick={() => { setEditing({ index: i, form: toForm(m) }); setError(""); }}>Edit</button>
             <button className="danger" aria-label={`Remove ${m.displayName ?? m.model}`} onClick={() => void save({ customModels: list.filter((_, j) => j !== i) }).then(() => app.refresh())}>Remove</button>
@@ -149,8 +149,11 @@ export function CustomModels() {
             <select aria-label="Provider" value={f.provider} onChange={(e) => { const p = PROVIDERS.find((x) => x.id === e.target.value)!; set({ provider: p.id, baseUrl: !f.baseUrl || PROVIDERS.some((x) => x.baseUrl === f.baseUrl) ? p.baseUrl : f.baseUrl, ...(p.id === "bedrock-converse" ? { bedrock: f.bedrock ?? { awsRegion: "us-east-1", awsAuthMethod: "profile", awsProfile: "default" }, credentialSource: "", apiKey: "" } : { bedrock: undefined }), noImageSupport: p.id === "generic-chat-completion-api" }); }}>{PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</select></label>
           <label className="field"><span>Model name</span><input aria-label="Model name" value={f.model} onChange={(e) => set({ model: e.target.value })} /></label>
           <label className="field"><span>Display name</span><input aria-label="Display name" value={f.displayName} onChange={(e) => set({ displayName: e.target.value })} /></label>
-          <label className="field"><span>Base URL</span><input aria-label="Base URL" value={f.baseUrl} onChange={(e) => set({ baseUrl: e.target.value })} /></label>
-          {f.provider !== "bedrock-converse" && <>
+          {(f.provider === "anthropic" || f.provider === "openai") && <label className="field"><span>Execution</span><select aria-label="Model execution" value={f.executionBackend ?? ""} onChange={(e) => set({ executionBackend: e.target.value as "" | "claude-cli" | "codex-cli", apiKey: "", credentialSource: "" })}>
+            <option value="">Direct API</option><option value={f.provider === "anthropic" ? "claude-cli" : "codex-cli"}>Signed-in official client</option>
+          </select><span className="muted small">Rigwell manages the session. The signed-in client runs native tools and enforces its own permissions.</span></label>}
+          {!f.executionBackend && <label className="field"><span>Base URL</span><input aria-label="Base URL" value={f.baseUrl} onChange={(e) => set({ baseUrl: e.target.value })} /></label>}
+          {!f.executionBackend && f.provider !== "bedrock-converse" && <>
             <label className="field"><span>Authentication</span>
               <select aria-label="Model authentication" value={f.credentialSource} onChange={(e) => set({ credentialSource: e.target.value, apiKey: "" })}>
                 {!!accounts.length && <optgroup label="Account sign-in">{accounts.map((p) => <option key={p.name} value={p.name}>Account: {p.name}</option>)}</optgroup>}

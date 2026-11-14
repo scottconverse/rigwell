@@ -6,6 +6,19 @@ import { emptyForm, toEntry, toForm, validate } from "../../desktop/renderer/lib
 import { readUserSettings, updateUserSettings } from "../../desktop/main/user-settings.ts";
 import { validateCustomModels } from "../../src/storage/models.ts";
 
+test("signed-in client profiles round-trip without API routing or credentials", () => {
+  for (const [provider, executionBackend] of [["anthropic", "claude-cli"], ["openai", "codex-cli"]] as const) {
+    const form = toForm({ model: "fixture-id", provider, executionBackend, cliExecutable: process.execPath });
+    expect(validate(form)).toBeNull();
+    form.apiKey = "obsolete-key"; form.credentialSource = "obsolete-account";
+    form.headers = [{ key: "Authorization", value: "obsolete-value" }];
+    const entry = toEntry(form);
+    expect(entry.executionBackend).toBe(executionBackend);
+    for (const key of ["apiKey", "credentialSource", "extraHeaders", "baseUrl"]) expect(entry).not.toHaveProperty(key);
+    expect(validateCustomModels({ customModels: [entry] }).problems).toEqual([]);
+  }
+});
+
 test("editing supported providers preserves their format, credential source and adapter options", () => {
   for (const provider of ["google", "generic-chat-completion-api", "bedrock-converse"] as const) {
     const source = { model: "fixture-id", provider, baseUrl: "http://127.0.0.1:1234/v1", profile: { toolExecutionMode: "direct_only" }, apiProvider: "fixture", ...(provider === "bedrock-converse" ? { bedrock: { awsRegion: "us-east-1", awsAuthMethod: "profile", awsProfile: "fixture" } } : {}) };

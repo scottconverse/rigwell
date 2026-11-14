@@ -3,6 +3,7 @@ import type { BedrockConfig, ModelConfig, ProviderKind, ReasoningEffort } from "
 import type { RigwellSettings } from "./settings.ts";
 import { KEYCHAIN_PREFIX, lookupCredential } from "./credentials.ts";
 import { parseOAuthProviders, type OAuthProviderConfig } from "../auth/config.ts";
+import { isAbsolute } from "node:path";
 
 export interface ModelProblem {
   index: number;
@@ -90,6 +91,12 @@ export function validateCustomModels(
     if (typeof raw.provider !== "string" || !(PROVIDERS as string[]).includes(raw.provider))
       return bad(`unsupported provider ${JSON.stringify(raw.provider)} (supported: ${PROVIDERS.join(", ")})`);
     if (raw.apiProvider !== undefined && (typeof raw.apiProvider !== "string" || !raw.apiProvider.trim())) return bad("apiProvider must be a non-empty string");
+    if (raw.executionBackend !== undefined) {
+      if (!(["claude-cli", "codex-cli"] as unknown[]).includes(raw.executionBackend)) return bad("unsupported executionBackend");
+      if (raw.provider !== (raw.executionBackend === "claude-cli" ? "anthropic" : "openai")) return bad("executionBackend does not match provider");
+      if ([raw.apiKey, raw.apiKeyHelper, raw.credentialSource, raw.bedrock, raw.extraHeaders, raw.extraArgs].some((v) => v !== undefined)) return bad("signed-in CLI profiles cannot include API credentials, routing headers or request overrides");
+    }
+    if (raw.cliExecutable !== undefined && (!raw.executionBackend || typeof raw.cliExecutable !== "string" || !isAbsolute(raw.cliExecutable))) return bad("cliExecutable requires a signed-in CLI backend and an absolute path");
     for (const k of ["chatCompletionRequest", "chatCompletionRequestByProvider"] as const)
       if (raw[k] !== undefined && (typeof raw[k] !== "object" || raw[k] === null || Array.isArray(raw[k]))) return bad(`${k} must be an object`);
     // credentialSource (spec 12.2): a connected account plan instead of a key. Not combinable with apiKey or apiKeyHelper.
@@ -103,7 +110,7 @@ export function validateCustomModels(
     // baseUrl is required unless `bedrock` is set (spec 12.2), the OAuth provider gives apiBaseUrl, or the provider is google.
     const bedrockRaw = raw.bedrock;
     if (raw.provider === "bedrock-converse" && !bedrockRaw) return bad("bedrock settings are required for provider bedrock-converse");
-    if (raw.baseUrl === undefined && (bedrockRaw || raw.provider === "google" || oauthProvider?.apiBaseUrl)) { /* derived below */ }
+    if (raw.baseUrl === undefined && (raw.executionBackend || bedrockRaw || raw.provider === "google" || oauthProvider?.apiBaseUrl)) { /* derived below */ }
     else if (typeof raw.baseUrl !== "string" || !/^https?:\/\/\S+$/.test(raw.baseUrl)) return bad("baseUrl must be an http(s) URL");
     if (raw.reasoningEffort !== undefined && !EFFORTS.includes(raw.reasoningEffort)) return bad(`invalid reasoningEffort ${JSON.stringify(raw.reasoningEffort)}`);
     for (const k of ["maxOutputTokens", "maxContextLimit"] as const)
@@ -150,9 +157,11 @@ export function validateCustomModels(
     }
     if (missing.length) return bad(`unset environment variable(s): ${[...new Set(missing)].join(", ")}`);
 
-    const baseUrl: string = typeof raw.baseUrl === "string" ? raw.baseUrl : oauthProvider?.apiBaseUrl ?? defaultBaseUrl(raw.provider as ProviderKind, bedrock);
+    const baseUrl: string = raw.executionBackend ? "" : typeof raw.baseUrl === "string" ? raw.baseUrl : oauthProvider?.apiBaseUrl ?? defaultBaseUrl(raw.provider as ProviderKind, bedrock);
     const displayName = typeof raw.displayName === "string" && raw.displayName.trim() ? raw.displayName : raw.model;
     models.push({
+      ...(raw.executionBackend ? { executionBackend: raw.executionBackend } : {}),
+      ...(raw.cliExecutable ? { cliExecutable: raw.cliExecutable } : {}),
       id: `custom:${displayName.trim().replace(/\s+/g, "-")}-${index}`,
       model: raw.model,
       displayName,

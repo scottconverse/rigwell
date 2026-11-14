@@ -2,6 +2,7 @@
 // The page only ever sees masked secrets: a value that still starts with the mask means "unchanged".
 export const MASK = "****";
 export interface ModelForm {
+  executionBackend?: "" | "claude-cli" | "codex-cli";
   model: string; displayName: string; provider: "anthropic" | "openai" | "google" | "generic-chat-completion-api" | "bedrock-converse"; baseUrl: string;
   apiKey: string; maxOutputTokens: string; maxContextLimit: string; reasoningEffort: string; noImageSupport: boolean; headers: { key: string; value: string }[];
   credentialSource: string;
@@ -19,6 +20,7 @@ export const emptyForm = (): ModelForm => ({ model: "", displayName: "", provide
 
 export function toForm(e: Record<string, any>): ModelForm {
   return {
+    executionBackend: e.executionBackend ?? "",
     model: e.model ?? "", displayName: e.displayName ?? "", provider: PROVIDERS.find((p) => p.id === e.provider)?.id ?? "anthropic", baseUrl: e.baseUrl ?? "", apiKey: e.apiKey ?? "",
     credentialSource: e.credentialSource ?? "", ...(e.bedrock ? { bedrock: { ...e.bedrock } } : {}), original: { ...e },
     maxOutputTokens: e.maxOutputTokens ? String(e.maxOutputTokens) : "", maxContextLimit: e.maxContextLimit ? String(e.maxContextLimit) : "", reasoningEffort: e.reasoningEffort ?? "",
@@ -30,6 +32,7 @@ const posInt = (s: string) => /^\d+$/.test(s.trim()) && Number(s) > 0;
 
 export function validate(f: ModelForm): string | null {
   if (!f.model.trim()) return "The model name is required.";
+  if (f.executionBackend && f.provider !== (f.executionBackend === "claude-cli" ? "anthropic" : "openai")) return "Select the matching provider for the signed-in client.";
   if (f.credentialSource && f.apiKey.trim()) return "Account sign-in cannot be combined with an API key.";
   if (f.provider === "bedrock-converse" && !f.bedrock) return "Bedrock settings are required.";
   if (f.bedrock) {
@@ -37,7 +40,7 @@ export function validate(f: ModelForm): string | null {
     if (f.bedrock.awsAuthMethod === "profile" && !f.bedrock.awsProfile?.trim()) return "The AWS profile is required.";
     if (f.bedrock.awsAuthMethod === "credentials-command" && !f.bedrock.awsCredentialExport?.trim()) return "The AWS credential export command is required.";
   }
-  if (f.baseUrl.trim() ? !/^https?:\/\/\S+$/.test(f.baseUrl.trim()) : !f.bedrock && f.provider !== "google" && !f.credentialSource) return "The base URL must start with http:// or https://.";
+  if (!f.executionBackend && (f.baseUrl.trim() ? !/^https?:\/\/\S+$/.test(f.baseUrl.trim()) : !f.bedrock && f.provider !== "google" && !f.credentialSource)) return "The base URL must start with http:// or https://.";
   for (const [label, v] of [["Max output tokens", f.maxOutputTokens], ["Context limit", f.maxContextLimit]] as const) if (v.trim() && !posInt(v)) return `${label} must be a whole number above zero.`;
   for (const h of f.headers) if (h.key.trim() === "" && h.value !== "") return "A header needs a name.";
   return null;
@@ -58,6 +61,10 @@ export function toEntry(f: ModelForm): Record<string, unknown> {
   if (f.noImageSupport || f.provider === "generic-chat-completion-api") e.noImageSupport = f.noImageSupport;
   const headers = f.headers.filter((h) => h.key.trim());
   if (headers.length) e.extraHeaders = Object.fromEntries(headers.map((h) => [h.key.trim(), h.value]));
+  if (f.executionBackend) {
+    e.executionBackend = f.executionBackend;
+    for (const key of ["baseUrl", "apiKey", "apiKeyHelper", "credentialSource", "extraHeaders", "extraArgs", "bedrock"]) delete e[key];
+  } else { delete e.executionBackend; delete e.cliExecutable; }
   return e;
 }
 

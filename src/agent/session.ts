@@ -1376,7 +1376,9 @@ export class Session {
         limits: { idleTimeoutMs: g.streamIdleTimeoutMs, hardLimitMs: g.hardResponseLimitMs },
       });
       this.deps.log?.(`[compaction] ${o.reason}: summarizing ${real.length} messages (${built.transcriptChars} chars) with ${model.id}; summarizer limit ${built.limit} tokens, max_tokens ${built.req.maxOutputTokens}`);
-      const stream = this.deps.streamWithRetry(this.deps.createAdapter(model), { ...built.req, signal: o.signal }, {
+      const stream = this.deps.streamWithRetry(this.deps.createAdapter(model), { ...built.req, signal: o.signal,
+        ...(model.executionBackend ? { nativeExecution: { cwd: this.cwd, readOnly: true, skipPermissions: false, synthesis: true } } : {}),
+      }, {
         strategy: "non_interactive", baseDelayMs: this.deps.retryBaseDelayMs,
         onRetry: (attempt: number, why: string) => this.notify({ type: "llm_retry", attempt, reason: why }),
       });
@@ -1437,7 +1439,11 @@ export class Session {
 
   private buildInput(model: ModelConfig, signal?: AbortSignal) {
     const prof = resolveProfile(model, this.deps.profileSettings);
+    if (model.executionBackend && (sandboxStatus(this.id, this.cwd).enabled || this.deps.enableSecretScan || this.deps.toolFilter?.length || this.deps.toolIds?.restrict?.length)) {
+      throw new ModelError("rejected", "The signed-in client cannot enforce this session's Rigwell sandbox, commit scan or restricted tool policy. Use a direct adapter for this session.", { retryable: false });
+    }
     return {
+      ...(model.executionBackend ? { nativeExecution: { cwd: this.cwd, readOnly: this.specMode || this.settings.autonomyLevel === "off", skipPermissions: this.deps.skipPermissions } } : {}),
       model, sessionId: this.id, mode: this.effectiveMode(), tools: this.tools(), messages: this.messages,
       reasoningEffort: this.activeEffort(), signal,
       extraSystem: [...(prof.promptVariant ? [prof.promptVariant] : []), ...(this.deps.extraSystem ?? [])],
@@ -1465,7 +1471,7 @@ export class Session {
   async warmupCache(): Promise<void> {
     if (this.running) return;
     const model = this.currentModel();
-    if (!model) return;
+    if (!model || model.executionBackend) return;
     try {
       const input = this.buildInput(model);
       const req = this.builder.buildWarmup(input);
@@ -1989,6 +1995,7 @@ export class Session {
   private async generateTitle(firstMessage: string) {
     this.title.asked = true;
     const model = this.compactionModel();
+    if (model.executionBackend) return; // Native execution is not an incidental title-generation request.
     try {
       const cfg = this.compactionCfg();
       const max = Math.min(32 + cfg.textHeadroom, model.maxOutputTokens ?? Infinity);

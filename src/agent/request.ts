@@ -10,6 +10,7 @@ import { systemBlocks, systemChoice } from "./prompts.ts";
 export const DEFAULT_MAX_OUTPUT_TOKENS = 32_000;
 
 export interface BuildInput {
+  nativeExecution?: ModelRequest["nativeExecution"];
   model: ModelConfig;
   sessionId: string;
   mode: ToolExecutionMode;
@@ -146,6 +147,7 @@ export class RequestBuilder {
   private assemble(i: BuildInput, messages: Message[]): ModelRequest {
     return {
       model: i.model, sessionId: i.sessionId, system: [...systemBlocks(i.mode, systemChoice(i.systemPrompt)), ...(i.extraSystem ?? [])],
+      ...(i.nativeExecution ? { nativeExecution: i.nativeExecution } : {}),
       tools: i.tools.map((t) => ({ name: t.name, description: i.toolDescriptions?.[t.name] ?? t.description, inputSchema: t.inputSchema })),
       messages, ...(i.cacheStrategy ? { cacheStrategy: i.cacheStrategy } : {}), ...(i.openai ? { openai: i.openai } : {}), ...(i.cacheKey ? { cacheKey: i.cacheKey } : {}),
       maxOutputTokens: i.maxOutputTokens ?? i.model.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,

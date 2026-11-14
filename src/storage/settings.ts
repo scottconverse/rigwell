@@ -17,6 +17,8 @@ export interface CustomModelEntry {
   displayName?: string;
   provider?: string;
   baseUrl?: string;
+  executionBackend?: "claude-cli" | "codex-cli";
+  cliExecutable?: string;
   /** AWS settings (spec 12.2), checked in models.ts. */
   bedrock?: unknown;
   apiKey?: string;

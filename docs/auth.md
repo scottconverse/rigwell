@@ -1,5 +1,35 @@
 # Sign-in with an account plan, secrets and environments
 
+## Signed-in coding clients
+
+Settings > Custom Models offers **Signed-in official client** for Anthropic and OpenAI profiles.
+The settings entry uses `executionBackend: "claude-cli"` with `provider: "anthropic"`, or
+`executionBackend: "codex-cli"` with `provider: "openai"`. Supply the model through private settings.
+An optional absolute `cliExecutable` overrides executable discovery. No API key or base URL is needed.
+API credentials, cloud routing, HTTP overrides and credentialSource cannot be combined with this backend.
+
+Rigwell retains its Session loop, workspace selection, message history, turn lifecycle, cancellation and usage
+recording. The official client owns OAuth, refresh and native coding tools. Native tool events appear as activity;
+Rigwell does not execute those tool calls again. Each request starts a fresh native invocation with the visible
+history and current request. No native resume mapping is assumed. This differs from the direct HTTP adapters.
+
+Install and sign in to the official client first. Claude subscription login uses `claude auth login --claudeai`;
+OpenAI device sign-in uses `codex login --device-auth`. Those are user-run commands; Rigwell does not open a browser.
+The adapter checks subscription authentication before each invocation, removes inherited API/cloud overrides and
+parent Codex desktop execution context, and preserves the client's normal credential/config directories.
+Existing client configuration and provider entitlement still apply. Rigwell does not read or copy the tokens.
+
+Native tools use the client's permissions. Read-only/spec sessions select native read-only/plan mode. Writable
+sessions use native edit approval/workspace sandbox modes. Unsafe native flags require the session's explicit
+skip-permissions setting and are never enabled for read-only sessions. Native execution cannot enforce Rigwell's
+per-tool permission dialogs, sandbox policy, commit secret scan or restricted tool lists; sessions requiring those
+Rigwell policies refuse this backend rather than silently bypassing them. Use a direct adapter for those sessions.
+Native failures are not automatically replayed, because tools may already have changed files.
+
+The Windows live acceptance used one identical isolated coding task through Rigwell on the Anthropic subscription,
+OpenAI subscription and a local Chat Completions server; all three external graders passed. This does not establish
+full native Workstream-tool bridging, long-session quality or every account/model entitlement.
+
 ## A note on terms of use
 
 Rigwell ships no provider entries, no client ids and does not identify itself as any other application. Whether a
