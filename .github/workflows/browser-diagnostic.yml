@@ -32,6 +32,7 @@ jobs:
         shell: pwsh
         env:
           RIGWELL_BROWSER_NETLOG: "1"
+          RIGWELL_BROWSER_CONTEXT_PROBE: "1"
           RIGWELL_BROWSER_DIAGNOSTICS_DIR: ${{ github.workspace }}/browser-diagnostic-logs
         run: |
           New-Item -ItemType Directory -Path browser-diagnostic-logs | Out-Null

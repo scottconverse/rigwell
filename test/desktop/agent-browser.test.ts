@@ -8,6 +8,7 @@ import { chromiumStatus } from "./helpers.ts";
 import { spawn } from "node:child_process";
 import { CLI, lastToolResult } from "../e2e/helpers.ts";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
+import { probeBrowserContext } from "./browser-context-probe.ts";
 const { pw, reason } = chromiumStatus("standalone agent browser acceptance");
 // The temporary runner probe retains only its fresh fixture profile's default-mode network log.
 const retainNetworkDiagnostics = (home: string, label: string) => {
@@ -41,7 +42,7 @@ const ref = (snapshot: string, role: string, name: string) => {
   const child = spawn(process.execPath, [CLI, "exec", "--auto", "high", "--model", "custom:Fixture-0", "--cwd", env.root, "Inspect the fixture"], { windowsHide: true, env: { ...process.env, RIGWELL_BROWSER_TRACE: "1", RIGWELL_BROWSER_EXECUTABLE: pw.chromium.executablePath() }, stdio: ["ignore", "pipe", "pipe"] });
   let output = "", errors = ""; child.stdout.on("data", (data) => output += data); child.stderr.on("data", (data) => errors += data);
   const exited = new Promise<number | null>((resolve, reject) => { child.once("exit", resolve); child.once("error", reject); });
-  const diagnostic = setTimeout(() => { retainNetworkDiagnostics(env.rigwellHome, "cli"); console.error("[browser CLI pending]", JSON.stringify({ requests: fake.requests.length, errors, output })); }, 8000);
+  const diagnostic = setTimeout(() => { retainNetworkDiagnostics(env.rigwellHome, "cli"); console.error("[browser CLI pending]", JSON.stringify({ requests: fake.requests.length, errors, output })); void probeBrowserContext(env.rigwellHome, `http://127.0.0.1:${web.port}/`); }, 8000);
   try {
     const code = await exited;
     expect({ code, errors }).toMatchObject({ code: 1 }); expect(errors).toContain("no_approver_available"); expect(fake.requests.length).toBe(2); expect(trapHits).toBe(0);
@@ -52,7 +53,7 @@ const ref = (snapshot: string, role: string, name: string) => {
   const env = tmpEnv();
   const previousTrace = process.env.RIGWELL_BROWSER_TRACE; process.env.RIGWELL_BROWSER_TRACE = "1";
   const trace: string[] = []; let phase = "opening";
-  const diagnostic = setTimeout(() => { retainNetworkDiagnostics(env.rigwellHome, "standalone"); console.error("[standalone browser pending]", JSON.stringify({ phase, trace })); }, 8000);
+  const diagnostic = setTimeout(() => { retainNetworkDiagnostics(env.rigwellHome, "standalone"); console.error("[standalone browser pending]", JSON.stringify({ phase, trace })); void probeBrowserContext(env.rigwellHome, `http://127.0.0.1:${web.port}/`); }, 8000);
   const web = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) { return new URL(req.url).pathname === "/download" ? new Response("fixture-download", { headers: { "content-disposition": 'attachment; filename="fixture.txt"' } }) : new Response(PAGE, { headers: { "content-type": "text/html" } }); } });
   const manager = new AgentBrowserManager(undefined, { executable: pw.chromium.executablePath(), log: (message) => { trace.push(message); if (trace.length > 100) trace.shift(); } });
   const ctx: ToolContext = { cwd: env.root, sessionId: "browser-fixture", readFiles: new Map(), signal: new AbortController().signal, imagesSupported: false };
