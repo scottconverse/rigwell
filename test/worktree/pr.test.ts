@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
@@ -6,6 +6,12 @@ import { createPr, getPrStatus, codeRepo, type PrDeps, type PrStatus } from "../
 import { WorktreeManager } from "../../src/worktree/manager.ts";
 import { handleWorktreeMethod } from "../../src/worktree/connect.ts";
 import { makeGitRepo, sh, tmp } from "./util.ts";
+import { tmpEnv } from "../storage/helpers.ts";
+import { CredentialStore, FileBackend, setCredentialStore } from "../../src/storage/credentials.ts";
+
+let environment: ReturnType<typeof tmpEnv>;
+beforeEach(() => { environment = tmpEnv(); setCredentialStore(new CredentialStore([new FileBackend()])); });
+afterEach(() => { setCredentialStore(undefined); environment.cleanup(); });
 
 function fixture() {
   const repo = makeGitRepo(), bare = tmp("pr-bare");
@@ -88,8 +94,9 @@ test("provider failure reports that the branch was already pushed", async () => 
 test("the real CLI subprocess runner executes a fake gh script after local push", async () => {
   const f = fixture();
   // Bun runs the local script named pr; subsequent argv are the same gh subcommands/options.
-  writeFileSync(join(f.repo, "pr"), 'if (process.argv[2] !== "create" || !process.argv.includes("--body")) process.exit(2); console.log("https://github.com/owner/repo/pull/11");');
+  writeFileSync(join(f.repo, "pr"), 'if (process.argv[2] !== "create" || !process.argv.includes("--body")) process.exit(2); if (process.env.GH_TOKEN !== "fixture-cli-token" || process.env.GH_HOST !== "github.com" || process.argv.includes("fixture-cli-token")) process.exit(3); console.log("https://github.com/owner/repo/pull/11");');
   f.deps.which = () => process.execPath;
+  f.deps.token = async () => "fixture-cli-token";
   expect(await createPr(f.repo, { body: "one\ntwo" }, approve, f.deps)).toEqual({ url: "https://github.com/owner/repo/pull/11", number: 11 });
   expect(f.published()).not.toBeNull();
 });
@@ -98,9 +105,11 @@ test("GitLab CLI gets source, target and multiline description", async () => {
   const f = fixture();
   f.deps.repo = () => ({ provider: "gitlab", host: "gitlab.com", project: "group/repo" });
   f.deps.which = () => "fake-glab";
-  f.deps.run = async (cmd) => {
+  f.deps.token = async () => "fixture-gitlab-token";
+  f.deps.run = async (cmd, _cwd, env) => {
     expect(cmd.slice(0, 3)).toEqual(["fake-glab", "mr", "create"]);
     expect(cmd).toContain("--target-branch"); expect(cmd).toContain("--description"); expect(cmd).toContain("--yes");
+    expect(env).toMatchObject({ GITLAB_TOKEN: "fixture-gitlab-token", GITLAB_HOST: "gitlab.com" }); expect(cmd).not.toContain("fixture-gitlab-token");
     return { code: 0, stdout: "https://gitlab.com/group/repo/-/merge_requests/8", stderr: "" };
   };
   expect((await createPr(f.repo, { base: "main", body: "one\ntwo" }, approve, f.deps)).number).toBe(8);

@@ -29,6 +29,7 @@ import { loadAgents } from "../subagents/agents.ts";
 import { TaskLimits } from "../subagents/task.ts";
 import { forkSession } from "../storage/fork.ts";
 import { handleAuthMethod } from "../auth/methods.ts";
+import { handleCodeProviderMethod, type CodeProviderDeps } from "../auth/code-providers.ts";
 import { handleSecretsMethod } from "../secrets/methods.ts";
 import { SecretsError, redactSecrets, resolveEnvironment, type ResolvedEnvironment } from "../secrets/store.ts";
 import { RewindError, rewindSession } from "../snapshots/index.ts";
@@ -39,6 +40,7 @@ const parked = new Map<string, { session: Session; files: SessionFiles; worktree
 const parkMs = () => Number(process.env.RIGWELL_PARK_MS) || 30 * 60_000;
 
 export interface ConnectionOptions {
+  codeProviderDeps?: CodeProviderDeps;
   /** Owned sessions publish committed user messages to their live transcript views. */
   notifyUserMessages?: boolean;
   /** An owned live session can have transcript/control views without another engine or replacing its host. */
@@ -622,6 +624,8 @@ export function createConnection(write: (line: string) => void, opts: Connection
         if (w.handled) return w.result;
         const a = await handleAuthMethod(method, p, () => environment(session?.cwd ?? process.cwd()).s);
         if (a.handled) return a.result;
+        const cp = await handleCodeProviderMethod(method, p, () => environment(session?.cwd ?? process.cwd()).s, opts.codeProviderDeps);
+        if (cp.handled) return cp.result;
         const sx = handleSecretsMethod(method, p);
         if (sx.handled) return sx.result;
         throw new RpcError(ErrorCodes.METHOD_NOT_FOUND, `Method not found or not in this build: ${METHOD_PREFIX}${method}`);

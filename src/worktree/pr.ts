@@ -1,6 +1,7 @@
 // Pull requests for a checkout. Every push is preceded by an explicit user approval.
 import { randomUUID } from "node:crypto";
-import { defaultCredentialStore } from "../storage/credentials.ts";
+import { codeProviderToken } from "../auth/code-providers.ts";
+import { loadSettings } from "../storage/settings.ts";
 import { ErrorCodes, RpcError } from "../protocol/rpc.ts";
 import { git, gitOk } from "./git.ts";
 
@@ -14,8 +15,8 @@ export interface PrStatus {
 export interface PrInput { title?: string; body?: string; base?: string; draft?: boolean }
 export interface PrDeps {
   which?: (name: string) => string | null;
-  run?: (cmd: string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
-  token?: (provider: string) => string | undefined;
+  run?: (cmd: string[], cwd: string, env?: Record<string, string>) => Promise<{ code: number; stdout: string; stderr: string }>;
+  token?: (provider: string) => string | undefined | Promise<string | undefined>;
   fetch?: typeof fetch;
   /** Test seam: never supplied by protocol input. */
   apiRoot?: (repo: CodeRepo) => string;
@@ -34,8 +35,8 @@ export function codeRepo(remote: string): CodeRepo | null {
   return provider && project.split("/").length >= 2 ? { provider, project, host } : null;
 }
 
-async function run(cmd: string[], cwd: string) {
-  const p = Bun.spawn(cmd, { cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, GH_PROMPT_DISABLED: "1", GIT_TERMINAL_PROMPT: "0" } });
+async function run(cmd: string[], cwd: string, env?: Record<string, string>) {
+  const p = Bun.spawn(cmd, { cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, ...env, GH_PROMPT_DISABLED: "1", GIT_TERMINAL_PROMPT: "0" } });
   const timer = setTimeout(() => p.kill(), 60_000);
   try {
     const [stdout, stderr, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
@@ -51,13 +52,15 @@ async function checkout(cwd: string, d: PrDeps) {
 }
 
 function cli(repo: CodeRepo, d: PrDeps) { return (d.which ?? Bun.which)(repo.provider === "github" ? "gh" : "glab"); }
-async function command(cmd: string[], cwd: string, d: PrDeps) {
-  const r = await (d.run ?? run)(cmd, cwd);
+async function command(cmd: string[], cwd: string, d: PrDeps, provider: CodeRepo["provider"]) {
+  const token = await d.token?.(provider);
+  const env: Record<string, string> | undefined = token ? provider === "github" ? { GH_TOKEN: token, GH_HOST: "github.com" } : { GITLAB_TOKEN: token, GITLAB_HOST: "gitlab.com", GITLAB_API_HOST: "gitlab.com", GITLAB_API_PROTOCOL: "https" } : undefined;
+  const r = await (d.run ?? run)(cmd, cwd, env);
   if (r.code !== 0) throw new Error(`${cmd[0]} ${cmd[1]} failed: ${r.stderr.trim() || "command failed"}`);
   return r.stdout.trim();
 }
 async function api(repo: CodeRepo, route: string, d: PrDeps, body?: unknown): Promise<any> {
-  const token = (d.token ?? ((p) => defaultCredentialStore().get(p)))(repo.provider);
+  const token = await (d.token ?? ((p) => codeProviderToken(p as CodeRepo["provider"])))(repo.provider);
   if (!token) throw new Error(`Connect ${repo.provider} or install and sign in with ${repo.provider === "github" ? "gh" : "glab"}`);
   const root = d.apiRoot?.(repo) ?? (repo.provider === "github" ? "https://api.github.com" : "https://gitlab.com/api/v4");
   const r = await (d.fetch ?? fetch)(root + route, {
@@ -81,6 +84,7 @@ function status(raw: any, provider: CodeRepo["provider"]): PrStatus {
 }
 
 export async function getPrStatus(cwd: string, d: PrDeps = {}): Promise<PrStatus> {
+  d = { ...d, token: d.token ?? ((p) => codeProviderToken(p as CodeRepo["provider"], loadSettings({ cwd }).settings)) };
   const remote = (await git(cwd, ["remote", "get-url", "--push", "origin"])).stdout.trim();
   const r = (d.repo ?? codeRepo)(remote);
   if (!r) return { state: "none", checks: [] };
@@ -92,18 +96,18 @@ export async function getPrStatus(cwd: string, d: PrDeps = {}): Promise<PrStatus
     const args = r.provider === "github"
       ? [tool, "pr", "list", "--repo", r.project, "--head", c.branch, "--state", "open", "--json", "number,url,state"]
       : [tool, "mr", "list", "--repo", r.project, "--source-branch", c.branch, "--output", "json"];
-    let rows = JSON.parse(await command(args, cwd, d));
+    let rows = JSON.parse(await command(args, cwd, d, r.provider));
     if (!rows.length) {
       const all = [...args];
       if (r.provider === "github") all[all.indexOf("--state") + 1] = "all"; else all.push("--all");
-      rows = JSON.parse(await command(all, cwd, d));
+      rows = JSON.parse(await command(all, cwd, d, r.provider));
     }
     const row = rows.find((x: any) => /^(open|opened)$/i.test(x.state)) ?? rows[0];
     if (!row) return { state: "none", checks: [] };
     const detail = r.provider === "github"
       ? [tool, "pr", "view", String(row.number), "--repo", r.project, "--json", "number,url,state,statusCheckRollup"]
       : [tool, "mr", "view", String(row.iid), "--repo", r.project, "--output", "json"];
-    return status(JSON.parse(await command(detail, cwd, d)), r.provider);
+    return status(JSON.parse(await command(detail, cwd, d, r.provider)), r.provider);
   }
   const root = endpoint(r);
   const route = r.provider === "github" ? `${root}/pulls?state=open&head=${encodeURIComponent(r.project.split("/")[0] + ":" + c.branch)}` : `${root}/merge_requests?state=opened&source_branch=${encodeURIComponent(c.branch)}`;
@@ -126,11 +130,9 @@ export async function createPr(cwd: string, input: PrInput, approve?: ApprovePr,
   const c = await checkout(cwd, d);
   if (!c.repo) throw new Error("Origin must be a GitHub or GitLab repository");
   const tool = cli(c.repo, d);
-  if (!tool) {
-    const token = (d.token ?? ((p) => defaultCredentialStore().get(p)))(c.repo.provider);
-    if (!token) throw new Error(`Connect ${c.repo.provider} before pushing a PR branch`);
-    d = { ...d, token: () => token };
-  }
+  const token = await (d.token ?? ((p) => codeProviderToken(p as CodeRepo["provider"], loadSettings({ cwd }).settings)))(c.repo.provider);
+  if (!tool && !token) throw new Error(`Connect ${c.repo.provider} before pushing a PR branch`);
+  d = { ...d, token: () => token };
   const base = input.base ?? ((await git(cwd, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])).stdout.trim().replace(/^origin\//, "") || "main");
   const title = input.title?.trim() || c.branch, body = input.body ?? "", draft = input.draft === true;
   const details = { branch: c.branch, base, title, body, draft, repository: `${c.repo.host}/${c.repo.project}` };
@@ -144,7 +146,7 @@ export async function createPr(cwd: string, input: PrInput, approve?: ApprovePr,
   if (tool) {
     const args = r.provider === "github" ? [tool, "pr", "create", "--repo", r.project, "--head", c.branch, "--base", base, "--title", title, "--body", body, ...(draft ? ["--draft"] : [])]
       : [tool, "mr", "create", "--repo", r.project, "--source-branch", c.branch, "--target-branch", base, "--title", title, "--description", body, "--yes", "--no-editor", "--push=false", "--remove-source-branch=false", ...(draft ? ["--draft"] : [])];
-    const out = await command(args, cwd, d);
+    const out = await command(args, cwd, d, r.provider);
     const url = out.match(/https:\/\/[^\s]+\/(?:pull|merge_requests)\/\d+/)?.[0];
     if (!url) throw new Error("Branch pushed, but the CLI did not return a PR URL; check PR status before retrying");
     return { url, number: Number(url.split("/").at(-1)) };

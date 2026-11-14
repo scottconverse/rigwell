@@ -4,17 +4,18 @@ import { app, useApp } from "../lib/app-model.ts";
 import { applyAppearance } from "../lib/appearance.ts";
 import { bridge } from "../lib/rpc.ts";
 import { Accounts, ApiKeys, Environments, VoiceSettings } from "./SettingsAccess.tsx";
+import { CodeProviders } from "./CodeProviders.tsx";
 import { ConnectorSettings, CustomModels, MissionSettings, SessionDefaults, SessionManagement, UsagePage, WorktreeSettings } from "./SettingsAgent.tsx";
 
 const PAGES = [
   ["general", "General"], ["appearance", "Appearance"], ["notifications", "Notifications and sounds"], ["session-defaults", "Session Defaults"], ["missions", "Missions"],
   ["custom-models", "Custom Models"], ["worktrees", "Worktrees"], ["connectors", "Connectors"], ["session-management", "Session Management"], ["usage", "Usage"],
-  ["api-keys", "API keys"], ["environments", "Environments"], ["accounts", "Accounts"], ["voice", "Voice dictation"], ["support", "Support"],
+  ["api-keys", "API keys"], ["environments", "Environments"], ["accounts", "Accounts"], ["code-providers", "Code providers"], ["voice", "Voice dictation"], ["support", "Support"],
 ] as const;
 const AGENT_PAGES: Record<string, () => React.ReactElement | null> = {
   "session-defaults": SessionDefaults, missions: MissionSettings, "custom-models": CustomModels, worktrees: WorktreeSettings,
   connectors: ConnectorSettings, "session-management": SessionManagement, usage: UsagePage,
-  "api-keys": ApiKeys, environments: Environments, accounts: Accounts, voice: VoiceSettings,
+  "api-keys": ApiKeys, environments: Environments, accounts: Accounts, "code-providers": CodeProviders, voice: VoiceSettings,
 };
 
 export function Settings({ page, go }: { page: string; go(r: string): void }) {

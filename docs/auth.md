@@ -117,3 +117,53 @@ matches the value as written; an encoded or split copy (base64, one character pe
 ## Sign-in from the desktop app and the terminal
 
 Desktop: Settings > Accounts lists the providers from `auth_list`, starts the browser or device-code sign-in, polls the status and signs out. Terminal: `/login [provider] [--device]` and `/logout [provider]`. Settings > API keys and Environments edit the secrets and environments below; stored values are never displayed.
+
+## Code-provider connections (spec 20.21)
+
+Settings > Code providers connects GitHub and GitLab. Paste an access token to verify its account before saving it.
+The page shows the signed-in account and the scopes reported by the provider. An absent scope response means
+permissions are unknown, including GitHub fine-grained tokens; inspect permissions at the provider. A failed
+replacement preserves the working credential. Disconnect removes local credentials and cancels pending sign-in;
+it does not revoke a token at the provider.
+
+Device sign-in reuses the normal OAuth manager and requires Rigwell's own registered public clients. The owner
+must supply the real client IDs. Example user settings, with placeholders to replace:
+
+```json
+{
+  "oauthProviders": {
+    "github": {
+      "clientId": "REGISTERED-RIGWELL-GITHUB-CLIENT-ID",
+      "deviceAuthorizationEndpoint": "https://github.com/login/device/code",
+      "tokenEndpoint": "https://github.com/login/oauth/access_token",
+      "scopes": ["repo", "read:user"]
+    },
+    "gitlab": {
+      "clientId": "REGISTERED-RIGWELL-GITLAB-CLIENT-ID",
+      "deviceAuthorizationEndpoint": "https://gitlab.com/oauth/authorize_device",
+      "tokenEndpoint": "https://gitlab.com/oauth/token",
+      "scopes": ["api", "read_user"]
+    }
+  }
+}
+```
+
+Enable the device flow on the registered application. The page displays its verification URL and code; opening
+that URL is a user action. Cancelling an attempt preserves the previous connection. OAuth tokens refresh through
+the existing manager. Token connections use credential names `github` and `gitlab`; OAuth uses `oauth:github`
+and `oauth:gitlab`. Tokens never return through the code-provider protocol. `create_pr` and PR status reuse this
+connection for their API fallback; installed `gh` or `glab` keeps its existing priority and receives a connected
+credential through its child process environment, never command arguments. Without a connected credential the
+CLI keeps its own authentication. Git pushes use the machine's
+Git authentication, so configure that separately if needed. Later review, triggers and share use the same resolver.
+
+Protocol methods: `code_provider_list {}`, `code_provider_connect {provider, token}`,
+`code_provider_disconnect {provider}`, `code_provider_login_start {provider}`,
+`code_provider_login_status {provider, loginId}`, and `code_provider_login_cancel {provider, loginId}`.
+`provider` is `github` or `gitlab`. List/status responses contain account and scope metadata, never credentials.
+The daemon owns the device poll; clients poll its status and can reconnect without taking ownership of the login.
+
+Provider references: [GitHub device flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps),
+[GitHub scope reporting](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps),
+[GitLab OAuth](https://docs.gitlab.com/api/oauth2/) and
+[GitLab personal access token metadata](https://docs.gitlab.com/api/personal_access_tokens/).

@@ -202,6 +202,13 @@ export class AuthManager {
 
   loginStatus(loginId: string): LoginStatus | undefined { return this.logins.get(loginId)?.status; }
 
+  /** Cancel an attempt without removing the previously stored credential. */
+  cancelLogin(loginId: string): boolean {
+    const login = this.logins.get(loginId);
+    if (!login || login.status.state !== "pending") return false;
+    login.stop(); return true;
+  }
+
   /** Resolves when the login ended (CLI). */
   async waitLogin(loginId: string): Promise<LoginStatus> {
     const l = this.logins.get(loginId);

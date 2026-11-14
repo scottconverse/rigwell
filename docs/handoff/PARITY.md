@@ -19,7 +19,7 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 ## 2. Core features
 
 5. `create_pr` and PR status, with `gh` and `glab` (spec §18.6, HANDOFF "Next task"). Complete on 4602ed6: 215 affected headless tests pass, all four CI jobs green.
-6. **Workstreams, local** (spec §15.10, HANDOFF "Next task 2"). The feature the owner wanted Rigwell for.
+6. **Workstreams, local** (spec §15.10, HANDOFF "Next task 2"). Complete through TUI on c6c6b64: all four CI jobs and platform packages green. The intermittent macOS restart file-listener cause remains unresolved and instrumented (decision 354).
 7. Code-provider connections page for GitHub and GitLab (§20.21).
 8. PR and semantic-diff review view, `/review` (§20.10).
 
