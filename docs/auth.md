@@ -167,3 +167,33 @@ Provider references: [GitHub device flow](https://docs.github.com/en/apps/oauth-
 [GitHub scope reporting](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps),
 [GitLab OAuth](https://docs.gitlab.com/api/oauth2/) and
 [GitLab personal access token metadata](https://docs.gitlab.com/api/personal_access_tokens/).
+
+
+## Guided model setup (spec 20.2)
+
+With no configured models, the Home page offers account sign-in first, followed by model configuration and API-key
+storage. An absent registered client is shown as not available. No client IDs are borrowed from installed coding
+clients. API keys and signed-in coding CLI sessions are different credentials; neither supplies Rigwell's own
+public OAuth client registration. Registered built-in entries and real provider sign-in remain pending those IDs.
+
+Settings > Accounts supports sign-in, sign-in again and sign-out. Reauthorization is available even when a saved
+token remains, so an expired or revoked account can be renewed. Tokens refresh in the daemon before expiry; a
+refused refresh reports a non-retryable authentication error. Stopping the page's waiting operation does not revoke
+a login already completed at the provider.
+
+Settings > Custom Models supports Anthropic Messages, OpenAI Responses, native Google, Chat Completions (including
+local Ollama-compatible endpoints), and Bedrock Converse. Choose an available account in Authentication to save
+only its credentialSource name; that choice cannot be combined with an API key. Google sends the refreshed account
+token in its configured header, and rejects a signed-out account before contacting the model endpoint. Bedrock
+supports region plus automatic credentials, an AWS profile, bearer token, access keys or credential commands.
+Editing a model preserves its other adapter/profile options. No model or provider is selected globally by setup.
+
+Stored API keys, helper commands, OAuth client secrets and Bedrock secret fields are masked before user settings
+reach a renderer and restored when their unchanged masks are saved. Environment references remain readable. Use the
+API keys page and keychain references, or existing AWS profiles/environment references, instead of duplicating a
+secret into each model entry.
+
+Real sign-in availability and account-plan coverage depend on the provider's registered-client offering. See
+[provider sign-in guidance](https://support.claude.com/en/articles/13189465-log-in-to-your-claude-account) and
+[Google's own-client OAuth setup](https://ai.google.dev/gemini-api/docs/oauth). Fake authorization/model servers test
+the implementation; those tests do not prove that a real subscription is enabled for Rigwell.

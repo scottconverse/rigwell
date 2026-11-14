@@ -4,6 +4,7 @@ import { bridge } from "../lib/rpc.ts";
 import { SessionController } from "../lib/session.ts";
 import { Composer, type ComposerSettings } from "./Composer.tsx";
 import { toParams } from "../lib/attachments.ts";
+import { Accounts } from "./SettingsAccess.tsx";
 import { TrustDialog } from "./Dialogs.tsx";
 import { live, pendingMission } from "./SessionScreen.tsx";
 
@@ -70,6 +71,13 @@ export function Home({ go, initialFolder, initialMission }: { go(route: string):
         <div className="wordmark">Rigwell</div>
         {!running && <div className="banner warn" role="status">{a.daemon.state === "failed" ? `The background service could not start. ${a.daemon.error ?? ""}` : `Background service: ${a.daemon.state}`}
           {a.daemon.state === "failed" && <button onClick={() => void bridge().daemon.restart()}>Try again</button>}</div>}
+        {running && !a.models.length && <section aria-label="Connect a model" className="banner">
+          <Accounts setup onSignedIn={() => { void app.refresh(); }} />
+          <h3>API key or local model</h3>
+          <p className="muted small">After connecting an account, configure a model to use it. You can also use a provider API key or a local server.</p>
+          <button onClick={() => go("/settings/custom-models")}>Configure a model</button>
+          <button onClick={() => go("/settings/api-keys")}>Store an API key</button>
+        </section>}
         <div className="chips top">
           <span className="chip static" title="Where the agent runs">Local</span>
           <div className="chip-wrap">
@@ -83,7 +91,7 @@ export function Home({ go, initialFolder, initialMission }: { go(route: string):
           </div>
           <label className="chip check" title="Run this session in its own git worktree and branch"><input type="checkbox" checked={useWorktree} onChange={(e) => setWorktree(e.target.checked)} aria-label="Worktree" />Worktree</label>
         </div>
-        <Composer settings={settings} models={a.models} busy={false} disabled={busy || !running} autoFocus disabledShortcuts={a.settings?.disabledShortcuts} cwd={folder}
+        <Composer settings={settings} models={a.models} busy={false} disabled={busy || !running || !a.models.length} autoFocus disabledShortcuts={a.settings?.disabledShortcuts} cwd={folder}
           autoAvailable={!!a.userSettings.autoRouter} onMission={() => setSettings((s) => ({ ...s, interactionMode: "mission" }))}
           onChange={(p) => setSettings((s) => ({ ...s, ...p }))} onSend={(t, atts) => void start(t, atts ? toParams(atts) : {})} onStop={() => {}} />
         {error && <div className="banner error" role="alert">{error}</div>}

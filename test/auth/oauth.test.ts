@@ -2,13 +2,14 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { AnthropicAdapter, OpenAIResponsesAdapter } from "../../src/adapters/index.ts";
+import { AnthropicAdapter, GoogleAdapter, OpenAIResponsesAdapter } from "../../src/adapters/index.ts";
 import { AuthManager, loadToken, setAuthManager, tokenKey } from "../../src/auth/oauth.ts";
 import { parseOAuthProviders, type OAuthProviderConfig } from "../../src/auth/config.ts";
 import { CredentialStore, FileBackend, setCredentialStore } from "../../src/storage/credentials.ts";
 import { validateCustomModels } from "../../src/storage/models.ts";
 import { ModelError } from "../../src/core/types.ts";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
+import { startFakeGoogle } from "../fakes/fake-google.ts";
 import { startFakeOpenAI } from "../fakes/fake-openai.ts";
 import { startFakeOAuth, type FakeOAuth } from "../fakes/fake-oauth.ts";
 import { tmpEnv } from "../storage/helpers.ts";
@@ -250,4 +251,29 @@ test("protocol: auth_list, login start/status, logout; no token ever in a result
   expect((await call("auth_list")).providers[0].loggedIn).toBe(false);
   await expect(c.call("auth_login_start", { name: "missing" })).rejects.toThrow(/No OAuth provider/);
   expect(seen.join("\n")).not.toMatch(/access-|refresh-/);
+});
+
+
+test("Google account token is required, refreshed and removed without using an API key", async () => {
+  idp.expiresIn = 120;
+  const mgr = manager(); setAuthManager(mgr);
+  const fake = await startFakeGoogle([{ text: "one" }, { text: "two" }]);
+  const [m] = validateCustomModels(settingsWith({ model: "fixture-id", provider: "google", baseUrl: fake.url, credentialSource: "acme" })).models;
+  const run = () => collect(new GoogleAdapter().stream(request(m!, [userMsg("hello")])));
+  try {
+    const unsigned = await run().catch((e) => e);
+    expect(unsigned).toMatchObject({ kind: "auth" });
+    expect(fake.requests.length).toBe(0);
+    const st = await mgr.loginStart(provider()); await browser(st.url!); await mgr.waitLogin(st.loginId);
+    await run(); expect(fake.headers[0]!.authorization).toBe("Bearer access-1");
+    expect(fake.headers[0]!["x-goog-api-key"]).toBeUndefined();
+    clock += 100_000;
+    await run(); expect(fake.headers[1]!.authorization).toBe("Bearer access-2");
+    expect(idp.tokenRequests.filter((r) => r.form.grant_type === "refresh_token").length).toBe(1);
+    idp.revoked = true; clock += 100_000;
+    expect(await run().catch((e) => e)).toMatchObject({ kind: "auth", retryable: false });
+    expect(fake.requests.length).toBe(2);
+    expect(mgr.logout("acme")).toBe(true);
+    expect(loadToken("acme")).toBeUndefined();
+  } finally { fake.stop(); }
 });

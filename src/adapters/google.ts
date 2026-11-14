@@ -6,6 +6,7 @@ import {
   type ContentBlock, type Message, type ModelAdapter, type ModelRequest, type StreamEvent, type TokenUsage,
 } from "../core/types.ts";
 import { midStreamBreak } from "./errors.ts";
+import { oauthHeaders } from "../auth/headers.ts";
 import { DEFAULT_TIMEOUT_MS, safeJson, sseRequest } from "./sse.ts";
 
 export const GOOGLE_SIGNATURE_PROVIDER = "google";
@@ -101,6 +102,7 @@ export class GoogleAdapter implements ModelAdapter {
     const headers: Record<string, string> = {
       "content-type": "application/json",
       ...(m.apiKey ? { "x-goog-api-key": m.apiKey } : {}),
+      ...(m.oauth ? await oauthHeaders(m) : {}),
       ...(m.extraHeaders ?? {}),
     };
     let next = 0;

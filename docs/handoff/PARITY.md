@@ -29,9 +29,9 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 10. A task suite of 40+ real coding tasks for `rigwell eval` (§20.1). Delivered on f32bc06: 43 graded tasks, six categories, all four CI jobs/packages green.
 11. Head-to-head with the reference CLI on the same tasks and models, three trials each (spec 20.1). Machinery delivered on 52f145b, all four CI jobs/packages green. Real same-model/account comparison remains pending.
 12. Tune prompts, tool descriptions, result shapes and guards until Rigwell matches on every model family (§20.1).
-13. Settle every not-checked and unknown specification item with a real run or a logged decision (spec 20.1). Local choices recorded in decision 364 and docs/spec-clarifications.md; historical evidence remains intact. Real quality/release acceptance stays open under its own items.
+13. Settle every not-checked and unknown specification item with a real run or a logged decision (spec 20.1). Local choices recorded in decision 364 and docs/spec-clarifications.md; historical evidence remains intact. Real quality/release acceptance stays open under its own items. Delivered on 680bdd2, all four CI jobs/packages green.
 14. Long-session checks: compaction, caching, cost, routing, guards, watchdog (§20.1).
-15. Subscription sign-in with Rigwell's own OAuth clients (§20.2).
+15. Subscription sign-in with Rigwell's own OAuth clients (spec 20.2). Generic flows and guided setup implemented, including model/account configuration and Google token resolution; fake-service checks pass. Real built-in client registrations/sign-in remain pending the owner's registered IDs.
 
 ## 4. Connectors and tools
 

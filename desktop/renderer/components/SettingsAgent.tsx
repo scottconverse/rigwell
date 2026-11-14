@@ -108,6 +108,8 @@ export function MissionSettings() {
 
 export function CustomModels() {
   const a = useApp();
+  const [accounts, setAccounts] = useState<{ name: string }[]>([]);
+  useEffect(() => { if (a.daemon.state === "running") void app.request("auth_list").then((r) => setAccounts(r.providers ?? [])).catch(() => setAccounts([])); }, [a.daemon.state, a.userSettings.oauthProviders]);
   const list: Record<string, any>[] = Array.isArray(a.userSettings.customModels) ? a.userSettings.customModels : [];
   const { save, status } = useSave();
   const [editing, setEditing] = useState<{ index: number; form: ModelForm } | null>(null);
@@ -127,12 +129,12 @@ export function CustomModels() {
   return (
     <>
       <h2>Custom Models {status} <ManagedNote keys={["customModels", "modelPolicy"]} /></h2>
-      <p className="muted">Use your own provider keys. Keys are stored in the settings file and are never shown again after saving.</p>
+      <p className="muted">Connect a signed-in account, a stored API key, or a local server. API key references can use keychain:secret:NAME from the API keys page. Saved secret values stay hidden in this form.</p>
       <ul className="plain-list" aria-label="Custom models">
         {list.map((m, i) => (
           <li key={i} className="srv">
             <span className="srv-name">{m.displayName ?? m.model}</span>
-            <span className="muted small">{m.provider} / {m.baseUrl} / {keyHint(m.apiKey ?? "")}</span>
+            <span className="muted small">{m.provider} / {m.baseUrl} / {(m.credentialSource ? `Account: ${m.credentialSource}` : keyHint(m.apiKey ?? ""))}</span>
             <span className="spacer" />
             <button aria-label={`Edit ${m.displayName ?? m.model}`} onClick={() => { setEditing({ index: i, form: toForm(m) }); setError(""); }}>Edit</button>
             <button className="danger" aria-label={`Remove ${m.displayName ?? m.model}`} onClick={() => void save({ customModels: list.filter((_, j) => j !== i) }).then(() => app.refresh())}>Remove</button>
@@ -144,12 +146,30 @@ export function CustomModels() {
       {editing && f && (
         <Dialog title={editing.index < 0 ? "Add custom model" : "Edit custom model"} onClose={() => setEditing(null)} wide>
           <label className="field"><span>Provider and API format</span>
-            <select aria-label="Provider" value={f.provider} onChange={(e) => { const p = PROVIDERS.find((x) => x.id === e.target.value)!; set({ provider: p.id, baseUrl: !f.baseUrl || PROVIDERS.some((x) => x.baseUrl === f.baseUrl) ? p.baseUrl : f.baseUrl }); }}>{PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</select></label>
+            <select aria-label="Provider" value={f.provider} onChange={(e) => { const p = PROVIDERS.find((x) => x.id === e.target.value)!; set({ provider: p.id, baseUrl: !f.baseUrl || PROVIDERS.some((x) => x.baseUrl === f.baseUrl) ? p.baseUrl : f.baseUrl, ...(p.id === "bedrock-converse" ? { bedrock: f.bedrock ?? { awsRegion: "us-east-1", awsAuthMethod: "profile", awsProfile: "default" }, credentialSource: "", apiKey: "" } : { bedrock: undefined }), noImageSupport: p.id === "generic-chat-completion-api" }); }}>{PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</select></label>
           <label className="field"><span>Model name</span><input aria-label="Model name" value={f.model} onChange={(e) => set({ model: e.target.value })} /></label>
           <label className="field"><span>Display name</span><input aria-label="Display name" value={f.displayName} onChange={(e) => set({ displayName: e.target.value })} /></label>
           <label className="field"><span>Base URL</span><input aria-label="Base URL" value={f.baseUrl} onChange={(e) => set({ baseUrl: e.target.value })} /></label>
-          <label className="field"><span>API key</span><input type="password" autoComplete="off" aria-label="API key" placeholder={'Paste a key, or ${ENV_VAR}'} value={f.apiKey} onChange={(e) => set({ apiKey: e.target.value })} />
-            <span className="muted small">{f.apiKey.startsWith(MASK) ? "A key is saved. Leave this as it is to keep it." : keyHint(f.apiKey)}</span></label>
+          {f.provider !== "bedrock-converse" && <>
+            <label className="field"><span>Authentication</span>
+              <select aria-label="Model authentication" value={f.credentialSource} onChange={(e) => set({ credentialSource: e.target.value, apiKey: "" })}>
+                {!!accounts.length && <optgroup label="Account sign-in">{accounts.map((p) => <option key={p.name} value={p.name}>Account: {p.name}</option>)}</optgroup>}
+                {f.credentialSource && !accounts.some((p) => p.name === f.credentialSource) && <option value={f.credentialSource}>Account: {f.credentialSource} (not available)</option>}
+                <option value="">API key or local server</option>
+              </select>
+              <span className="muted small">{accounts.length ? "Account tokens refresh automatically." : "Account sign-in is not available until a registered provider is configured."} <a href="#/settings/accounts">Manage sign-in</a></span>
+            </label>
+            {!f.credentialSource && <label className="field"><span>API key</span><input type="password" autoComplete="off" aria-label="API key" placeholder="Stored credential, environment reference, or key (optional locally)" value={f.apiKey} onChange={(e) => set({ apiKey: e.target.value })} />
+              <span className="muted small">{f.apiKey.startsWith(MASK) ? "A key is saved. Leave this as it is to keep it." : keyHint(f.apiKey)}</span></label>}
+          </>}
+          {f.bedrock && <fieldset><legend>AWS connection</legend>
+            <label className="field"><span>Region</span><input aria-label="AWS region" value={f.bedrock.awsRegion ?? ""} onChange={(e) => set({ bedrock: { ...f.bedrock, awsRegion: e.target.value } })} /></label>
+            <label className="field"><span>Authentication</span><select aria-label="AWS authentication" value={f.bedrock.awsAuthMethod ?? ""} onChange={(e) => set({ bedrock: { awsRegion: f.bedrock!.awsRegion, ...(e.target.value ? { awsAuthMethod: e.target.value } : {}) } })}>
+              <option value="">Automatic credential chain</option><option value="profile">AWS profile</option><option value="bearer-token">Bearer token</option><option value="access-keys">Access keys</option><option value="credentials-command">Credential command</option>
+            </select></label>
+            {(f.bedrock.awsAuthMethod === "profile" ? [["awsProfile", "AWS profile", false]] : f.bedrock.awsAuthMethod === "bearer-token" ? [["awsBearerToken", "AWS bearer token", true]] : f.bedrock.awsAuthMethod === "access-keys" ? [["awsAccessKeyId", "AWS access key ID", true], ["awsSecretAccessKey", "AWS secret access key", true], ["awsSessionToken", "AWS session token", true]] : f.bedrock.awsAuthMethod === "credentials-command" ? [["awsCredentialExport", "AWS credential export command", true], ["awsAuthRefresh", "AWS refresh command", true]] : []).map(([key, label, secret]) => <label className="field" key={String(key)}><span>{String(label)}</span><input aria-label={String(label)} type={secret ? "password" : "text"} autoComplete="off" value={f.bedrock![String(key)] ?? ""} onChange={(e) => set({ bedrock: { ...f.bedrock, [String(key)]: e.target.value } })} /></label>)}
+            <p className="muted small">Use environment references for credentials, or an existing AWS profile. Leave the base URL empty to use the region's runtime endpoint.</p>
+          </fieldset>}
           <div className="dlg-row">
             <label className="field"><span>Max output tokens</span><input aria-label="Max output tokens" inputMode="numeric" value={f.maxOutputTokens} onChange={(e) => set({ maxOutputTokens: e.target.value })} /></label>
             <label className="field"><span>Context limit</span><input aria-label="Context limit" inputMode="numeric" value={f.maxContextLimit} onChange={(e) => set({ maxContextLimit: e.target.value })} /></label>
