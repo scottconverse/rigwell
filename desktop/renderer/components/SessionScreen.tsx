@@ -131,6 +131,7 @@ function Loaded({ ctl }: { ctl: SessionController }) {
           <h1 title={state.cwd}>{state.title}</h1>
           <span className="muted cwd">{state.cwd}</span>
           <span className="chip static" aria-label="Session machine">{state.machine ?? "Local"}</span>
+          {state.settings.tags?.some((t) => t.name === "delegation-slack" || t.name === "delegation-teams") && <span className="chip static" aria-label="Session source">{state.settings.tags.some((t) => t.name === "delegation-slack") ? "Slack" : "Teams"}</span>}
           <span className="spacer" />
           {state.phase === "disconnected" && <span className="badge warn">Reconnecting</span>}
           <button aria-label="Toggle tools panel" onClick={() => setPaneOpen(!paneOpen)} title="Tools panel (Alt+Ctrl+B)">Tools</button>

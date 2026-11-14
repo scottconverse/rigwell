@@ -7,15 +7,16 @@ import { externalKind, type ChainedTrigger, type GithubTrigger, type SlackTrigge
 import type { TriggerEvent } from "./events.ts";
 import { GithubTriggers, type GithubDeps } from "./github.ts";
 import { withLedger } from "./ledger.ts";
-import { SlackSocket, slackEvent, type SlackDeps } from "./slack.ts";
+import { SlackHub, slackEvent, type SlackDeps, type SlackHandle } from "./slack.ts";
 
-export interface TriggerDeps { github?: GithubDeps; slack?: SlackDeps }
+export interface TriggerDeps { github?: GithubDeps; slack?: SlackDeps; slackHub?: SlackHub }
 export class AutomationTriggers {
   private github: GithubTriggers;
-  private slack = new Map<string, SlackSocket>();
+  private slack = new Map<string, SlackHandle>();
+  private slackHub: SlackHub;
   private timer?: ReturnType<typeof setInterval>; private stopped = false; private busy = false;
   private abort = new AbortController();
-  constructor(private manager: AutomationManager, private deps: TriggerDeps = {}, private log?: (message: string) => void) { this.github = new GithubTriggers(deps.github); }
+  constructor(private manager: AutomationManager, private deps: TriggerDeps = {}, private log?: (message: string) => void) { this.github = new GithubTriggers(deps.github); this.slackHub = deps.slackHub ?? new SlackHub(deps.slack); }
   start() { this.stopped = false; this.timer = setInterval(() => void this.tick(), 1000); this.timer.unref?.(); void this.tick(); }
   stop() { this.stopped = true; clearInterval(this.timer); this.abort.abort(); for (const socket of this.slack.values()) socket.stop(); this.slack.clear(); }
   private error(a: Automation, error: unknown) { const message = redactSharedText((error as Error).message ?? "Trigger delivery failed", configuredSecretValues(a.fm.workingDirectory ?? a.dir)); withLedger(a, (l) => l.meta("error", message)); this.log?.(`[triggers] ${a.id}: ${message}`); }
@@ -83,12 +84,12 @@ export class AutomationTriggers {
     for (const a of all) if (a.fm.trigger === "slack" && !a.fm.paused) { const c = a.fm.eventTrigger as SlackTrigger; wanted.set(this.socketKey(c), c); }
     for (const [key, socket] of this.slack) if (!wanted.has(key)) { socket.stop(); this.slack.delete(key); }
     for (const [key, config] of wanted) if (!this.slack.has(key)) {
-      const socket = new SlackSocket(config, (payload) => {
+      const socket = this.slackHub.acquire(config, (payload) => {
         for (const a of this.manager.list()) if (a.fm.trigger === "slack" && a.isValid && !a.fm.paused && this.socketKey(a.fm.eventTrigger as SlackTrigger) === key) {
           const event = slackEvent(a.fm.eventTrigger as SlackTrigger, payload); if (event) this.enqueue(a, event);
         }
-      }, (message) => { for (const a of this.manager.list()) if (a.fm.trigger === "slack" && this.socketKey(a.fm.eventTrigger as SlackTrigger) === key) this.error(a, new Error(message)); }, this.deps.slack);
-      this.slack.set(key, socket); socket.start();
+      }, (message) => { for (const a of this.manager.list()) if (a.fm.trigger === "slack" && this.socketKey(a.fm.eventTrigger as SlackTrigger) === key) this.error(a, new Error(message)); });
+      this.slack.set(key, socket);
     }
   }
   private async replies(a: Automation) {

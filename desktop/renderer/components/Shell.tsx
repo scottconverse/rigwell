@@ -48,7 +48,7 @@ export function Sidebar({ sessions, current, daemon, route, go, openPalette }: {
               <button title="New session in this project" aria-label={`New session in ${projectName(k)}`} onClick={() => go(`/?folder=${encodeURIComponent(k)}`)}>+</button></div>}
             {list.map((s) => (
               <button key={s.id} className={`side-row ${s.id === current ? "on" : ""}`} onClick={() => go(`/sessions/${s.id}`)} title={s.cwd}>
-                <span className="side-title">{s.pinned && <span className="pin" title="Pinned" aria-label="Pinned">* </span>}{s.title}</span><span className="muted small">{ago(s.updatedAt)}</span>
+                <span className="side-title">{s.pinned && <span className="pin" title="Pinned" aria-label="Pinned">* </span>}{s.title}{s.source && <span className="badge" aria-label="Session source">{s.source === "slack" ? "Slack" : "Teams"}</span>}</span><span className="muted small">{ago(s.updatedAt)}</span>
               </button>
             ))}
           </div>

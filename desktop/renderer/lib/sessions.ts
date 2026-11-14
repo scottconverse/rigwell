@@ -1,5 +1,6 @@
 // Session list logic for the sidebar and Session Management (spec §14.3, §12.1). Pure functions, no DOM.
 export interface SessionRow {
+  source?: "slack" | "teams";
   machine?: string;
   id: string; title: string; cwd?: string; updatedAt: number;
   pinned?: boolean; archivedAt?: number | null; isSubagent?: boolean; hasUserVisibleMessages?: boolean;
@@ -13,6 +14,7 @@ export function normalizeSession(r: any): SessionRow {
   return {
     id: String(r.sessionId ?? r.id), title: String(r.title || "Untitled"), cwd: r.cwd, machine: r.machine, updatedAt: asMs(r.updatedAt),
     pinned: r.pinned === true, archivedAt: archived, isSubagent: r.isSubagent === true, hasUserVisibleMessages: r.hasUserVisibleMessages !== false,
+    ...(r.source === "slack" || r.source === "teams" ? { source: r.source } : {}),
   };
 }
 

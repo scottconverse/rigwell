@@ -24,6 +24,27 @@ export function slackEvent(c: SlackTrigger, payload: any): TriggerEvent | undefi
   return { id: `slack:${payload.team_id}:${payload.event_id}`, kind: `slack_${kind}`, at, payload, reply: { service: "slack", channel: e.channel, thread } };
 }
 export interface SlackDeps { root?: string; fetch?: typeof fetch; socket?: (url: string) => WebSocket; allowSocket?: (url: URL) => boolean; credential?: (name: string) => string | undefined }
+export type SlackHandle = Pick<SlackSocket, "api" | "reply"> & { stop(): void };
+/** One authenticated Socket Mode stream fans out to automation and delegation consumers. */
+export class SlackHub {
+  private entries = new Map<string, { socket: SlackSocket; listeners: Map<symbol, { receive(p: any): unknown; report(m: string): void }> }>();
+  constructor(private deps: SlackDeps = {}) {}
+  acquire(config: SlackTrigger, receive: (p: any) => unknown, report: (m: string) => void): SlackHandle {
+    const key = JSON.stringify([config.appTokenCredential, config.botTokenCredential]), id = Symbol();
+    let entry = this.entries.get(key);
+    if (!entry) {
+      const listeners = new Map<symbol, { receive(p: any): unknown; report(m: string): void }>();
+      const socket = new SlackSocket(config, async (p) => { for (const l of [...listeners.values()]) await l.receive(p); }, (m) => { for (const l of listeners.values()) l.report(m); }, this.deps);
+      entry = { socket, listeners }; this.entries.set(key, entry);
+    }
+    entry.listeners.set(id, { receive, report });
+    if (entry.listeners.size === 1) entry.socket.start();
+    const owned = entry;
+    return { api: owned.socket.api.bind(owned.socket), reply: owned.socket.reply.bind(owned.socket), stop: () => {
+      owned.listeners.delete(id); if (!owned.listeners.size) { owned.socket.stop(); if (this.entries.get(key) === owned) this.entries.delete(key); }
+    } };
+  }
+}
 export class SlackSocket {
   private socket?: WebSocket; private timer?: ReturnType<typeof setTimeout>; private abort = new AbortController(); private stopped = false; private failures = 0;
   constructor(private config: SlackTrigger, private receive: (payload: any) => Promise<void> | void, private report: (message: string) => void, private deps: SlackDeps = {}) {}

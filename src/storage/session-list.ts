@@ -9,6 +9,7 @@ import type { Database } from "bun:sqlite";
 import { type SearchHit, searchSessionIndex } from "./session-search.ts";
 
 export interface SessionListEntry {
+  source?: "slack" | "teams";
   sessionId: string;
   title: string;
   cwd: string;
@@ -63,6 +64,7 @@ function listFromIndex(o: { cwd?: string; includeArchived?: boolean; includeBtwF
     return queryPicker(db, o).map((r) => ({
       sessionId: r.sessionId, title: displayTitle(r.title, r.preview), cwd: r.cwd, updatedAt: new Date(r.lastEventAt).toISOString(), pinned: r.pinned,
       archivedAt: r.archivedAt, isSubagent: false, hasUserVisibleMessages: true,
+      ...(r.tags["delegation-slack"] ? { source: "slack" as const } : r.tags["delegation-teams"] ? { source: "teams" as const } : {}),
     }));
   } catch (e) {
     try { db.close(); } catch { /* already closed */ }
@@ -103,6 +105,7 @@ export function scanSessionEntries(o: { cwd?: string; includeArchived?: boolean;
     if (!o.includeBtwForks && tags.some((t) => t?.name === "btw-fork")) continue;
     if (archivedAt && !o.includeArchived) continue;
     rows.push({
+      ...(tags.some((t) => t?.name === "delegation-slack") ? { source: "slack" as const } : tags.some((t) => t?.name === "delegation-teams") ? { source: "teams" as const } : {}),
       sessionId: s.id, title: displayTitle(typeof settings.title === "string" && settings.title ? settings.title : s.title, first), cwd: s.cwd ?? "",
       updatedAt: new Date(s.mtimeMs).toISOString(), pinned: settings.pinned === true, archivedAt, isSubagent, hasUserVisibleMessages: visible,
     });

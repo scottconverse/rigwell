@@ -49,8 +49,8 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 
 ## 6. Automations and delegation
 
-23. GitHub, Slack, CI and chained triggers (§20.11). Implemented locally with durable event dispatch, explicit source replies and desktop controls; affected/final checks green, awaiting candidate CI. See docs/automation-triggers.md and HANDOFF State.
-24. Slack and Teams delegation (§20.12).
+23. GitHub, Slack, CI and chained triggers (§20.11). Implemented locally with durable event dispatch, explicit source replies and desktop controls; delivered on f47de1f with affected/final checks and all four required CI jobs/packages green. See docs/automation-triggers.md and HANDOFF State.
+24. Slack and Teams delegation (§20.12). Implemented through normal daemon engines with shared Socket Mode, verified Bot Framework requests, source-bound prompts/replies and desktop controls; affected/final checks pass, candidate CI pending. See docs/delegation.md and HANDOFF State.
 25. Inbox page and email alerts (§20.13).
 26. Local code review, triage and QA services and their three skills (§20.16).
 

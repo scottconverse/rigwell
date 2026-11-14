@@ -16,16 +16,20 @@ import { machineRuntimeInfo } from "../machines/runtime-info.ts";
 import { listWorkstreamStores } from "../workstreams/store.ts";
 import { PhoneAccess } from "../phone/server.ts";
 import { PhoneStore } from "../phone/store.ts";
+import { SlackHub } from "../automations/triggers/slack.ts";
+import { DelegationService, type DelegationDeps } from "../delegation/service.ts";
+import { DelegationStore } from "../delegation/store.ts";
 
 export const defaultSocketPath = () => join(rigwellHome(), "daemon.sock");
 
-export async function startDaemon(opts: { socketPath: string; onShutdown?: () => void; advertise?: boolean; backgroundServices?: boolean; log?: (m: string) => void; retryBaseDelayMs?: number; automations?: false | ServiceOptions; ws?: false | { port?: number; token?: string }; sidepane?: false | SidePaneOptions }) {
+export async function startDaemon(opts: { socketPath: string; onShutdown?: () => void; advertise?: boolean; backgroundServices?: boolean; log?: (m: string) => void; retryBaseDelayMs?: number; automations?: false | ServiceOptions; delegation?: false | DelegationDeps; ws?: false | { port?: number; token?: string }; sidepane?: false | SidePaneOptions }) {
   mkdirSync(dirname(opts.socketPath), { recursive: true });
   if (existsSync(opts.socketPath)) unlinkSync(opts.socketPath);
   const conns = new Set<ReturnType<typeof createConnection>>();
   const dec = new TextDecoder();
   type Data = { conn: ReturnType<typeof createConnection>; out: Uint8Array[] };
   const enc = new TextEncoder();
+  const slackHub = (opts.delegation && opts.delegation.slackHub) || (opts.automations && opts.automations.triggers?.slackHub) || new SlackHub(opts.automations ? opts.automations.triggers?.slack : undefined);
   const flush = (sock: Bun.Socket<Data>) => {
     while (sock.data.out.length) {
       const buf = sock.data.out[0];
@@ -48,6 +52,7 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
       onCronChanged: (cron) => { for (const c of conns) c.peer.notify(METHOD_PREFIX + "cron.state_changed", { cron }); },
       onAutoPaused: (a) => { for (const c of conns) c.peer.notify(METHOD_PREFIX + "automation.auto_paused", a); },
       ...opts.automations,
+      triggers: { ...opts.automations?.triggers, slackHub },
     });
   })();
   auto?.start();
@@ -100,14 +105,19 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
     conn = createConnection(write, {
       canPrompt: true, log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs,
       machineControl,
-      onNotification: (s, n) => { if (s) workstreams.observe(s, n); },
+      onNotification: (s, n) => {
+        if (s) workstreams.observe(s, n);
+        if (s && ["create_message", "session_title_updated", "agent_turn_completed"].includes(String(n.type)) && (s.settingsSnapshot().tags as { name: string }[] | undefined)?.some((t) => t.name === "delegation-slack" || t.name === "delegation-teams")) {
+          for (const c of conns) c.peer.notify(METHOD_PREFIX + "session_list_changed", { sessionId: s.id });
+        }
+      },
       sharedSession: (id) => {
         const member = workstreams.sharedSession(id); if (member) return member;
         const owner = [...conns].find((c) => !c.closed && c.session?.id === id), session = owner?.session;
         return owner && session ? { session, alive: () => conns.has(owner) && !owner.closed && owner.session === session, subscribe: (notify) => session.subscribeNotifications(notify) } : undefined;
       },
       sharedRemoteSession: workstreams.sharedRemoteSession,
-      extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx), ...mission.methods, ...stream.methods, ...phone.methods },
+      extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx), ...mission.methods, ...stream.methods, ...phone.methods, ...delegation?.methods },
       notifyUserMessages: true,
       wrapTools: (tools) => stream.wrapTools(mission.wrapTools(tools)),
       extraTools: sidepane || autoTools.length ? () => [...(sidepane ? sidepane.tools() : []), ...autoTools] : undefined,
@@ -128,6 +138,10 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
   const phone = new PhoneAccess(new PhoneStore(), (write) => {
     const conn = mkConn(write); return { feed: (m) => conn.peer.feed(m + "\n"), close: () => dropConn(conn) };
   }, opts.log);
+  const delegation = opts.delegation === false ? undefined : new DelegationService(new DelegationStore(), (write) => {
+    const conn = mkConn(write); return { feed: (line) => conn.peer.feed(line + "\n"), close: async () => { await conn.shutdown(); dropConn(conn); } };
+  }, { ...opts.delegation, slackHub }, opts.log);
+  await delegation?.start();
   await phone.restore();
   const server = Bun.listen<Data>({
     unix: opts.socketPath,
@@ -179,11 +193,13 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
     automations: auto,
     workstreams,
     phone,
+    delegation,
     get sessionCount() { return [...conns].filter((c) => c.session).length; },
     stop() {
       if (stopped) return stopped;
       for (const handle of missions.handles.values()) handle.pause("daemon_shutdown");
       const pending = [...conns].map((c) => c.shutdown());
+      if (delegation) pending.push(delegation.stop());
       pending.push(workstreams.stop());
       auto?.stop();
       offWorktree();

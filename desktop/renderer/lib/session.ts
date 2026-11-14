@@ -44,7 +44,7 @@ export interface SessionState {
   title: string;
   items: Item[];
   working: string;
-  settings: { modelId?: string; reasoningEffort?: string; interactionMode?: string; autonomyLevel?: string };
+  settings: { modelId?: string; reasoningEffort?: string; interactionMode?: string; autonomyLevel?: string; tags?: { name: string }[] };
   models: { id: string; displayName?: string; provider?: string }[];
   tokens: { input: number; output: number };
   prompts: Prompt[];

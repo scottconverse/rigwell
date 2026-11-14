@@ -41,6 +41,7 @@ export class AppModel extends Store<AppState> {
     try {
       if (!this.control || this.control.closed) {
         this.control = await DaemonConn.open();
+        this.control.onNotification = (method) => { if (method === "session_list_changed") void this.refresh(); };
         this.control.onClose = () => { this.control = undefined; };
         void this.control.request("list_workstreams").catch(() => {});
       }
@@ -67,6 +68,7 @@ export class AppModel extends Store<AppState> {
   async request<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> {
     if (!this.control || this.control.closed) {
       this.control = await DaemonConn.open();
+      this.control.onNotification = (method) => { if (method === "session_list_changed") void this.refresh(); };
       this.control.onClose = () => { this.control = undefined; };
       void this.control.request("list_workstreams").catch(() => {});
     }

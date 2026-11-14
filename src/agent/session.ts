@@ -2038,6 +2038,7 @@ export class Session {
     this.asking("start");
     void this.hooks?.notification("elicitation_dialog", p.questions[0]?.question ?? "The agent has a question for you");
     const raw = await this.prompt<AskUserAnswer>("ask_user", requestId, params, () => send(params), { cancelled: true, answers: [] });
+    this.notify({ type: "ask_user_resolved", requestId });
     this.asking("end");
     this.setState("executing_tool");
     const answers = Array.isArray(raw?.answers)
