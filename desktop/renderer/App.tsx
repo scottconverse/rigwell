@@ -1,5 +1,6 @@
 import { FleetMachines } from "./components/Machines.tsx";
 import { SharedSessions } from "./components/SharedSessions.tsx";
+import { Sync } from "./components/Sync.tsx";
 import { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
@@ -82,6 +83,7 @@ function App() {
           : parts[0] === "workstreams" ? <Workstreams key={parts[1] ?? "list"} id={parts[1]} go={go} />
           : parts[0] === "machines" ? <FleetMachines />
           : parts[0] === "imports" ? <SharedSessions id={parts[1]} go={go} />
+          : parts[0] === "sync" ? <Sync go={go} />
           : parts[0] === "review" ? <Review initialFolder={folder} go={go} />
           : parts[0] === "automations" ? (parts[1] ? <AutomationDetail key={parts[1]} id={parts[1]} go={go} /> : <Automations go={go} />)
           : sessionId ? <SessionScreen key={sessionId} sessionId={sessionId} /> : <Home key={folder ?? "home"} go={go} initialFolder={folder} initialMission={new URLSearchParams(query ?? "").get("mode") === "mission"} />}

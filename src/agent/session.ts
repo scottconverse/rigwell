@@ -2,6 +2,8 @@
 import { homedir } from "node:os";
 import { fleetIsStopping, registerLiveSession } from "../machines/live-sessions.ts";
 import { rigwellHome } from "../storage/paths.ts";
+import { configuredSessionLease, type SessionLease } from "../sync/lease.ts";
+import { readSyncConfig } from "../sync/config.ts";
 import { basename, join, resolve } from "node:path";
 import type {
   AutonomyLevel, CommandLists, ContentBlock, InteractionMode, Message, ModelAdapter, ModelConfig,
@@ -741,6 +743,11 @@ export class Session {
    * (turn 1 waits for them, at most 60 s). Call once after construction.
    */
   start(source: "startup" | "resume" = "startup") {
+    if (readSyncConfig(this.fleetHome)?.kinds.includes("session")) { this.syncStart = source; return; }
+    this.startOwned(source);
+  }
+  private syncStart?: "startup" | "resume";
+  private startOwned(source: "startup" | "resume") {
     if (this.mcp) {
       try { this.mcp.startFromConfig(this.deps.mcp!.servers).catch((e) => this.deps.log?.(`[mcp] start failed: ${(e as Error)?.message ?? e}`)); }
       catch (e) { this.deps.log?.(`[mcp] start failed: ${(e as Error)?.message ?? e}`); }
@@ -766,11 +773,15 @@ export class Session {
     this.ended = true;
     this.unregisterLive?.();
     await closeSessionBrowsers(this.id).catch((e) => this.deps.log?.(`[browser] cleanup failed: ${(e as Error).message}`));
-    if (this.hooks?.hasHooks() && !this.deps.isChild) {
+    if (this.hooks?.hasHooks() && !this.deps.isChild && this.syncStart === undefined && (!this.syncLease || this.syncLease.owned)) {
       await this.hooks.sessionEnd(reason, Date.now() - this.startedAt, this.messages.length).catch(() => {});
     }
     await this.mcp?.shutdown().catch(() => {});
     await detachSandbox(this.id).catch(() => {});
+    if (this.syncLease) {
+      this.interrupt(true); await this.stopBackgroundJobs(); await this.idle();
+      await this.syncLease.release().catch((e) => this.deps.log?.(`[sync] release failed: ${e.message}`));
+    }
   }
 
   /** A note for the user only (hook system messages, notices): stored and sent as create_message, never shown to the model. */
@@ -928,15 +939,34 @@ export class Session {
   }
 
   private admissionAbort?: AbortController;
+  private syncLease?: SessionLease;
+  private async claimSyncOwnership() {
+    this.syncLease ??= configuredSessionLease(this.id, () => {
+      this.interrupt(true);
+      void this.stopBackgroundJobs();
+      this.notify({ type: "error", message: "Session sync ownership was lost. Work stopped; close and reload this session before continuing.", errorType: "SessionError", timestamp: new Date().toISOString(), error: { name: "SessionOwnershipLost", message: "Session lease expired or renewal failed" } });
+    }, this.fleetHome);
+    await this.syncLease?.acquire();
+    if (this.syncStart !== undefined) { const source = this.syncStart; this.syncStart = undefined; this.startOwned(source); }
+  }
   private async runTurn(text: string, turnId: string, visibility?: "llm_only", entry?: QueuedUserMessage) {
-    if (!this.deps.beforeTurn) return this.runAdmittedTurn(text, turnId, visibility, entry);
     const admission = new AbortController();
     this.admissionAbort = admission;
     let release: (() => void) | undefined;
+    let admitted = false;
     try {
-      release = await this.deps.beforeTurn(admission.signal);
-      if (!admission.signal.aborted) await this.runAdmittedTurn(text, turnId, visibility, entry);
-    } catch (e) { if (!admission.signal.aborted) throw e; }
+      release = await this.deps.beforeTurn?.(admission.signal);
+      if (!admission.signal.aborted) await this.claimSyncOwnership();
+      if (!admission.signal.aborted) { admitted = true; await this.runAdmittedTurn(text, turnId, visibility, entry); }
+    } catch (e) {
+      if (admitted) throw e;
+      const reason = admission.signal.aborted ? "cancelled" : "error";
+      this.lastTurn = { reason, text: "" };
+      if (!admission.signal.aborted) this.notify({ type: "error", message: String((e as Error).message ?? e), errorType: "SessionError", timestamp: new Date().toISOString(), error: { name: "TurnAdmissionDenied", message: String((e as Error).message ?? e) } });
+      // Admission failed before taking transcript ownership. Notify without writing to another engine's files.
+      this.notify({ type: "agent_turn_completed", reason, turnId, tokenUsage: zeroUsage(), cumulativeTokenUsage: this.inclusiveUsage(), durationMs: 0 });
+      this.setState("idle");
+    }
     finally { release?.(); if (this.admissionAbort === admission) this.admissionAbort = undefined; }
   }
 
@@ -1241,6 +1271,7 @@ export class Session {
   }
 
   private async streamOnce(model: ModelConfig, messageId: string, signal: AbortSignal): Promise<any> {
+    this.syncLease?.assertOwned();
     const g = this.guards(model);
     const req = { ...this.builder.build(this.buildInput(model, signal)), limits: { idleTimeoutMs: g.streamIdleTimeoutMs, hardLimitMs: g.hardResponseLimitMs } };
     this.setState("thinking");
@@ -1354,6 +1385,8 @@ export class Session {
     this.running = true;
     this.abort = new AbortController();
     try {
+      await this.claimSyncOwnership();
+      await this.startup; this.startup = undefined;
       const r = await this.compact({ reason: "manual", customInstructions: o.customInstructions, mode: o.mode, signal: this.abort.signal });
       return { newSessionId: this.id, removedCount: r.removedCount };
     } finally {
@@ -1534,6 +1567,7 @@ export class Session {
   }
 
   private async runTools(calls: ToolUseBlock[], signal: AbortSignal): Promise<{ results: ToolResultBlock[]; stop?: TurnReason; extras: string[] }> {
+    this.syncLease?.assertOwned();
     const results: ToolResultBlock[] = [];
     const extras: string[] = [];
     const tools = new Map(this.tools().map((t) => [t.name, t]));

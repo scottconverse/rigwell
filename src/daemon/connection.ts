@@ -475,6 +475,14 @@ export function createConnection(write: (line: string) => void, opts: Connection
         return { ...paths, models: listModelInfo(env.models), defaultModel: env.s.sessionDefaultSettings?.model ?? env.models[0]?.id };
       }
       case "machine_runtime_info": return (await import("../machines/runtime-info.ts")).machineRuntimeInfo();
+      case "sync_status": return (await import("../sync/service.ts")).syncStatus();
+      case "sync_configure": return (await import("../sync/service.ts")).configureSync(p.config);
+      case "sync_now": return (await import("../sync/service.ts")).syncNow();
+      case "sync_view": case "sync_restore": {
+        if (typeof p.key !== "string" || (p.hash !== undefined && typeof p.hash !== "string") || (p.cwd !== undefined && typeof p.cwd !== "string")) throw new RpcError(ErrorCodes.INVALID_PARAMS, "Valid sync item, optional hash and working directory required");
+        const sync = await import("../sync/service.ts");
+        return method === "sync_view" ? { readOnly: true, item: sync.syncedItem(p.key, p.hash) } : sync.restoreSyncedItem(p.key, { hash: p.hash, cwd: p.cwd });
+      }
       case "export_session": {
         const id = typeof p.sessionId === "string" ? p.sessionId : need().id;
         if (p.format !== "html" && p.format !== "markdown") throw new RpcError(ErrorCodes.INVALID_PARAMS, "format must be html or markdown");

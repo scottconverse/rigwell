@@ -35,4 +35,4 @@ URLs, unsupported schemes, malformed payloads and executable roles. Gist imports
 the canonical raw-file host before reading a truncated file. No imported HTML is executed.
 
 Fake-service and headless checks cover these boundaries. No real gist upload is part of automated acceptance.
-Session sync and owning-machine leases are the remaining portion of spec 20.8 and are not delivered by this slice.
+Session sync and owning-machine leases are described in [Sync between your machines](sync.md).
