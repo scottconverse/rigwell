@@ -12,7 +12,7 @@ const { pw, reason } = chromiumStatus("standalone agent browser acceptance");
 const PAGE = `<!doctype html><title>Fixture browser</title><h1>Task form</h1>
 <form onsubmit="event.preventDefault();document.getElementById('result').textContent='Saved '+document.querySelector('input').value"><input aria-label="Task"><button>Save</button></form><p id=result>Waiting</p>
 <button onclick="setTimeout(()=>document.getElementById('later').textContent='Later ready',80)">Later</button><p id=later></p>
-<a href=/download download>Download fixture</a><div style="height:2000px">Long page</div>`;
+<input type=file aria-label="Upload fixture" oncancel="document.getElementById('upload-result').textContent='Upload canceled'"><p id=upload-result></p><a href=/download download>Download fixture</a><div style="height:2000px">Long page</div>`;
 const ref = (snapshot: string, role: string, name: string) => {
   const line = snapshot.split("\n").find((l) => l.includes(`${role} ${JSON.stringify(name)}`));
   const match = line && /\[(\d+)\]/.exec(line); if (!match) throw new Error(`Missing ${role} ${name}: ${snapshot}`); return Number(match[1]);
@@ -60,6 +60,8 @@ const ref = (snapshot: string, role: string, name: string) => {
     const started = Date.now(); let downloaded = false;
     while (Date.now() - started < 2000) { downloaded = readdirSync(directory).some((p) => !p.endsWith(".png") && !p.endsWith(".crdownload") && readFileSync(join(directory, p), "utf8") === "fixture-download"); if (downloaded) break; await Bun.sleep(20); }
     expect(downloaded).toBe(true);
+    r = await run("browser_snapshot"); await run("browser_click", { ref: ref(r.content, "button", "Upload fixture") });
+    expect((await run("browser_wait", { text: "Upload canceled", timeoutMs: 2000 })).content).toContain("Upload canceled");
     expect((await run("browser_evaluate", { expression: "document.title" })).content).toBe('"Fixture browser"');
     expect((await manager.run("browser_click", { ref: 99999 }, ctx)).content).toContain("Unknown element ref");
     await run("browser_close"); expect(readdirSync(join(env.rigwellHome, "browser-profiles"))).toEqual([]);

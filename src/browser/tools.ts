@@ -33,6 +33,7 @@ class AgentPage {
       });
       this.trace("install request guards"); await c.send("Network.enable", {}, sid);
       await c.send("Network.setBypassServiceWorker", { bypass: true }, sid);
+      await c.send("Page.setInterceptFileChooserDialog", { enabled: true, cancel: true }, sid);
       await c.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] }, sid);
     }
     this.trace("prepare output policy"); const directory = this.outputDirectory(false);
