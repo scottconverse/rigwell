@@ -59,6 +59,18 @@ export async function connect(socketPath: string): Promise<TestClient> {
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Keep shutdown evidence when a platform stalls before the Electron process exits. */
+export async function closeElectron(app: any): Promise<void> {
+  if (!app) return;
+  const proc = app.process();
+  let tail = "";
+  const collect = (chunk: Buffer) => { tail = (tail + chunk.toString()).slice(-4000); };
+  proc.stderr?.on("data", collect);
+  const diagnostic = setTimeout(() => console.log(`[electron shutdown pending pid=${proc.pid}]\n${tail}`), 10_000);
+  try { await app.close(); }
+  finally { clearTimeout(diagnostic); proc.stderr?.off("data", collect); }
+}
+
 /** Playwright comes from desktop/node_modules (devDependency, installed by `npm install` in desktop/) or, in the sandbox, /opt/node-tools. */
 const PW_BASES = [join(import.meta.dir, "../../desktop") + "/", "/opt/node-tools/", process.cwd() + "/"];
 

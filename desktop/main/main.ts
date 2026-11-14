@@ -586,8 +586,13 @@ async function boot() {
   app.on("before-quit", (e) => {
     if (quitting) return;
     quitting = true; e.preventDefault();
+    log("[shutdown] requested");
     broker.closeAll();
-    void Promise.all([supervisor.stop(), proxy?.stop()]).finally(() => app.exit(0));
+    log("[shutdown] connections closed");
+    void Promise.all([
+      supervisor.stop().finally(() => log("[shutdown] daemon stopped")),
+      proxy?.stop().finally(() => log("[shutdown] browser proxy stopped")),
+    ]).finally(() => { log("[shutdown] exiting"); app.exit(0); });
   });
 }
 

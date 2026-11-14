@@ -35,7 +35,8 @@ describe("symlinked folders", () => {
   });
 
   test("a trusted folder given as a link trusts the real path and the reverse", () => {
-    const repo = makeGitRepo();
+    // Folder trust resolves paths; it does not inspect git history.
+    const repo = tmp("trust-root");
     const link = linkTo(repo);
     expect(isFolderTrusted(repo, { [link]: {} }, {})).toBe(true);
     expect(isFolderTrusted(link, { [repo]: {} }, {})).toBe(true);

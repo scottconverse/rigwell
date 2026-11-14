@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer, FakeTurn } from "../fakes/types.ts";
 import { CLI, makeHome, makeRepo } from "../e2e/helpers.ts";
-import { electronStatus, sleep, withDiagnosis } from "./helpers.ts";
+import { closeElectron, electronStatus, sleep, withDiagnosis } from "./helpers.ts";
 
 const desktop = join(import.meta.dir, "../../desktop");
 const { pw, electronBin, reason } = electronStatus("electron handler test");
@@ -66,7 +66,7 @@ maybe("desktop app: trust dialog and ask-user panel", () => {
   });
 
   afterAll(async () => {
-    await app?.close().catch(() => {});
+    await closeElectron(app).catch(() => {});
     xvfb?.kill();
     fake?.stop();
   });

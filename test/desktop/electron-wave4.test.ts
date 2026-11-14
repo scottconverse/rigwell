@@ -12,7 +12,7 @@ import type { FakeServer, FakeTurn } from "../fakes/types.ts";
 import { CLI, makeHome, makeRepo } from "../e2e/helpers.ts";
 import { deriveKey } from "../../src/sidepane/chrome-cookies.ts";
 import { makeCookieDb, SECRET_SESSION_VALUE } from "./cookie-fixture.ts";
-import { diagnose, electronStatus, sleep, withDiagnosis } from "./helpers.ts";
+import { closeElectron, diagnose, electronStatus, sleep, withDiagnosis } from "./helpers.ts";
 import { jsCommand } from "../platform.ts";
 
 const desktop = join(import.meta.dir, "../../desktop");
@@ -104,7 +104,7 @@ maybe("desktop app: wave 4 features", () => {
   });
 
   afterAll(async () => {
-    await app?.close().catch(() => {});
+    await closeElectron(app).catch(() => {});
     xvfb?.kill();
     fake?.stop(); idp?.stop();
   });

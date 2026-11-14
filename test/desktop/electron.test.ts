@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer, FakeTurn } from "../fakes/types.ts";
 import { CLI, makeHome, makeRepo } from "../e2e/helpers.ts";
-import { electronStatus, sleep } from "./helpers.ts";
+import { closeElectron, electronStatus, sleep } from "./helpers.ts";
 import { jsCommand } from "../platform.ts";
 
 const desktop = join(import.meta.dir, "../../desktop");
@@ -76,7 +76,7 @@ maybe("desktop app end to end", () => {
   });
 
   afterAll(async () => {
-    await app?.close().catch(() => {});
+    await closeElectron(app).catch(() => {});
     xvfb?.kill();
     fake?.stop(); web?.stop(true);
   });
@@ -292,7 +292,7 @@ maybe("desktop app end to end", () => {
     expect(await app.evaluate(({ BrowserWindow }: any) => BrowserWindow.getAllWindows()[0].getBackgroundColor())).toBe("#161413");
 
     // Relaunch: the window is created dark and the first frame is already dark.
-    await app.close();
+    await closeElectron(app);
     await launch();
     const bg = await app.evaluate(({ BrowserWindow }: any) => BrowserWindow.getAllWindows()[0].getBackgroundColor());
     expect(bg).toBe("#161413");

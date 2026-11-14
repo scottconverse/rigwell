@@ -21,8 +21,9 @@ export interface AppState {
 const RECENT_KEY = "rigwell.recentFolders";
 const loadRecent = (): string[] => { try { return JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]"); } catch { return []; } };
 
-class AppModel extends Store<AppState> {
+export class AppModel extends Store<AppState> {
   private control?: DaemonConn;
+  private refreshVersion = 0;
   constructor() { super({ daemon: { state: "stopped" }, sessions: [], models: [], recentFolders: loadRecent(), userSettings: {} }); }
 
   async start() {
@@ -36,12 +37,14 @@ class AppModel extends Store<AppState> {
 
   /** (Re)reads the session list and the models over a control connection. */
   async refresh() {
+    const version = ++this.refreshVersion;
     try {
       if (!this.control || this.control.closed) {
         this.control = await DaemonConn.open();
         this.control.onClose = () => { this.control = undefined; };
       }
       const [s, m] = await Promise.all([this.listSessions(this.control), this.control.request("list_models")]);
+      if (version !== this.refreshVersion) return;
       this.set({ sessions: s, models: (m.models ?? []).map(normalizeModel) });
       void this.refreshUserSettings();
     } catch { /* the daemon is restarting; the status event triggers another refresh */ }

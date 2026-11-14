@@ -48,6 +48,9 @@ jobs:
           ls node_modules/electron/dist | head
       - name: Typecheck
         run: bunx tsc --noEmit -p .
+      - name: Install Chromium for browser acceptance
+        working-directory: desktop
+        run: npx playwright install chromium
       - name: Tests
         run: bun test
       - name: Build the desktop package for this platform (unsigned)
