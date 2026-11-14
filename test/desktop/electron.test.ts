@@ -91,10 +91,22 @@ maybe("desktop app end to end", () => {
     await page.keyboard.press("Control+p");
     await page.locator(".tree-row", { hasText: "greet.js" }).click();
     await page.locator(".code").getByText("Helo").first().waitFor();
+    await page.evaluate(() => {
+      const w = window as any; w.__fileInputs = [];
+      for (const type of ["input", "change", "click"]) document.addEventListener(type, (event) => {
+        const target = event.target as HTMLTextAreaElement;
+        if (target.getAttribute("aria-label") === "Edit file" || (target.tagName === "BUTTON" && target.textContent === "Save")) w.__fileInputs.push({ type, value: target.value, trusted: event.isTrusted });
+      }, true);
+    });
     await page.getByRole("button", { name: "Edit", exact: true }).click();
     await page.getByLabel("Edit file").fill('export function greet(name) {\n  return "Hello, " + name + "!";\n}\n');
+    const beforeSave = await page.getByLabel("Edit file").evaluate((node: HTMLTextAreaElement) => {
+      const key = Object.keys(node).find((k) => k.startsWith("__reactProps$"));
+      return { dom: node.value, react: key ? (node as any)[key].value : "unavailable" };
+    });
     await page.getByRole("button", { name: "Save" }).click();
     await page.getByText("Saved").waitFor();
+    if (!readFileSync(join(repo, "greet.js"), "utf8").includes('"Hello, "')) console.log("[file save diagnostic]", JSON.stringify({ beforeSave, events: await page.evaluate(() => (window as any).__fileInputs), fileName: await page.locator(".file-name").textContent(), text: await page.locator(".files-view").innerText() }));
     expect(readFileSync(join(repo, "greet.js"), "utf8")).toContain('"Hello, "');
 
     // The file changes behind the editor's back: the next save is refused and the disk keeps the other writer's text.
