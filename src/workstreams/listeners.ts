@@ -1,4 +1,5 @@
-import { watch, realpathSync, type FSWatcher } from "node:fs";
+import { watch, realpathSync, lstatSync, type FSWatcher } from "node:fs";
+import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { WorkstreamStore, type ListenerOn, type WorkstreamEvent, type WorkstreamListener } from "./store.ts";
 
@@ -11,7 +12,7 @@ export class WorkstreamListeners {
   private handles = new Map<string, () => void>();
   private waiting = new Set<Waiting>();
   private closed = false;
-  constructor(private opts: { fire(store: WorkstreamStore, listener: WorkstreamListener, event: WorkstreamEvent): void; log?(text: string): void }) {}
+  constructor(private opts: { fire(store: WorkstreamStore, listener: WorkstreamListener, event: WorkstreamEvent): void; log?(text: string): void; watch?: typeof watch }) {}
 
   create(store: WorkstreamStore, owner: string, input: Record<string, unknown>) {
     if (this.closed) throw new Error("Listener service is closed");
@@ -96,19 +97,73 @@ export class WorkstreamListeners {
       timer.unref?.(); this.handles.set(listener.id, () => clearTimeout(timer));
     } else if (listener.on === "file_changed") {
       const { root, glob } = this.fileTarget(store, listener);
-      let watcher: FSWatcher;
-      watcher = watch(root, { recursive: true }, (change, filename) => {
-        this.opts.log?.(`[workstream] File listener ${listener.id} event ${change}: ${String(filename)}`);
-        if (!filename) return;
-        const name = String(filename).replaceAll("\\", "/");
-        if (!glob.match(name)) return;
-        const path = resolve(root, name);
-        try { const real = realpathSync.native(path), rel = relative(root, real); if (rel.startsWith("..") || isAbsolute(rel)) return; } catch { /* a deleted file still produces a change */ }
-        this.fire(store, listener, { path, change });
-      });
-      this.opts.log?.(`[workstream] File listener ${listener.id} armed at ${root}`);
-      watcher.on("error", (e) => this.opts.log?.(`[workstream] File listener ${listener.id}: ${e.message}`));
-      watcher.unref(); this.handles.set(listener.id, () => watcher.close());
+      const stamp = (path: string) => {
+        try {
+          const st = lstatSync(path, { bigint: true });
+          if (st.isSymbolicLink()) return undefined;
+          const rel = relative(root, realpathSync.native(path));
+          if (rel.startsWith("..") || isAbsolute(rel)) return undefined;
+          return `${st.ino}:${st.size}:${st.mtimeNs}:${st.ctimeNs}`;
+        } catch { return undefined; }
+      };
+      const snapshot = () => {
+        const files = new Map<string, string>();
+        for (const name of glob.scanSync({ cwd: root, dot: true, followSymlinks: false, onlyFiles: false })) {
+          const path = resolve(root, name), value = stamp(path);
+          if (value !== undefined) files.set(path, value);
+        }
+        return files;
+      };
+      // Native watchers have no readiness acknowledgement and may omit/coalesce events.
+      // Capture the baseline before registration so immediate post-rearm writes are reconciled.
+      let previous = snapshot(), stopped = false, scanning = false, revision = 0;
+      const reconcile = async () => {
+        if (stopped || scanning) return;
+        scanning = true;
+        const startedRevision = revision;
+        try {
+          const current = new Map<string, string>();
+          for await (const name of glob.scan({ cwd: root, dot: true, followSymlinks: false, onlyFiles: false })) {
+            if (stopped) return;
+            const path = resolve(root, name);
+            try {
+              const st = await lstat(path, { bigint: true });
+              if (st.isSymbolicLink()) continue;
+              const rel = relative(root, await realpath(path));
+              if (!rel.startsWith("..") && !isAbsolute(rel)) current.set(path, `${st.ino}:${st.size}:${st.mtimeNs}:${st.ctimeNs}`);
+            } catch { /* Changed during the scan; the next scan reconciles it. */ }
+          }
+          // A native event updated the baseline while scanning: discard this stale snapshot.
+          if (stopped || revision !== startedRevision) return;
+          const before = previous; previous = current;
+          for (const path of new Set([...before.keys(), ...current.keys()])) {
+            if (stopped) return;
+            if (before.get(path) !== current.get(path)) this.fire(store, listener, { path, change: !before.has(path) || !current.has(path) ? "rename" : "change" });
+          }
+        } catch (e) { this.opts.log?.(`[workstream] File listener ${listener.id} reconciliation: ${(e as Error).message}`); }
+        finally { scanning = false; }
+      };
+      let watcher: FSWatcher | undefined;
+      const poll = setInterval(reconcile, 1000); poll.unref();
+      this.handles.set(listener.id, () => { stopped = true; clearInterval(poll); watcher?.close(); });
+      try {
+        watcher = (this.opts.watch ?? watch)(root, { recursive: true }, (change, filename) => {
+          if (stopped) return;
+          this.opts.log?.(`[workstream] File listener ${listener.id} event ${change}: ${String(filename)}`);
+          if (!filename) { void reconcile(); return; }
+          const name = String(filename).replaceAll("\\", "/");
+          if (!glob.match(name)) return;
+          const path = resolve(root, name);
+          try { const real = realpathSync.native(path), rel = relative(root, real); if (rel.startsWith("..") || isAbsolute(rel)) return; } catch { /* a deleted file still produces a change */ }
+          const value = stamp(path);
+          revision++;
+          if (value === undefined) previous.delete(path); else previous.set(path, value);
+          this.fire(store, listener, { path, change });
+        });
+        this.opts.log?.(`[workstream] File listener ${listener.id} armed at ${root}`);
+        watcher.on("error", (e) => this.opts.log?.(`[workstream] File listener ${listener.id}: ${e.message}`));
+        watcher.unref();
+      } catch (e) { this.opts.log?.(`[workstream] File listener ${listener.id} uses reconciliation: ${(e as Error).message}`); }
     }
   }
 

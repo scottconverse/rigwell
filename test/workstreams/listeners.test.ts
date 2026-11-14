@@ -1,13 +1,46 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, type watch } from "node:fs";
+import { EventEmitter } from "node:events";
 import { join } from "node:path";
 import { setup, until } from "./helpers.ts";
 import { makeGitRepo, tmp } from "../worktree/util.ts";
 import type { FakeTurnSpec } from "../fakes/types.ts";
 import { canonicalPath } from "../../src/worktree/git.ts";
+import { WorkstreamListeners } from "../../src/workstreams/listeners.ts";
 
 const question: FakeTurnSpec = { toolCalls: [{ name: "AskUser", input: { questions: [{ topic: "Hold", question: "Continue?", options: ["yes", "no"] }] } }] };
 const answer = { answers: [{ index: 1, question: "Continue?", answer: "yes" }] };
+
+test("rearmed file listeners reconcile a creation omitted by an armed native watcher", async () => {
+  const f = await setup(); let closed = 0;
+  const silentWatch = (() => Object.assign(new EventEmitter(), { unref() {}, close() { closed++; } })) as unknown as typeof watch;
+  const before = new WorkstreamListeners({ watch: silentWatch, fire() {} });
+  const after = new WorkstreamListeners({ watch: silentWatch, fire() {} });
+  try {
+    const result = before.create(f.store, "lead", { on: "file_changed", filter: { glob: "*.txt" } });
+    before.close(); after.rearm(f.store);
+    const path = f.store.path("shared/reconciled.txt"); writeFileSync(path, "Written immediately after rearm");
+    const waited = await after.wait(f.store, "lead", { listenerIds: [result.listenerId], timeoutMs: 3000 });
+    expect(waited.events).toMatchObject([{ on: "file_changed", trigger: { path: canonicalPath(path), change: "rename" } }]);
+    expect(f.store.listeners()).toHaveLength(0); expect(closed).toBe(2);
+  } finally { before.close(); after.close(); await f.close(); }
+});
+
+test("recurring file reconciliation detects edits and deletion without native callbacks", async () => {
+  const f = await setup();
+  const silentWatch = (() => Object.assign(new EventEmitter(), { unref() {}, close() {} })) as unknown as typeof watch;
+  const listeners = new WorkstreamListeners({ watch: silentWatch, fire() {} });
+  try {
+    const path = f.store.path("shared/existing.txt"); writeFileSync(path, "Before");
+    const result = listeners.create(f.store, "lead", { on: "file_changed", once: false, filter: { glob: "*.txt" } });
+    writeFileSync(f.store.path("shared/ignore.md"), "Not a match"); writeFileSync(path, "Changed contents");
+    expect((await listeners.wait(f.store, "lead", { listenerIds: [result.listenerId], timeoutMs: 3000 })).events).toMatchObject([{ trigger: { path: canonicalPath(path), change: "change" } }]);
+    rmSync(path);
+    expect((await listeners.wait(f.store, "lead", { listenerIds: [result.listenerId], timeoutMs: 3000 })).events).toMatchObject([{ trigger: { path: canonicalPath(path), change: "rename" } }]);
+    expect(f.store.events().filter((e) => e.type === "listener_fired")).toHaveLength(2);
+    listeners.archive(f.store); expect(f.store.listeners()).toHaveLength(0);
+  } finally { listeners.close(); await f.close(); }
+});
 const busy = (body: any): FakeTurnSpec => JSON.stringify(body.messages.at(-1)).includes("BUSY") ? question : { text: "Finished" };
 
 test("filtered idle/completion listeners and all_idle wait for both real members", async () => {
