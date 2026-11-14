@@ -132,7 +132,7 @@ export class BrowserService {
   private idleTimer?: ReturnType<typeof setTimeout>;
   readonly screenshotDir: string;
 
-  constructor(private opts: { cdpUrl: string; idleMs?: number; screenshotDir?: string; log?: (m: string) => void }) {
+  constructor(private opts: { cdpUrl: string; browserContextId?: string; idleMs?: number; screenshotDir?: string; log?: (m: string) => void }) {
     this.screenshotDir = opts.screenshotDir ?? join(rigwellHome(), "browser-screenshots");
   }
 
@@ -165,7 +165,7 @@ export class BrowserService {
   async tabs(): Promise<TabInfo[]> {
     const c = await this.cdp();
     const { targetInfos } = await c.send<{ targetInfos: any[] }>("Target.getTargets");
-    const pages = targetInfos.filter((t) => t.type === "page" && !String(t.url).startsWith("devtools://"));
+    const pages = targetInfos.filter((t) => t.type === "page" && !String(t.url).startsWith("devtools://") && (!this.opts.browserContextId || t.browserContextId === this.opts.browserContextId));
     const visibleActive = pages.find((p) => p.rigwellActive);
     if (visibleActive) this.activeTarget = visibleActive.targetId;
     if (!this.activeTarget || !pages.some((p) => p.targetId === this.activeTarget)) this.activeTarget = pages[0]?.targetId;
@@ -182,7 +182,7 @@ export class BrowserService {
 
   async newTab(url = "about:blank"): Promise<string> {
     const c = await this.cdp();
-    const { targetId } = await c.send<{ targetId: string }>("Target.createTarget", { url });
+    const { targetId } = await c.send<{ targetId: string }>("Target.createTarget", { url, ...(this.opts.browserContextId ? { browserContextId: this.opts.browserContextId } : {}) });
     this.activeTarget = targetId;
     return targetId;
   }
@@ -191,6 +191,7 @@ export class BrowserService {
     const c = await this.cdp();
     const t = id ?? this.activeTarget;
     if (!t) throw new Error("No tab to close");
+    if (this.opts.browserContextId && !(await this.tabs()).some((p) => p.id === t)) throw new Error(`No tab with id ${t} in this browser context`);
     await c.send("Target.closeTarget", { targetId: t });
     this.sessions.delete(t);
     if (this.activeTarget === t) this.activeTarget = undefined;

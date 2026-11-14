@@ -42,7 +42,7 @@ class AgentPage {
       if (String(e).includes("wasn't found") || String(e).includes("not found") || String(e).includes("-32601")) return;
       throw e;
     });
-    this.trace("prepare downloads"); if (this.owned) await c.send("Browser.setDownloadBehavior", { behavior: directory ? "allowAndName" : "deny", ...(directory ? { downloadPath: directory } : {}) });
+    this.trace("prepare downloads"); if (this.owned) await c.send("Browser.setDownloadBehavior", { browserContextId: this.owned.contextId, behavior: directory ? "allowAndName" : "deny", ...(directory ? { downloadPath: directory } : {}) });
     else await c.send("Page.setDownloadBehavior", { behavior: directory ? "allow" : "deny", ...(directory ? { downloadPath: directory } : {}) }, sid);
   }
   private outputDirectory(required: boolean): string | undefined {
@@ -131,7 +131,7 @@ export class AgentBrowserManager {
     if (pane && page?.service !== pane) { await page?.close(); page = new AgentPage(pane, undefined, this.trace); this.pages.set(ctx.sessionId, page); }
     if (!page) {
       this.trace("launch owned browser"); const owned = await launchHeadlessBrowser(browserPolicy(ctx.sessionId, ctx.cwd), ctx.signal, { ...this.opts, log: process.env.RIGWELL_BROWSER_TRACE === "1" ? this.trace : this.opts.log });
-      this.trace("owned CDP ready"); page = new AgentPage(new BrowserService({ cdpUrl: owned.url, log: this.trace }), owned, this.trace); this.pages.set(ctx.sessionId, page);
+      this.trace("owned CDP ready"); page = new AgentPage(new BrowserService({ cdpUrl: owned.url, browserContextId: owned.contextId, log: this.trace }), owned, this.trace); this.pages.set(ctx.sessionId, page);
     }
     await page.prepare(ctx); return page;
   }

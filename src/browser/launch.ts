@@ -19,7 +19,7 @@ export function chromeExecutable(override = process.env.RIGWELL_BROWSER_EXECUTAB
   if (!executable) throw new Error("No Chrome or Chromium executable found. Install one or set RIGWELL_BROWSER_EXECUTABLE to its executable path.");
   return executable;
 }
-export interface HeadlessBrowser { url: string; profile: string; process: ChildProcess; update(policy: BrowserPolicy): void; close(): Promise<void> }
+export interface HeadlessBrowser { url: string; contextId: string; profile: string; process: ChildProcess; update(policy: BrowserPolicy): void; close(): Promise<void> }
 export async function launchHeadlessBrowser(policy: BrowserPolicy, signal: AbortSignal, opts: { executable?: string; log?: (message: string) => void } = {}): Promise<HeadlessBrowser> {
   const executable = chromeExecutable(opts.executable);
   const root = resolve(rigwellHome(), "browser-profiles"); mkdirSync(root, { recursive: true });
@@ -75,6 +75,14 @@ export async function launchHeadlessBrowser(policy: BrowserPolicy, signal: Abort
       await Bun.sleep(25);
     }
     opts.log?.(`[browser] owned headless process ${proc.pid} started`);
-    return { url, profile, process: proc, update(p) { allowed.splice(0, allowed.length, ...p.allowed); denied.splice(0, denied.length, ...p.denied); }, close };
+    // A Windows runner stalled its startup context while a fresh context in the same
+    // browser navigated successfully. Keep owned tabs in an explicit disposable context.
+    const remaining = () => Math.max(1, 10_000 - (Date.now() - started));
+    const c = await CdpConnection.connect(url, remaining());
+    let contextId: string;
+    try { contextId = (await c.send<{ browserContextId: string }>("Target.createBrowserContext", {}, undefined, remaining(), signal)).browserContextId; }
+    finally { c.close(); }
+    if (!contextId) throw new Error("Owned browser did not create its context");
+    return { url, contextId, profile, process: proc, update(p) { allowed.splice(0, allowed.length, ...p.allowed); denied.splice(0, denied.length, ...p.denied); }, close };
   } catch (e) { await close(); throw e; }
 }

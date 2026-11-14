@@ -28,7 +28,7 @@ jobs:
         working-directory: desktop
       - run: npx playwright install chromium
         working-directory: desktop
-      - name: Reproduce owned browser navigation
+      - name: Check owned-context navigation under repeated startup
         shell: pwsh
         env:
           RIGWELL_BROWSER_NETLOG: "1"
