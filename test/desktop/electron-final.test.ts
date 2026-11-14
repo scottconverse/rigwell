@@ -193,7 +193,11 @@ maybe("desktop app: final gaps", () => {
     const before = page.url().split("#/sessions/")[1];
     await page.getByRole("button", { name: "Side chat", exact: true }).first().click();
     const ta = page.getByLabel("Side question");
+    // The contextual button pre-fills the draft in a React effect. Wait for that draft
+    // before replacing it; filling the initially empty field races the prefill.
+    await page.waitForFunction(() => (document.querySelector('textarea[aria-label="Side question"]') as HTMLTextAreaElement)?.value === 'About this: "you chose rust and zig"\n\n');
     await ta.fill("SIDEQ what is going on?");
+    expect(await ta.inputValue()).toBe("SIDEQ what is going on?");
     await ta.press("Enter");
     await page.locator(".sc-entry .assistant", { hasText: "side answer: all quiet" }).waitFor({ timeout: 40_000 });
 

@@ -33,5 +33,12 @@ const { pw, reason } = chromiumStatus("side-chat headless UI");
     await page.evaluate(() => (window as any).fixture.settle(false));
     await page.waitForFunction(() => { const input = document.querySelector('input[type="checkbox"]') as HTMLInputElement; return !input.checked && !input.disabled; });
     expect(await page.evaluate(() => (window as any).fixture.requests)).toEqual([true, true, false]);
+    await page.getByRole("button", { name: "Contextual side chat" }).click();
+    const question = page.getByLabel("Side question");
+    await page.waitForFunction(() => (document.querySelector('textarea[aria-label="Side question"]') as HTMLTextAreaElement)?.value === 'About this: "you chose rust and zig"\n\n');
+    await question.fill("SIDEQ what is going on?");
+    expect(await question.inputValue()).toBe("SIDEQ what is going on?");
+    await question.press("Enter");
+    expect(await page.evaluate(() => (window as any).fixture.questions)).toEqual(["SIDEQ what is going on?"]);
   } finally { await browser.close(); server.stop(true); }
 }, 30_000);
