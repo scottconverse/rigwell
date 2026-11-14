@@ -99,7 +99,9 @@ class AgentPage {
     if (!key || (key.length > 1 && !codes[key])) throw new Error("Unsupported browser key");
     const text = !modifiers && (key === "Enter" || key.length === 1) ? key === "Enter" ? "\r" : key : undefined;
     const params = { key, code: key.length === 1 ? `Key${key.toUpperCase()}` : key, windowsVirtualKeyCode: codes[key] ?? key.toUpperCase().charCodeAt(0), modifiers };
-    await this.command("Input.dispatchKeyEvent", { type: text ? "keyDown" : "rawKeyDown", ...params, ...(text ? { text } : {}) });
+    // macOS headless CDP has no native menu accelerator to translate Command+A.
+    const commands = key.toLowerCase() === "a" && modifiers === (process.platform === "darwin" ? 4 : 2) ? ["selectAll"] : undefined;
+    await this.command("Input.dispatchKeyEvent", { type: text ? "keyDown" : "rawKeyDown", ...params, ...(text ? { text } : {}), ...(commands ? { commands } : {}) });
     await this.command("Input.dispatchKeyEvent", { type: "keyUp", ...params });
   }
   async scroll(x: number, y: number) { await this.command("Input.dispatchMouseEvent", { type: "mouseWheel", x: 400, y: 300, deltaX: x, deltaY: y }); }
