@@ -11,10 +11,13 @@ import { createMissionService } from "../missions/index.ts";
 import { createWorkstreamService } from "../workstreams/index.ts";
 import { createSidePane, type ConnCtx, type SidePaneOptions } from "../sidepane/index.ts";
 import { DEFAULT_WS_PORT, removeDaemonInfo, startWsServer, writeDaemonInfo } from "./ws.ts";
+import { runningSessionCount, stopLiveSessions } from "../machines/live-sessions.ts";
+import { machineRuntimeInfo } from "../machines/runtime-info.ts";
+import { listWorkstreamStores } from "../workstreams/store.ts";
 
 export const defaultSocketPath = () => join(rigwellHome(), "daemon.sock");
 
-export async function startDaemon(opts: { socketPath: string; advertise?: boolean; backgroundServices?: boolean; log?: (m: string) => void; retryBaseDelayMs?: number; automations?: false | ServiceOptions; ws?: false | { port?: number; token?: string }; sidepane?: false | SidePaneOptions }) {
+export async function startDaemon(opts: { socketPath: string; onShutdown?: () => void; advertise?: boolean; backgroundServices?: boolean; log?: (m: string) => void; retryBaseDelayMs?: number; automations?: false | ServiceOptions; ws?: false | { port?: number; token?: string }; sidepane?: false | SidePaneOptions }) {
   mkdirSync(dirname(opts.socketPath), { recursive: true });
   if (existsSync(opts.socketPath)) unlinkSync(opts.socketPath);
   const conns = new Set<ReturnType<typeof createConnection>>();
@@ -63,6 +66,23 @@ export async function startDaemon(opts: { socketPath: string; advertise?: boolea
   await workstreams.ready;
   const workstreamClients = new Map<ReturnType<typeof createConnection>, () => void>();
   const ctxs = new Map<ReturnType<typeof createConnection>, ConnCtx>();
+  let shutdownRequested = false;
+  let shutdownDaemon: () => void;
+  const machineControl = {
+    async stopSessions() {
+      for (const handle of missions.handles.values()) handle.pause("machine_stop_sessions");
+      for (const store of listWorkstreamStores()) if (store.read().state === "active") workstreams.pause(store.id, "Machine stop all sessions");
+      const result = await stopLiveSessions();
+      await Promise.all([...workstreams.members.values()].map((m) => m.call("interrupt_session", { clearQueued: true })));
+      return { ...result, runningSessions: runningSessionCount() };
+    },
+    shutdown(build: unknown) {
+      if (typeof build !== "string" || build !== machineRuntimeInfo().build) throw new Error("Refusing to stop a daemon with a different build");
+      if (runningSessionCount() || missions.handles.size) throw new Error("Stop all running sessions before restarting or updating this machine");
+      if (!shutdownRequested) { shutdownRequested = true; setTimeout(() => shutdownDaemon(), 0); }
+      return { shuttingDown: true };
+    },
+  };
   const mkConn = (write: (line: string) => void) => {
     let conn!: ReturnType<typeof createConnection>;
     const ctx: ConnCtx = {
@@ -77,6 +97,7 @@ export async function startDaemon(opts: { socketPath: string; advertise?: boolea
     const stream = workstreams.attach({ session: () => conn.session, notify: ctx.notify, request: (m, p) => conn.peer.request(METHOD_PREFIX + m, p) });
     conn = createConnection(write, {
       canPrompt: true, log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs,
+      machineControl,
       onNotification: (s, n) => { if (s) workstreams.observe(s, n); },
       sharedSession: workstreams.sharedSession,
       sharedRemoteSession: workstreams.sharedRemoteSession,
@@ -139,7 +160,8 @@ export async function startDaemon(opts: { socketPath: string; advertise?: boolea
   } catch (e) {
     opts.log?.(`[daemon] could not write daemon.json: ${(e as Error).message}`);
   }
-  return {
+  let stopped: Promise<void> | undefined;
+  const control = {
     socketPath: opts.socketPath,
     wsUrl: wsServer?.url,
     wsToken: wsServer?.token,
@@ -147,6 +169,8 @@ export async function startDaemon(opts: { socketPath: string; advertise?: boolea
     workstreams,
     get sessionCount() { return [...conns].filter((c) => c.session).length; },
     stop() {
+      if (stopped) return stopped;
+      for (const handle of missions.handles.values()) handle.pause("daemon_shutdown");
       const pending = [...conns].map((c) => c.shutdown());
       pending.push(workstreams.stop());
       auto?.stop();
@@ -157,9 +181,11 @@ export async function startDaemon(opts: { socketPath: string; advertise?: boolea
       wsServer?.stop();
       if (opts.advertise !== false) removeDaemonInfo(home, process.pid, wsServer?.token);
       try { unlinkSync(opts.socketPath); } catch {}
-      const done = Promise.all(pending).then(() => {});
+      const done = stopped = Promise.all(pending).then(() => {});
       void done.catch((e) => opts.log?.(`[daemon] shutdown failed: ${(e as Error).message}`));
       return done;
     },
   };
+  shutdownDaemon = opts.onShutdown ?? (() => { void control.stop(); });
+  return control;
 }

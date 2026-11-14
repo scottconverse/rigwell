@@ -1,5 +1,7 @@
 // One agent session: holds the transcript, runs turns, emits notifications (spec §3.1.7, §4).
 import { homedir } from "node:os";
+import { fleetIsStopping, registerLiveSession } from "../machines/live-sessions.ts";
+import { rigwellHome } from "../storage/paths.ts";
 import { basename, join, resolve } from "node:path";
 import type {
   AutonomyLevel, CommandLists, ContentBlock, InteractionMode, Message, ModelAdapter, ModelConfig,
@@ -376,6 +378,9 @@ export class Session {
   private halt?: { kind: "stop" | "abort"; message: string };
   private readonly startedAt = Date.now();
   private ended = false;
+  private fleetStopping = false;
+  private readonly fleetHome = rigwellHome();
+  private unregisterLive?: () => void;
   private toolCalls = 0;
   /** Outcome of the latest finished turn (a subagent's report is its final text). */
   lastTurn?: { reason: TurnReason; text: string; structured?: unknown };
@@ -451,6 +456,7 @@ export class Session {
       },
     });
     this.jobs.onFinished(() => { if (!this.running) this.kick(); });
+    this.unregisterLive = registerLiveSession(this);
   }
 
   /** Effective tool mode: the per-session override, else the model allowlist (spec §4.1). */
@@ -758,6 +764,7 @@ export class Session {
   async end(reason = "other") {
     if (this.ended) return;
     this.ended = true;
+    this.unregisterLive?.();
     await closeSessionBrowsers(this.id).catch((e) => this.deps.log?.(`[browser] cleanup failed: ${(e as Error).message}`));
     if (this.hooks?.hasHooks() && !this.deps.isChild) {
       await this.hooks.sessionEnd(reason, Date.now() - this.startedAt, this.messages.length).catch(() => {});
@@ -778,6 +785,7 @@ export class Session {
     text: string, messageId: string = crypto.randomUUID(), source?: string,
     opts: { content?: ContentBlock[]; placement?: "end_of_turn" | "end_of_loop" | "now"; outputFormat?: OutputFormat | null } = {},
   ) {
+    if (this.fleetStopping || fleetIsStopping(this.fleetHome)) throw new Error("This machine is stopping its sessions; try again after it finishes.");
     const entry: QueuedUserMessage = {
       text, messageId, ...(source ? { source } : {}), ...(opts.content?.length ? { content: opts.content } : {}), ...(opts.outputFormat !== undefined ? { outputFormat: opts.outputFormat } : {}),
     };
@@ -816,7 +824,7 @@ export class Session {
 
   /** Starts the turn loop unless it is already running. */
   private kick() {
-    if (this.currentRun) return;
+    if (this.currentRun || this.fleetStopping) return;
     const p = this.drain();
     this.currentRun = p;
     // A message queued after drain() made its last queue check but before currentRun was cleared would be stranded
@@ -847,9 +855,11 @@ export class Session {
         while (this.queue.length) {
           const next = this.queue.shift()!;
           await this.runTurn(next.text, next.messageId, undefined, next);
+          if (this.fleetStopping) break;
           if (this.steer.length) this.queue.push(...this.steer.splice(0));
         }
         // A background job finished while the model was asleep: wake it with a reminder (spec §4.3).
+        if (this.fleetStopping) break;
         const wake = this.takeWake();
         if (!wake) break;
         await this.runTurn(wake, `wake-${crypto.randomUUID()}`, "llm_only");
@@ -890,6 +900,19 @@ export class Session {
   }
 
   async stopBackgroundJobs() { await this.jobs.stopAll(); }
+
+  /** Stop current work without deleting the transcript or waking on cancelled job results. */
+  async stopForFleet() {
+    this.fleetStopping = true;
+    try {
+      this.interrupt(true);
+      await this.stopBackgroundJobs();
+      this.interrupt(true);
+      await this.idle();
+      for (const job of this.jobs.unreported()) job.reported = true;
+      this.interrupt(true);
+    } finally { this.fleetStopping = false; }
+  }
 
   private lastId(): string | null {
     const last = this.messages.at(-1);

@@ -19,6 +19,7 @@ const USAGE = `Usage:
   rigwell [tui] [options]        interactive terminal UI (default when no subcommand is given)
   rigwell eval <run|report|tasks> [options]   (see rigwell eval --help)
   rigwell machine add <name> <user@host> | bootstrap <name>
+  rigwell machine list | update <name> | restart <name> | stop <name> | remove <name> | update-all
 
 Sign in with an account plan (OAuth, see docs/auth.md): rigwell auth login <name> [--device] | logout <name> | status
 Credentials: rigwell credential set <name> (value on stdin) | delete <name>; use apiKey "keychain:<name>" in customModels.
@@ -303,10 +304,11 @@ async function main() {
     const w = argv.indexOf("--ws-port");
     const wsPort = w >= 0 ? Number(argv[w + 1]) : undefined;
     if (w >= 0 && !Number.isInteger(wsPort)) fail("--ws-port needs a port number");
-    const d = await startDaemon({ socketPath: path, log, ws: argv.includes("--no-ws") ? false : { port: wsPort }, ...(argv.includes("--no-automations") ? { automations: false } : {}), ...(argv.includes("--no-advertise") ? { advertise: false } : {}), ...(argv.includes("--no-background-services") ? { backgroundServices: false } : {}) });
+    let d: Awaited<ReturnType<typeof startDaemon>>;
+    const stop = () => { void d.stop().then(() => process.exit(0), (e) => { log(`rigwell: shutdown failed: ${(e as Error).message}`); process.exit(1); }); };
+    d = await startDaemon({ socketPath: path, log, onShutdown: stop, ws: argv.includes("--no-ws") ? false : { port: wsPort }, ...(argv.includes("--no-automations") ? { automations: false } : {}), ...(argv.includes("--no-advertise") ? { advertise: false } : {}), ...(argv.includes("--no-background-services") ? { backgroundServices: false } : {}) });
     log(`[daemon] listening on ${d.socketPath}`);
     if (d.wsUrl) log(`[daemon] WebSocket on ${d.wsUrl} (token in ${join(rigwellHome(), "daemon.json")})`);
-    const stop = () => { void d.stop().then(() => process.exit(0), (e) => { log(`rigwell: shutdown failed: ${(e as Error).message}`); process.exit(1); }); };
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);
     return;

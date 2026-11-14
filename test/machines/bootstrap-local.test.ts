@@ -25,7 +25,7 @@ test("generated bootstrap installs and starts a verified build, preserving daemo
   writeFileSync(join(home, "fixture.txt"), "initial");
   const discovery = join(env.rigwellHome, "daemon.json");
   writeJson(discovery, { pid: 123, fixture: "preserve" });
-  const fake = await startFakeAnthropic([]);
+  const fake = await startFakeAnthropic([{ hang: true }]);
   const remoteHome = join(home, "state"), remoteDiscovery = join(remoteHome, "daemon.json");
   writeJson(remoteDiscovery, { pid: 456, fixture: "remote-preserve" });
   writeJson(join(remoteHome, "settings.json"), { customModels: [{ provider: "anthropic", model: "fake", displayName: "Fixture", baseUrl: fake.url, apiKey: "fake-key" }] });
@@ -61,6 +61,7 @@ test("generated bootstrap installs and starts a verified build, preserving daemo
       connectMachine: async (name) => { expect(name).toBe("fixture"); return new RpcClient(new SshTransport(machine, "fixture-command", { executable: [process.execPath, channel] })); },
     });
     const client = new RpcClient(wire);
+    client.onRequest = () => ({ selectedOption: "proceed_once", trust: false });
     let terminalData = "";
     client.onNotification = (_method, params) => { const n = params.notification; if (n?.type === "daemon.terminal_data") terminalData += n.data; };
     try {
@@ -78,6 +79,17 @@ test("generated bootstrap installs and starts a verified build, preserving daemo
       expect(terminalData).toContain("routed-42");
       expect((await client.request<{ terminals: { id: string }[] }>("daemon.list_terminals")).terminals[0]?.id).toBe("routed");
       await client.request("daemon.close_terminal", { terminalId: "routed" });
+      await client.request("add_user_message", { text: "Wait for the fleet stop fixture" });
+      const started = Date.now();
+      while (!fake.requests.length) { if (Date.now() - started > 3000) throw new Error("Fleet fixture did not enter its fake provider"); await Bun.sleep(10); }
+      expect((await client.request("machine_runtime_info")).runningSessions).toBe(1);
+      let busy: unknown;
+      try { await client.request("machine_shutdown", { build }); } catch (error) { busy = error; }
+      expect(String(busy)).toContain("Stop all running sessions");
+      expect(await client.request("machine_stop_sessions")).toMatchObject({ runningSessions: 0 });
+      const stopped = await client.request("owned_session_snapshot");
+      expect(stopped.isAgentLoopInProgress).toBe(false);
+      expect(stopped.messages.some((m: any) => m.role === "user")).toBe(true);
     } finally { await client.close(); }
     expect(await Bun.file(discovery).json()).toEqual({ pid: 123, fixture: "preserve" });
     expect(await Bun.file(remoteDiscovery).json()).toEqual({ pid: 456, fixture: "remote-preserve" });
@@ -88,13 +100,19 @@ test("generated bootstrap installs and starts a verified build, preserving daemo
       const info = await control.request<{ build: string; pid: number }>("machine_runtime_info");
       if (info.pid !== pid || info.build !== build || pid === process.pid) throw new Error("Owned daemon identity changed during cleanup");
       const closed = new Promise<void>((r) => { control.onClose = r; });
-      process.kill(pid, "SIGTERM");
+      let refusal: unknown;
+      try { await control.request("machine_shutdown", { build: "f".repeat(64) }); } catch (e) { refusal = e; }
+      expect(String(refusal)).toContain("different build");
+      expect((await control.request("machine_runtime_info")).runningSessions).toBe(0);
+      expect(await control.request("machine_stop_sessions")).toMatchObject({ runningSessions: 0 });
+      const acknowledged = await control.request<{ shuttingDown: boolean }>("machine_shutdown", { build });
+      expect(acknowledged).toEqual({ shuttingDown: true });
       let timer: ReturnType<typeof setTimeout> | undefined;
       try { await Promise.race([closed, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`Owned daemon ${pid} did not stop; fixture preserved`)), 3000); })]); }
       finally { clearTimeout(timer); await control.close(); }
       const socket = remoteSocketPath(root, build, process.platform as "win32" | "linux" | "darwin");
-      // Windows SIGTERM terminates the process without invoking its signal handler.
-      // Explicitly unlink its now-stopped AF_UNIX reparse file before recursive fixture cleanup.
+      // An AF_UNIX reparse file may survive a failed earlier fixture shutdown.
+      // The verified channel has closed before removing this owned socket file.
       if (existsSync(socket)) unlinkSync(socket);
     }
     fake.stop();

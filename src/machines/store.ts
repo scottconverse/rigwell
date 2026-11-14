@@ -16,6 +16,7 @@ export interface Machine {
   bootstrappedAt?: string;
   root?: string;
   daemonPid?: number;
+  lastSeen?: string;
 }
 export function machineDefinition(input: unknown): Machine {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid machine definition");
@@ -50,6 +51,10 @@ export function machineDefinition(input: unknown): Machine {
     out.daemonPid = Number(m.daemonPid);
   }
   for (const key of ["version", "bootstrappedAt"] as const) if (typeof m[key] === "string") out[key] = m[key];
+  if (m.lastSeen !== undefined) {
+    if (typeof m.lastSeen !== "string" || !Number.isFinite(Date.parse(m.lastSeen))) throw new Error("Invalid machine last-seen time");
+    out.lastSeen = m.lastSeen;
+  }
   return out;
 }
 export class MachineStore {
@@ -71,9 +76,17 @@ export class MachineStore {
     const i = rows.findIndex((m) => m.name === row.name);
     if (i >= 0 && !replace) throw new Error("Machine already exists");
     if (i >= 0) rows[i] = row; else rows.push(row);
+    this.write(rows);
+    return row;
+  }
+  remove(name: string) {
+    const rows = this.list();
+    if (!rows.some((m) => m.name === name)) throw new Error(`Unknown machine: ${name}`);
+    this.write(rows.filter((m) => m.name !== name));
+  }
+  private write(rows: Machine[]) {
     mkdirSync(this.home, { recursive: true });
     const path = join(this.home, "machines.json"), tmp = `${path}.${crypto.randomUUID()}.tmp`;
     writeFileSync(tmp, JSON.stringify(rows, null, 2) + "\n", { mode: 0o600 }); renameSync(tmp, path);
-    return row;
   }
 }

@@ -7,6 +7,8 @@ export type IncomingRequestHandler = (method: string, params: Record<string, unk
 /** Request timeouts from spec §3.1.5 (ms). Methods not listed have none. */
 const TIMEOUTS: Record<string, number> = {
   machine_runtime_info: 10_000,
+  machine_stop_sessions: 30_000, machine_shutdown: 10_000,
+  machine_restart: 60_000, machine_stop: 30_000, machine_remove: 10_000,
   prepare_automation_workspace: 30_000,
   prepare_mission_worker: 30_000, mission_worker_verify_commit: 10_000, mission_worker_library_snapshot: 30_000, owned_session_snapshot: 30_000,
   prepare_workstream_member: 30_000,

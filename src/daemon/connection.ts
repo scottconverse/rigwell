@@ -42,6 +42,8 @@ const parked = new Map<string, { session: Session; files: SessionFiles; worktree
 const parkMs = () => Number(process.env.RIGWELL_PARK_MS) || 30 * 60_000;
 
 export interface ConnectionOptions {
+  fleetOptions?: import("../machines/fleet.ts").FleetOptions;
+  machineControl?: { stopSessions(): Promise<unknown>; shutdown(build: unknown): unknown };
   /** Injected SSH connection factory for fake-process acceptance; production uses the saved machine. */
   connectMachine?: (name: string) => Promise<RpcClient>;
   codeProviderDeps?: CodeProviderDeps;
@@ -92,6 +94,7 @@ let processLimits: TaskLimits | undefined;
 const limitsFor = (s: Record<string, unknown>) => (processLimits ??= new TaskLimits((s.subagentLimits as any) ?? {}));
 
 export function createConnection(write: (line: string) => void, opts: ConnectionOptions) {
+  const fleet = async () => new (await import("../machines/fleet.ts")).MachineFleet({ ...opts.fleetOptions, connect: opts.connectMachine ?? opts.fleetOptions?.connect });
   let session: Session | undefined;
   let files: SessionFiles | undefined;
   let closed = false;
@@ -471,6 +474,24 @@ export function createConnection(write: (line: string) => void, opts: Connection
         return { ...paths, models: listModelInfo(env.models), defaultModel: env.s.sessionDefaultSettings?.model ?? env.models[0]?.id };
       }
       case "machine_runtime_info": return (await import("../machines/runtime-info.ts")).machineRuntimeInfo();
+      case "machine_fleet": return { machines: await (await fleet()).list() };
+      case "machine_update_all": return (await fleet()).updateAll();
+      case "machine_stop_sessions": {
+        if (!opts.machineControl) throw new Error("Machine administration requires a daemon connection");
+        return opts.machineControl.stopSessions();
+      }
+      case "machine_shutdown": {
+        if (!opts.machineControl) throw new Error("Machine administration requires a daemon connection");
+        return opts.machineControl.shutdown(p.build);
+      }
+      case "machine_restart": case "machine_update": case "machine_stop": case "machine_remove": {
+        if (typeof p.name !== "string" || !p.name) throw new RpcError(ErrorCodes.INVALID_PARAMS, "name is required");
+        const controller = await fleet();
+        if (method === "machine_restart") return { machine: await controller.restart(p.name) };
+        if (method === "machine_update") return { machine: await controller.update(p.name) };
+        if (method === "machine_stop") return controller.stop(p.name);
+        return controller.remove(p.name);
+      }
       case "start_automation_setup": {
         // Guided "create by chatting" (spec 16.8): a normal session with the setup block added to its system prompt.
         if (typeof p.cwd !== "string" || !p.cwd) throw new RpcError(ErrorCodes.INVALID_PARAMS, "cwd is required");

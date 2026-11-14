@@ -15,6 +15,31 @@ Concurrent bootstraps serialize startup through an owner-only SQLite transaction
 lock, including an abrupt Windows exit. A waiting bootstrap rechecks the daemon's build identity before starting
 anything. It never removes a guessed stale PID lock or terminates an unrelated process.
 
+## Fleet management
+
+Open Machines in the desktop sidebar or run `rigwell machine list`. Both use the same controller and report each
+saved SSH machine's online state, OS, version, running session count, load and last successful contact. Refresh
+checks the saved build through its verified SSH channel. Offline counts/load remain unknown and the previous
+last-seen time is retained. Load includes memory usage and CPU count; Unix hosts also report the OS load average.
+Windows CPU load average is unavailable rather than reported as zero.
+
+- `rigwell machine stop <name>` interrupts the daemon's session engines, including tasks, automations and member
+  sessions, clears their pending messages and cancels background jobs. Mission and Workstream owners are paused.
+  Transcripts and worktrees remain. A later user turn is allowed; future scheduled automation occurrences retain
+  their existing schedules.
+- `rigwell machine restart <name>` requests graceful shutdown of the verified saved build, waits for its channel
+  to close and starts that same immutable build. Running work is refused; stop it explicitly first.
+- `rigwell machine update <name>` shuts down an idle verified old daemon and installs this local Rigwell build.
+  If installation fails before recording a replacement, it attempts to restart the previous build. Inspect any
+  reported recovery failure before continuing. `rigwell machine update-all` reports each machine separately and
+  continues after a failed host; its exit code is nonzero if any update failed.
+- `rigwell machine remove <name>` forgets the saved connection. It preserves remote files, credentials and daemon.
+
+The Machines page provides these same actions, confirms them before execution, displays individual bulk failures
+and also lets you add a connection. Restart/update require a reachable daemon with the management protocol; a
+host-key, authentication or protocol error is reported without killing a guessed remote process. `bootstrap`
+remains the initial installation command. Fleet status covers saved SSH machines, not an unrelated local updater.
+
 Choose the saved machine when creating a session, automation, mission worker or Workstream member. The desktop
 shows the machine on session entries and in the session view. The working directory refers to the selected
 machine. Files and Terminal operations follow that session's connection. Terminal output on Windows uses pipe
