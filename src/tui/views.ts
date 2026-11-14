@@ -8,6 +8,7 @@ import { loadSettings } from "../storage/settings.ts";
 import { loadCustomCommands } from "./customcmd.ts";
 import { runStatusLine, statusLineConfig, type StatusLineInput } from "./attention.ts";
 import type { TuiState } from "./types.ts";
+import { workstreamsView } from "./workstreams.ts";
 
 export interface ViewCtx {
   request: (method: string, params: Record<string, unknown>) => Promise<any>;
@@ -21,7 +22,7 @@ export interface ViewCtx {
   /** Poll interval of /login in ms (tests shorten it). */
   loginPollMs?: number;
 }
-export interface View { title: string; lines: string[] }
+export interface View { title: string; lines: string[]; workstreamId?: string; workstreams?: { id: string; title: string; state: string; agentCount: number }[] }
 
 const errText = (e: unknown) => String((e as Error)?.message ?? e);
 const hr = (n: string, v: unknown) => `${n.padEnd(14)} ${v}`;
@@ -284,6 +285,7 @@ async function logoutView(args: string, c: ViewCtx): Promise<View> {
 
 export async function buildView(name: string, args: string, c: ViewCtx): Promise<View> {
   switch (name) {
+    case "workstreams": return workstreamsView(args, c);
     case "pr": {
       const title = "Pull request", w = words(args);
       try {

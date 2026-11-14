@@ -121,6 +121,7 @@ export function permissionPanel(id: string, params: any, display: DisplaySetting
   const u = uses[0] ?? {};
   const d = u.details ?? {};
   switch (u.confirmationType) {
+    case "propose_workstream": return { ...base, kind: "exit_spec", title: `Workstream for approval: ${d.title}`, body: [`Goal: ${d.goal}`, ...(d.budget ? [`Budget: ${JSON.stringify(d.budget)}`] : []), ...(d.agents?.length ? [`Members: ${JSON.stringify(d.agents)}`] : []), "", ...String(d.plan ?? "").split("\n")], planText: String(d.plan ?? ""), options: opts };
     case "create_pr": return { ...base, kind: "permission", title: "Push branch and create PR?", body: [`Repository: ${d.repository}`, `Branch: ${d.branch}`, `Base: ${d.base}`, `Title: ${d.title}`, `Draft: ${d.draft ? "yes" : "no"}`, "", String(d.body)], options: opts };
     case "exec": {
       const body = [String(d.fullCommand ?? d.command ?? "")];
@@ -222,6 +223,7 @@ function finishPanel(s: TuiState, panel: Panel, picked: number[]): Step {
   if (a.type === "confirm") return { state, effects: picked.length && panel.options[picked[0]].value === "yes" ? a.effects : [] };
   if (a.type === "model") return { state: { ...state, hint: `Model: ${panel.options[picked[0]]?.label}` }, effects: [{ type: "settings", patch: { modelId: panel.options[picked[0]].value } }] };
   if (a.type === "resume") return { state, effects: [{ type: "resume", sessionId: panel.options[picked[0]].value }] };
+  if (a.type === "workstream") return { state, effects: [{ type: "view", name: "workstreams", args: panel.options[picked[0]].value }] };
   if (a.type === "rewind_pick") {
     const id = panel.options[picked[0]].value;
     const text = panel.rows?.find((r) => r.id === id)?.detail ?? "";
@@ -243,7 +245,7 @@ function finishPanel(s: TuiState, panel: Panel, picked: number[]): Step {
     // The comment box (Tab) rides along with whatever option is chosen; Ctrl+G's edited plan goes with proceed_edit (spec 5.5.7, 13.4).
     if (panel.kind === "exit_spec" && value[0] === "proceed_edit" && panel.editedSpec === undefined) {
       // Nothing edited yet: open the plan in $EDITOR first; the panel stays until the edit comes back.
-      return { state: s, effects: [{ type: "editor", text: panel.body.join("\n"), target: "spec" }] };
+      return { state: s, effects: [{ type: "editor", text: panel.planText ?? panel.body.join("\n"), target: "spec" }] };
     }
     const comment = panel.comment?.trim();
     const edited = panel.kind === "exit_spec" && value[0] === "proceed_edit" ? panel.editedSpec : undefined;
@@ -307,7 +309,7 @@ function panelKey(s: TuiState, k: Key): Step {
     return t === null ? { state: s, effects: [] } : { state: setPanel(s, panel, { comment: t }), effects: [] };
   }
   if (k.name === "tab" && commentKinds.has(panel.kind)) return { state: setPanel(s, panel, { commentMode: true }), effects: [] };
-  if (k.name === "ctrl+g" && panel.kind === "exit_spec") return { state: s, effects: [{ type: "editor", text: panel.editedSpec ?? panel.body.join("\n"), target: "spec" }] };
+  if (k.name === "ctrl+g" && panel.kind === "exit_spec") return { state: s, effects: [{ type: "editor", text: panel.editedSpec ?? panel.planText ?? panel.body.join("\n"), target: "spec" }] };
   const setSel = (sel: number): Step => ({ state: { ...s, panels: [{ ...panel, selected: (sel + n) % Math.max(1, n) }, ...s.panels.slice(1)] }, effects: [] });
   const toggle = (i: number): Step => ({
     state: { ...s, panels: [{ ...panel, checked: panel.checked.includes(i) ? panel.checked.filter((x) => x !== i) : [...panel.checked, i].sort((a, b) => a - b) }, ...s.panels.slice(1)] }, effects: [],
@@ -368,6 +370,14 @@ function upsertTool(items: Item[], id: string, patch: Partial<Extract<Item, { ki
 }
 
 function notification(s: TuiState, n: { type: string; [k: string]: any }): Step {
+  if (n.type === "workstream_prompt_resolved" || (n.type === "workstream_member_notification" && ["permission_resolved", "agent_turn_completed"].includes(n.notification?.type))) {
+    const inner = n.notification ?? n;
+    const dead = s.panels.filter((p) => p.workstreamId === n.workstreamId && p.agentId === n.agentId && (inner.type === "agent_turn_completed" || p.id === n.requestId || p.id === inner.requestId));
+    const effects: Effect[] = dead.map((p) => ({ type: "answer", requestId: (p.action as any).requestId, method: (p.action as any).method, result: n.type === "workstream_prompt_resolved" ? n.answer : cancelResult(p)!.result }));
+    if (s.overlay?.workstreamId === n.workstreamId) effects.push({ type: "view", name: "workstreams", args: n.workstreamId, refresh: true });
+    return { state: { ...s, panels: s.panels.filter((p) => !dead.includes(p)) }, effects };
+  }
+  if (String(n.type).startsWith("workstream_") && s.overlay?.workstreamId === n.workstreamId && n.workstreamId) return { state: s, effects: [{ type: "view", name: "workstreams", args: n.workstreamId, refresh: true }] };
   switch (n.type) {
     case "settings_updated": {
       const st = n.settings ?? {};
@@ -433,12 +443,12 @@ function notification(s: TuiState, n: { type: string; [k: string]: any }): Step 
       return { state: { ...s, items: [...s.items, info(String(n.message ?? "error"), "error")] }, effects: [] };
     case "agent_turn_completed": {
       // Requests still on screen belong to the finished turn: the harness settled them as cancelled.
-      const dead = s.panels.filter((p) => p.action.type === "request");
+      const dead = s.panels.filter((p) => p.action.type === "request" && !p.workstreamId);
       const effects: Effect[] = dead.map((p) => ({ type: "answer", requestId: (p.action as any).requestId, method: (p.action as any).method, result: cancelResult(p)!.result }));
       // Steering messages the harness did not deliver mid-turn run as the next turn on its side: show them in the transcript.
       const flushed: Item[] = n.reason === "cancelled" ? [] : s.pending.steer.map((text): Item => ({ kind: "user", text }));
       let state: TuiState = {
-        ...s, running: false, working: "idle", runStartedAt: undefined, turns: s.turns + 1, panels: s.panels.filter((p) => p.action.type !== "request"),
+        ...s, running: false, working: "idle", runStartedAt: undefined, turns: s.turns + 1, panels: s.panels.filter((p) => !dead.includes(p)),
         items: [...s.items, ...flushed, ...(n.reason === "completed" || n.reason === "spec_handoff" ? [] : [info(`Turn ended: ${n.reason}`, n.reason === "cancelled" ? "info" : "error")])],
         pending: n.reason === "cancelled" ? s.pending : { ...s.pending, steer: [] },
       };
@@ -529,6 +539,8 @@ function runCommand(s0: TuiState, line: string): Step {
     case "sessions":
       if (args) return guard([{ type: "resume", sessionId: args }], `resumes ${args}`);
       return { state: s, effects: [{ type: "list_sessions" }] };
+    case "missions": return { state: s, effects: [{ type: "list_missions" }] };
+    case "workstreams": return { state: s, effects: [{ type: "view", name: "workstreams", args }] };
     case "model": {
       if (!s.models.length) return { state: { ...s, items: [...s.items, info("No models are configured.", "error")] }, effects: [] };
       const panel: Panel = {
@@ -830,6 +842,7 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
     case "request": {
       const panel = e.method === "request_permission" ? permissionPanel(e.id, e.params, s.display) : e.method === "ask_user" ? askPanel(e.id, e.params)
         : e.method === "request_trust" ? trustPanel(e.id, e.params) : pickPanel(e.id, e.params);
+      if (typeof e.params.workstreamId === "string") { panel.workstreamId = e.params.workstreamId; panel.agentId = e.params.agentId; panel.title = `${e.params.workstreamTitle} / ${e.params.agentName}: ${panel.title}`; }
       return { state: { ...s, panels: [...s.panels, panel], working: "waiting_for_tool_confirmation" }, effects: [{ type: "attention", kind: "awaiting" }] };
     }
     case "session_ready": {
@@ -862,7 +875,12 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
       if (!e.show) return { state, effects: [] };
       return { state: { ...state, overlay: { title: "Context", lines: formatContext(st as ContextStats, modelName(s)) } }, effects: [] };
     }
-    case "overlay": return { state: { ...s, overlay: { title: e.title, lines: e.lines } }, effects: [] };
+    case "workstreams": {
+      if (!e.rows.length) return { state: { ...s, overlay: { title: "Workstreams", lines: ["No workstreams yet. Ask a lead to propose one."] } }, effects: [] };
+      const panel: Panel = { id: "workstreams", kind: "select", action: { type: "workstream" }, title: "Workstreams", body: [], options: e.rows.map((r) => ({ label: `${r.title} [${r.state}] ${r.agentCount} agents`, value: r.id })), selected: 0, checked: [] };
+      return { state: { ...s, panels: [...s.panels, panel] }, effects: [] };
+    }
+    case "overlay": return { state: { ...s, ...(e.workstreamId ? { workstreamId: e.workstreamId } : {}), overlay: { title: e.title, lines: e.lines, ...(e.workstreamId ? { workstreamId: e.workstreamId } : {}) } }, effects: [] };
     case "display":
       return { state: { ...s, display: { ...DEFAULT_DISPLAY, ...e.display }, managed: e.managed, maxAutonomy: e.maxAutonomy, ...(e.showThinking !== undefined ? { showThinking: e.showThinking } : {}) }, effects: [] };
     case "extras": return { state: { ...s, custom: e.custom, header: { ...s.header, skills: e.skills, mcps: e.mcps ?? s.header.mcps, issues: e.issues ?? s.header.issues } }, effects: [] };
@@ -882,7 +900,7 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
     case "sessions": {
       if (!e.sessions.length) return { state: { ...s, items: [...s.items, info("No saved sessions in this folder.")] }, effects: [] };
       const panel: Panel = {
-        id: "resume", kind: "select", action: { type: "resume" }, title: "Resume a session", body: [], selected: 0, checked: [],
+        id: "resume", kind: "select", action: { type: "resume" }, title: e.title ?? "Resume a session", body: [], selected: 0, checked: [],
         options: e.sessions.slice(0, 20).map((x) => ({ label: `${x.id.slice(0, 8)}  ${x.pinned ? "* " : ""}${x.title ?? "(untitled)"}${x.updatedAt ? "  " + x.updatedAt.slice(0, 16).replace("T", " ") : ""}`, value: x.id })),
       };
       return { state: { ...s, panels: [...s.panels, panel] }, effects: [] };
@@ -897,11 +915,12 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
     case "spec_edited": {
       const i = s.panels.findIndex((p) => p.kind === "exit_spec");
       if (i < 0) return { state: s, effects: [] };
-      if (!e.text.trim()) return { state: { ...s, hint: "The edited spec is empty, so it was ignored" }, effects: [] };
       const p = s.panels[i];
+      if (!e.text.trim()) return { state: { ...s, hint: p.planText !== undefined ? "The edited plan is empty, so it was ignored" : "The edited spec is empty, so it was ignored" }, effects: [] };
       const at = p.options.findIndex((o) => o.value === "proceed_edit");
-      const panels = s.panels.map((x, j) => (j === i ? { ...p, editedSpec: e.text, body: e.text.split("\n"), selected: at >= 0 ? at : p.selected } : x));
-      return { state: { ...s, panels, hint: "Spec edited: Enter approves your version" }, effects: [] };
+      const details = p.planText !== undefined ? p.body.slice(0, -p.planText.split("\n").length) : [];
+      const panels = s.panels.map((x, j) => (j === i ? { ...p, editedSpec: e.text, ...(p.planText !== undefined ? { planText: e.text } : {}), body: [...details, ...e.text.split("\n")], selected: at >= 0 ? at : p.selected } : x));
+      return { state: { ...s, panels, hint: p.planText !== undefined ? "Workstream plan edited: Enter approves your version" : "Spec edited: Enter approves your version" }, effects: [] };
     }
     case "editor_result": return { state: { ...s, input: { text: e.text, cursor: e.text.length } }, effects: [] };
     case "disconnected": return { state: { ...s, running: false, working: "idle", items: [...s.items, info(e.message, "error")] }, effects: [] };

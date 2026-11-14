@@ -10,7 +10,7 @@ import { listSessions } from "../storage/transcript.ts";
 import { loadSettings } from "../storage/settings.ts";
 import { focusAllows, playSound, progressSequence, runStatusLine, soundSettings, statusLineConfig } from "./attention.ts";
 import { loadCustomEntries, parseLoop } from "./customcmd.ts";
-import { buildView, statusLineInput } from "./views.ts";
+import { buildView, statusLineInput, type View } from "./views.ts";
 import { parseKeys, PASTE_OFF, PASTE_ON } from "./keys.ts";
 import { readClipboardImage } from "./clipboard.ts";
 import { render, stripAnsi } from "./render.ts";
@@ -53,7 +53,9 @@ export async function runTui(opts: TuiOptions): Promise<number> {
   });
   let client: RpcClient | undefined;
   let reqN = 0;
+  let viewGeneration = 0;
   const waiting = new Map<string, (result: unknown) => void>();
+  const memberRequests = new Set<string>();
   /** Re-shown prompts stay open in the harness when the TUI quits (a later load_session shows them again). */
   const reshownIds = new Set<string>();
   let renderQueued = false;
@@ -123,6 +125,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     c.onRequest = (method, p) => {
       if (method !== "request_permission" && method !== "ask_user" && method !== "pick_options" && method !== "request_trust") throw new Error(`Method not found: ${method}`);
       const id = String((p as any).requestId ?? (p as any).toolCallId ?? `req-${++reqN}`);
+      if (p.workstreamId) memberRequests.add(id);
       return new Promise((res) => { waiting.set(id, res); dispatch({ type: "request", id, method, params: p }); });
     };
     c.onClose = () => { if (c === client && !finishing) dispatch({ type: "disconnected", message: "Connection to the session closed." }); };
@@ -161,7 +164,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
         case "settings": await client?.request("update_session_settings", eff.patch).catch((e) => info(`Settings: ${errText(e)}`, "error")); return;
         case "answer": {
           const f = waiting.get(eff.requestId);
-          if (f) { waiting.delete(eff.requestId); f(eff.result); }
+          if (f) { waiting.delete(eff.requestId); memberRequests.delete(eff.requestId); f(eff.result); }
           return;
         }
         case "quit": void finish(0); return;
@@ -194,6 +197,11 @@ export async function runTui(opts: TuiOptions): Promise<number> {
             list = listSessions(cwd).map((x) => ({ id: x.id, title: x.title, updatedAt: new Date(x.mtimeMs).toISOString() }));
           }
           dispatch({ type: "sessions", sessions: list });
+          return;
+        }
+        case "list_missions": {
+          const r = await client!.request("mission_list", {});
+          dispatch({ type: "sessions", title: "Missions", sessions: (r.missions ?? []).map((m: any) => ({ id: m.sessionId, title: `${m.title ?? m.sessionId} [${m.state}]` })) });
           return;
         }
         case "fetch_context": {
@@ -253,8 +261,11 @@ export async function runTui(opts: TuiOptions): Promise<number> {
           return;
         }
         case "view": {
-          const v = eff.name === "loop" ? await loopView(eff.args) : await buildView(eff.name, eff.args, { request: (m, p) => client!.request(m, p), state, connection: opts.connection ?? "in-process", settingsPath: opts.settingsPath, openUrl: openInBrowser, notify: (t, l) => info(t, l) });
-          dispatch({ type: "overlay", title: v.title, lines: v.lines });
+          const generation = ++viewGeneration;
+          const v: View = eff.name === "loop" ? await loopView(eff.args) : await buildView(eff.name, eff.args, { request: (m, p) => client!.request(m, p), state, connection: opts.connection ?? "in-process", settingsPath: opts.settingsPath, openUrl: openInBrowser, notify: (t, l) => info(t, l) });
+          if (generation !== viewGeneration || (eff.refresh && state.overlay?.workstreamId !== eff.args)) return;
+          if (v.workstreams) dispatch({ type: "workstreams", rows: v.workstreams });
+          else dispatch({ type: "overlay", title: v.title, lines: v.lines, workstreamId: v.workstreamId });
           if (eff.name === "statusline") void refreshStatusLine();
           if (eff.name === "mcp") void refreshExtras();
           return;
@@ -379,8 +390,9 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     leaveTerminal();
     const c = client;
     client = undefined;
-    for (const [rid, f] of waiting) if (!reshownIds.has(rid)) f({ selectedOption: "cancel", cancelled: true, answers: [], selectedIds: [] });
+    for (const [rid, f] of waiting) if (!reshownIds.has(rid) && !memberRequests.has(rid)) f({ selectedOption: "cancel", cancelled: true, answers: [], selectedIds: [] });
     waiting.clear();
+    memberRequests.clear();
     if (c) {
       await Promise.race([c.request("close_session", { reason: "prompt_input_exit" }).catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
       await c.close().catch(() => {});
@@ -412,6 +424,9 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     // Piped input ended: let a running turn finish, then exit.
     const wait = setInterval(() => {
       if (!ready) return;
+      // Member engines belong to the daemon. EOF disconnects this user view without
+      // answering their questions; another view can retrieve and answer them later.
+      if (state.panels.some((p) => p.workstreamId)) state = { ...state, panels: state.panels.filter((p) => !p.workstreamId) };
       if (state.panels.length) dispatch({ type: "key", key: { name: "esc" }, now: Date.now() });
       if (!state.running && !state.panels.length) { clearInterval(wait); void finish(0); }
     }, 50);

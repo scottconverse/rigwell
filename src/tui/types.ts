@@ -34,10 +34,13 @@ export type PanelAction =
   | { type: "confirm"; effects: Effect[] }
   | { type: "model" }
   | { type: "resume" }
+  | { type: "workstream" }
   | { type: "rewind_pick" }
   | { type: "rewind_mode"; messageId: string; text: string };
 
 export interface Panel {
+  workstreamId?: string;
+  agentId?: string;
   id: string;
   kind: "permission" | "batch" | "exit_spec" | "ask_user" | "pick_options" | "trust" | "confirm" | "select";
   action: PanelAction;
@@ -63,6 +66,8 @@ export interface Panel {
   commentMode?: boolean;
   /** exit_spec: the plan after Ctrl+G (edited in $EDITOR); sent as editedSpecContent with proceed_edit. */
   editedSpec?: string;
+  /** Editable proposal text when the approval body also contains goal/budget details. */
+  planText?: string;
   /** ask_user: the "Other..." free-text box for the current question (typing = true while it has the keys). */
   other?: { typing: boolean; text: string };
 }
@@ -151,7 +156,8 @@ export interface TuiState {
   todos: TodoView[];
   /** Set by a spec_handoff notification; the new session starts when the turn ends with reason spec_handoff. */
   handoff?: { specHandoffId: string };
-  overlay: { title: string; lines: string[] } | null;
+  overlay: { title: string; lines: string[]; workstreamId?: string } | null;
+  workstreamId?: string;
   pending: { steer: string[]; queue: string[] };
   lastEscAt: number;
   lastCtrlCAt: number;
@@ -169,12 +175,13 @@ export type Effect =
   | { type: "new_session"; cwd?: string }
   | { type: "resume"; sessionId: string }
   | { type: "list_sessions" }
+  | { type: "list_missions" }
   | { type: "fetch_context"; show: boolean }
   | { type: "shell"; command: string }
   | { type: "files"; query: string }
   | { type: "copy"; text: string }
   | { type: "editor"; text: string; target?: "input" | "spec" }
-  | { type: "view"; name: "pr" | "mcp" | "hooks" | "skills" | "commands" | "agents" | "diagnostics" | "statusline" | "automations" | "loop" | "login" | "logout"; args: string }
+  | { type: "view"; name: "workstreams" | "pr" | "mcp" | "hooks" | "skills" | "commands" | "agents" | "diagnostics" | "statusline" | "automations" | "loop" | "login" | "logout"; args: string; refresh?: boolean }
   | { type: "rewind"; messageId: string; restoreFiles: boolean }
   | { type: "attention"; kind: "completion" | "awaiting" }
   | { type: "status_line" }
@@ -193,8 +200,9 @@ export type TuiEvent =
   | { type: "session_ready"; result: any; fresh: boolean }
   | { type: "context_stats"; stats: any; show: boolean }
   | { type: "info"; text: string; level?: "info" | "error" }
-  | { type: "sessions"; sessions: { id: string; title?: string; updatedAt?: string; pinned?: boolean }[] }
-  | { type: "overlay"; title: string; lines: string[] }
+  | { type: "sessions"; sessions: { id: string; title?: string; updatedAt?: string; pinned?: boolean }[]; title?: string }
+  | { type: "workstreams"; rows: { id: string; title: string; state: string; agentCount: number }[] }
+  | { type: "overlay"; title: string; lines: string[]; workstreamId?: string }
   | { type: "extras"; custom: CustomEntry[]; skills: number; mcps?: number; issues?: number }
   | { type: "status_line"; text: string | undefined; hint?: string; padding?: number }
   | { type: "open_rewind" }

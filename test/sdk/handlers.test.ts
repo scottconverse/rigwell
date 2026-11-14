@@ -136,10 +136,10 @@ const waitFor = async (pred: () => any, ms = 20000) => { const t0 = Date.now(); 
 test("a resumed session re-shows an open permission prompt and answers through answer_request", async () => {
   const { repo, d } = await daemon(write());
   try {
-    const first = await connectToDaemon({ socketPath: d.socketPath, cwd: repo, modelId: MODEL, autonomyLevel: "low", onPermission: () => new Promise(() => {}) });
+    let promptOpen = false;
+    const first = await connectToDaemon({ socketPath: d.socketPath, cwd: repo, modelId: MODEL, autonomyLevel: "low", onPermission: () => { promptOpen = true; return new Promise(() => {}); } });
     void first.send("write it");
-    await waitFor(() => existsSync(d.socketPath)); // connected
-    await Bun.sleep(300);
+    await waitFor(() => promptOpen);
     await (first as any).client.close(); // the client goes away with the prompt open
 
     const shown: any[] = [];
@@ -162,9 +162,10 @@ test("a resumed session re-shows an open permission prompt and answers through a
 test("a resumed session re-shows an open question; the answer reaches the model", async () => {
   const { repo, server, d } = await daemon(ask());
   try {
-    const first = await connectToDaemon({ socketPath: d.socketPath, cwd: repo, modelId: MODEL, onAskUser: () => new Promise(() => {}) });
+    let promptOpen = false;
+    const first = await connectToDaemon({ socketPath: d.socketPath, cwd: repo, modelId: MODEL, onAskUser: () => { promptOpen = true; return new Promise(() => {}); } });
     void first.send("pick one");
-    await Bun.sleep(300);
+    await waitFor(() => promptOpen);
     await (first as any).client.close();
 
     const shown: any[] = [];

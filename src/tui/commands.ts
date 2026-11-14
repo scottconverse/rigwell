@@ -24,6 +24,8 @@ export const COMMANDS: SlashCommand[] = [
   { name: "cost", desc: "Token usage and cost" },
   { name: "status", desc: "Version, mode, session, folder, model, data folder" },
   { name: "pr", desc: "PR status or create a PR after approval", args: '[create "title" ["body"] [base] [--draft]]' },
+  { name: "workstreams", aliases: ["ws"], desc: "Workstreams roster and messages", args: '[id | send <agent> <text> | interrupt <agent>]' },
+  { name: "missions", desc: "Pick a mission session", stopsRun: true },
   { name: "compress", desc: "Summarise into a new session", args: "[instructions]", stopsRun: true },
   { name: "rewind-conversation", desc: "Go back to an earlier user turn", stopsRun: true },
   { name: "fork", desc: "Copy this session into a new one" },
