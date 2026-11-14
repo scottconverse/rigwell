@@ -31,7 +31,7 @@ export function SidePane(props: {
       <div className="pane-body">
         {mounted.has("files") && <div className="pane-page" style={show("files")}><FilesTab ctl={ctl} autoOpen={props.autoOpenPreviews} requestOpen={fileToOpen} refreshKey={state.working === "idle" ? 1 : 0} /></div>}
         {mounted.has("terminal") && <div className="pane-page" style={show("terminal")}><TerminalTab ctl={ctl} active={tab === "terminal"} /></div>}
-        {mounted.has("browser") && <div className="pane-page" style={show("browser")}><BrowserTab visible={tab === "browser"} onWantVisible={() => props.onTab("browser")} /></div>}
+        {mounted.has("browser") && <div className="pane-page" style={show("browser")}><BrowserTab key={state.sessionId} sessionId={state.sessionId} visible={tab === "browser"} onWantVisible={() => props.onTab("browser")} /></div>}
         {mounted.has("side") && <div className="pane-page" style={show("side")}><SideChatTab ctl={ctl} entries={state.sideChat} writes={state.sideWrites} prefill={props.prefill} onPrefillUsed={props.onPrefillUsed} onPromoted={props.onPromoted} /></div>}
       </div>
     </aside>

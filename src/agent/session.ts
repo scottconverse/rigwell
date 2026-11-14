@@ -30,6 +30,7 @@ import type { PermissionModeName } from "../hooks/runner.ts";
 import { InstructionLoader } from "../instructions/index.ts";
 import { renderAdditionalSkills, SkillRegistry } from "../skills/skills.ts";
 import { McpManager, isMcpAllowed, mcpTool, rememberMcp, type McpServerConfig } from "../mcp/index.ts";
+import { closeSessionBrowsers } from "../browser/tools.ts";
 import { isStarted, runTask, TaskError, type ChildOptions, type ChildOutcome, type ParentContext, type TaskInput, type TaskLimits } from "../subagents/task.ts";
 import { agentCatalog, type CustomAgent } from "../subagents/agents.ts";
 import { exitSpecModeTool, recommendMissionTool, upgradeModelTool, saveSpec, skillTool, specFileName, specSaveFolder, taskTool } from "./extra-tools.ts";
@@ -756,6 +757,7 @@ export class Session {
   async end(reason = "other") {
     if (this.ended) return;
     this.ended = true;
+    await closeSessionBrowsers(this.id).catch((e) => this.deps.log?.(`[browser] cleanup failed: ${(e as Error).message}`));
     if (this.hooks?.hasHooks() && !this.deps.isChild) {
       await this.hooks.sessionEnd(reason, Date.now() - this.startedAt, this.messages.length).catch(() => {});
     }
@@ -1569,7 +1571,7 @@ export class Session {
           stop = "no_approver_available";
           this.notify({
             type: "error", errorType: "SessionError", timestamp: new Date().toISOString(),
-            message: `Tool call ${call.name} needs approval at autonomy "${this.settings.autonomyLevel}". Re-run with a higher --auto level (low, medium, high) or with --skip-permissions-unsafe.`,
+            message: `Tool call ${call.name} needs approval at autonomy "${this.settings.autonomyLevel}". ${call.name === "browser_evaluate" || call.name === "Browser" && input.action === "evaluate" ? "Page JavaScript requires an interactive approver." : "Re-run with a higher --auto level (low, medium, high) or with --skip-permissions-unsafe."}`,
           });
           continue;
         }
@@ -1645,6 +1647,12 @@ export class Session {
     } else if (!this.scriptTools().some((t) => t.name === name) && this.deferred.get(name)) {
       target = this.deferred.get(name);
     }
+    const pctx = {
+      autonomy: this.settings.autonomyLevel, interactionMode: this.settings.interactionMode,
+      skipPermissions: this.deps.skipPermissions, lists: this.deps.lists, cwd: this.cwd,
+    };
+    const effective = target?.name ?? name;
+    if (effective === "browser_evaluate" || effective === "Browser" && args.action === "evaluate") return this.deps.decide(effective, args, pctx);
     if (target) {
       if (this.deps.skipPermissions) return { decision: "allow" };
       const info = this.mcp?.findTool(target.name);
@@ -1669,10 +1677,6 @@ export class Session {
         details: { toolName: target.name, input: args }, reason: `Deferred tool ${target.name}`,
       };
     }
-    const pctx = {
-      autonomy: this.settings.autonomyLevel, interactionMode: this.settings.interactionMode,
-      skipPermissions: this.deps.skipPermissions, lists: this.deps.lists, cwd: this.cwd,
-    };
     if (unrated && name === "Execute") {
       const note = "A hook rewrote this command, so the model's risk rating no longer applies.";
       const d = this.deps.decide(name, { ...input, riskLevel: "high", riskReason: note }, pctx);

@@ -259,7 +259,7 @@ export class SessionController extends Store<SessionState> {
   /** Registers the browser pane with the daemon. `send` waits for this (briefly), so a Browser tool call never beats the attach. */
   attachBrowser(): Promise<void> {
     return (this.attaching ??= (async () => {
-      const url = await bridge().browser.cdpUrl();
+      const url = await bridge().browser.cdpUrl(this.state.sessionId);
       if (url) await this.request("daemon.browser_attach", { cdpUrl: url }).catch(() => {});
     })());
   }

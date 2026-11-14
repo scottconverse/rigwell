@@ -14,6 +14,7 @@ export interface PaneTarget {
   id: string;
   url(): string;
   title(): string;
+  active?(): boolean;
   attach(): void;
   detach(): void;
   send(method: string, params: Record<string, unknown>): Promise<unknown>;
@@ -26,13 +27,16 @@ export interface PaneHost {
   createTab(url: string): Promise<PaneTarget>;
   closeTab(id: string): Promise<void>;
   activateTab(id: string): void;
+  setPolicy?(params: Record<string, unknown>): Promise<void>;
 }
 
-export interface CdpProxy { port: number; url: string; browserId: string; stop(): Promise<void> }
+export interface CdpProxy { port: number; url: string; browserId: string; registerHost(host: PaneHost): { url: string; close(): void }; stop(): Promise<void> }
 
 export async function startCdpProxy(opts: { host: PaneHost; port?: number; browserId?: string; log?: (m: string) => void }): Promise<CdpProxy> {
   const browserId = opts.browserId ?? randomUUID();
   const path = `/devtools/browser/${browserId}`;
+  const hosts = new Map<string, PaneHost>([[path, opts.host]]);
+  const clients = new Map<WebSocket, string>();
   const http: Server = createServer((req, res) => {
     // Chromium-style discovery, answered only for the capability path's parent being known.
     if (req.url === "/json/version" && req.headers.host?.startsWith("127.0.0.1")) {
@@ -44,15 +48,16 @@ export async function startCdpProxy(opts: { host: PaneHost; port?: number; brows
   });
   const wss = new WebSocketServer({ noServer: true });
   http.on("upgrade", (req, socket, head) => {
-    if (req.url !== path || !/^127\.0\.0\.1(:\d+)?$/.test(req.headers.host ?? "")) { socket.destroy(); return; }
-    wss.handleUpgrade(req, socket, head, (ws) => serve(ws));
+    const host = hosts.get(req.url ?? "");
+    if (!host || !/^127\.0\.0\.1(:\d+)?$/.test(req.headers.host ?? "")) { socket.destroy(); return; }
+    wss.handleUpgrade(req, socket, head, (ws) => { clients.set(ws, req.url!); serve(ws, host); });
   });
 
-  function serve(ws: WebSocket) {
+  function serve(ws: WebSocket, host: PaneHost) {
     const attached = new Map<string, { target: PaneTarget; off: () => void }>(); // sessionId -> target
     const reply = (id: number, result: unknown, sessionId?: string) => ws.send(JSON.stringify({ id, result, ...(sessionId ? { sessionId } : {}) }));
     const fail = (id: number, message: string, sessionId?: string) => ws.send(JSON.stringify({ id, error: { code: -32000, message }, ...(sessionId ? { sessionId } : {}) }));
-    const info = (t: PaneTarget) => ({ targetId: t.id, type: "page", title: t.title(), url: t.url(), attached: [...attached.values()].some((a) => a.target === t), canAccessOpener: false });
+    const info = (t: PaneTarget) => ({ targetId: t.id, type: "page", title: t.title(), url: t.url(), attached: [...attached.values()].some((a) => a.target === t), canAccessOpener: false, ...(t.active ? { rigwellActive: t.active() } : {}) });
 
     ws.on("message", async (raw) => {
       let m: { id: number; method: string; params?: Record<string, any>; sessionId?: string };
@@ -65,9 +70,13 @@ export async function startCdpProxy(opts: { host: PaneHost; port?: number; brows
           return reply(m.id, (await a.target.send(m.method, params)) ?? {}, m.sessionId);
         }
         switch (m.method) {
-          case "Target.getTargets": return reply(m.id, { targetInfos: opts.host.targets().map(info) });
+          case "Target.getTargets": {
+            const targets = host.targets(); const ids = new Set(targets.map((t) => t.id));
+            for (const [sid, a] of attached) if (!ids.has(a.target.id)) { a.off(); attached.delete(sid); }
+            return reply(m.id, { targetInfos: targets.map(info) });
+          }
           case "Target.attachToTarget": {
-            const t = opts.host.targets().find((x) => x.id === params.targetId);
+            const t = host.targets().find((x) => x.id === params.targetId);
             if (!t) return fail(m.id, "No target with given id");
             const sessionId = `pane-${t.id}-${randomUUID().slice(0, 8)}`;
             t.attach();
@@ -76,11 +85,12 @@ export async function startCdpProxy(opts: { host: PaneHost; port?: number; brows
             return reply(m.id, { sessionId });
           }
           case "Target.createTarget": {
-            const t = await opts.host.createTab(String(params.url ?? "about:blank"));
+            const t = await host.createTab(String(params.url ?? "about:blank"));
             return reply(m.id, { targetId: t.id });
           }
-          case "Target.closeTarget": await opts.host.closeTab(String(params.targetId)); return reply(m.id, { success: true });
-          case "Target.activateTarget": opts.host.activateTab(String(params.targetId)); return reply(m.id, {});
+          case "Target.closeTarget": await host.closeTab(String(params.targetId)); return reply(m.id, { success: true });
+          case "Target.activateTarget": host.activateTab(String(params.targetId)); return reply(m.id, {});
+          case "Rigwell.setBrowserPolicy": if (host.setPolicy) { await host.setPolicy(params); return reply(m.id, {}); } return fail(m.id, `'${m.method}' wasn't found`);
           case "Browser.getVersion": return reply(m.id, { protocolVersion: "1.3", product: "Rigwell/Pane", userAgent: "Rigwell", jsVersion: "" });
           default: return fail(m.id, `'${m.method}' wasn't found`);
         }
@@ -88,13 +98,17 @@ export async function startCdpProxy(opts: { host: PaneHost; port?: number; brows
         fail(m.id, (e as Error).message, m.sessionId);
       }
     });
-    ws.on("close", () => { for (const a of attached.values()) { a.off(); try { a.target.detach(); } catch {} } attached.clear(); });
+    ws.on("close", () => { clients.delete(ws); for (const a of attached.values()) { a.off(); try { a.target.detach(); } catch {} } attached.clear(); });
   }
 
   await new Promise<void>((resolve, reject) => { http.once("error", reject); http.listen(opts.port ?? 0, "127.0.0.1", () => resolve()); });
   const port = (http.address() as { port: number }).port;
   return {
     port, browserId, url: `ws://127.0.0.1:${port}${path}`,
+    registerHost(host) {
+      const scoped = `/devtools/browser/${randomUUID()}`; hosts.set(scoped, host);
+      return { url: `ws://127.0.0.1:${port}${scoped}`, close() { hosts.delete(scoped); for (const [client, key] of clients) if (key === scoped) client.terminate(); } };
+    },
     stop: () => new Promise<void>((resolve) => { for (const c of wss.clients) c.terminate(); wss.close(); http.close(() => resolve()); http.closeAllConnections?.(); }),
   };
 }

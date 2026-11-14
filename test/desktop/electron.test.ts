@@ -59,6 +59,7 @@ maybe("desktop app end to end", () => {
       const lastUser: string = userTexts.at(-1) ?? "";
       if (all.includes("This is a side conversation")) { sideBodies.push(body); return { text: "side answer: the agent is waiting on a gate file" }; }
       if (lastUser.includes("RICH")) return { text: "Rich reply\n\n```ts\nconst answer: number = 42;\n```\n\nEuler: $e^{i\\pi}+1=0$ and\n\n$$\\frac{a}{b}$$\n\n```mermaid\ngraph TD\n  A[Start] --> B[End]\n```\n" };
+      if (lastUser.includes("BROWSER_HEADLESS")) return toolResult ? { text: "headless browser done" } : { toolCalls: [{ name: "browser_open", input: { url: `http://127.0.0.1:${web.port}/` } }] };
       if (lastUser.includes("browse")) return toolResult ? { text: "browser done" } : { toolCalls: [{ name: "Browser", input: { action: "navigate", url: `http://127.0.0.1:${web.port}/` } }] };
       if (lastUser.includes("LONG")) return toolResult ? { text: "long finished" } : { toolCalls: [{ name: "Execute", input: { command: jsCommand(home, `const fs = require("fs"); const timer = setInterval(() => { if (fs.existsSync(${JSON.stringify(gate)})) { clearInterval(timer); console.log("released"); } }, 50);`), riskLevel: "low", riskReason: "waits for a file" } }] };
       return { text: "hi there" };
@@ -139,7 +140,16 @@ maybe("desktop app end to end", () => {
     await page.locator(".xterm-rows", { hasText: "alive-2" }).first().waitFor({ timeout: 15_000 });
   }, 90_000);
 
+  test("named browser tools use hidden bundled Chromium when no pane is open", async () => {
+    await composerSend("BROWSER_HEADLESS");
+    await page.locator(".assistant", { hasText: "headless browser done" }).first().waitFor({ timeout: LOAD_WAIT });
+    const state = await app.evaluate(({ BrowserWindow }: any) => BrowserWindow.getAllWindows().filter((w: any) => w.webContents.getTitle() === "Tasks").map((w: any) => ({ visible: w.isVisible(), sandbox: w.webContents.getLastWebPreferences().sandbox })));
+    expect(state).toEqual([{ visible: false, sandbox: true }]);
+    expect(webHits).toContain("/");
+  }, 60_000);
+
   test("the agent drives the browser pane", async () => {
+    await page.getByRole("tab", { name: "Browser", exact: true }).click();
     await composerSend("please browse the page");
     await page.locator(".tool-name", { hasText: "Browser" }).first().waitFor({ timeout: LOAD_WAIT });
     await page.locator(".assistant", { hasText: "browser done" }).first().waitFor({ timeout: LOAD_WAIT });

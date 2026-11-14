@@ -10,6 +10,18 @@ function pctx(over: Partial<PermissionContext> = {}): PermissionContext {
 }
 const ex = (command: string, riskLevel: unknown = "low") => ({ command, riskLevel, riskReason: "because" });
 
+test("browser actions follow autonomy while page JavaScript always asks, including the legacy route", () => {
+  for (const autonomy of ["off", "low", "medium", "high"] as const) {
+    const ctx = pctx({ autonomy });
+    for (const name of ["browser_open", "browser_click", "browser_type", "browser_press", "browser_scroll"]) expect(decide(name, {}, ctx).decision).toBe(autonomy === "off" ? "ask" : "allow");
+    for (const name of ["browser_snapshot", "browser_screenshot", "browser_wait", "browser_close"]) expect(decide(name, {}, ctx).decision).toBe("allow");
+    for (const skipPermissions of [false, true]) {
+      expect(decide("browser_evaluate", { expression: "document.title" }, { ...ctx, skipPermissions })).toMatchObject({ decision: "ask", alwaysLevel: null });
+      expect(decide("Browser", { action: "evaluate", expression: "document.title" }, { ...ctx, skipPermissions })).toMatchObject({ decision: "ask", alwaysLevel: null });
+    }
+  }
+});
+
 describe("risk vs autonomy table", () => {
   const levels: AutonomyLevel[] = ["off", "low", "medium", "high"];
   const risks = ["low", "medium", "high"] as const;

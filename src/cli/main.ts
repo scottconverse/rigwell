@@ -8,6 +8,7 @@ import type { AutonomyLevel } from "../core/types.ts";
 import { findSession } from "../storage/transcript.ts";
 import { forkSession } from "../storage/fork.ts";
 import { listSessionEntries } from "../storage/session-list.ts";
+import { closeAllBrowsers } from "../browser/tools.ts";
 
 const log = (m: string) => process.stderr.write(m + "\n");
 
@@ -129,6 +130,17 @@ async function readStdin(onChunk: (s: string) => void) {
   for await (const chunk of Bun.stdin.stream()) onChunk(dec.decode(chunk as Uint8Array, { stream: true }));
 }
 
+function cleanupOnSignal(shutdown: () => Promise<void>) {
+  let stopping = false;
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    void shutdown().then(() => process.exit(130), (e) => { log(`rigwell: shutdown failed: ${(e as Error).message}`); process.exit(1); });
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+}
+
 async function execJsonRpc(a: ExecArgs) {
   if (a.inputFormat !== "stream-jsonrpc" || a.outputFormat !== "stream-jsonrpc") {
     fail("use both --input-format stream-jsonrpc and --output-format stream-jsonrpc, or pass a prompt");
@@ -137,6 +149,7 @@ async function execJsonRpc(a: ExecArgs) {
     canPrompt: true, runtimeSettingsPath: a.settings, log,
     forced: { autonomyLevel: a.auto, skipPermissions: a.skip || undefined, modelId: a.model },
   });
+  cleanupOnSignal(() => conn.shutdown());
   await readStdin((s) => conn.peer.feed(s));
   await conn.shutdown();
   process.exit(0);
@@ -174,6 +187,7 @@ async function execPrompt(a: ExecArgs) {
       turnDone(n.reason);
     }
   }, opts);
+  cleanupOnSignal(() => conn.shutdown());
   const call = (method: string, params: Record<string, unknown>) =>
     new Promise<any>((res) => {
       const id = `cli-${++reqN}`;
@@ -284,7 +298,7 @@ async function main() {
     const d = await startDaemon({ socketPath: path, log, ws: argv.includes("--no-ws") ? false : { port: wsPort } });
     log(`[daemon] listening on ${d.socketPath}`);
     if (d.wsUrl) log(`[daemon] WebSocket on ${d.wsUrl} (token in ${join(rigwellHome(), "daemon.json")})`);
-    const stop = () => { d.stop(); process.exit(0); };
+    const stop = () => { void d.stop().then(() => process.exit(0), (e) => { log(`rigwell: shutdown failed: ${(e as Error).message}`); process.exit(1); }); };
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);
     return;
@@ -294,4 +308,8 @@ async function main() {
   process.exit(2);
 }
 
-main();
+main().catch(async (e) => {
+  log(`rigwell: ${(e as Error).message}`);
+  await closeAllBrowsers().catch((error) => log(`rigwell: browser cleanup failed: ${(error as Error).message}`));
+  process.exit(2);
+});

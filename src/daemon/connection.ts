@@ -225,7 +225,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
       resolveModel: (mid) => findModel(env.models, mid),
       createAdapter: (model) => { opts.beforeModel?.(model); return createAdapter(model); }, streamWithRetry: streamWithRetry as any,
       beforeTurn: opts.beforeTurn, onUsage: opts.onUsage, maxToolIds: opts.maxToolIds,
-      toolsFor: ((base) => (opts.wrapTools ? (o: Parameters<typeof toolsForSession>[0]) => opts.wrapTools!(base(o)) : base))(opts.extraTools ? (o: Parameters<typeof toolsForSession>[0]) => [...toolsForSession(o), ...opts.extraTools!()] : toolsForSession), decide: opts.maxAutonomy && !autonomyAllowed("high", maxAutonomy)
+      toolsFor: ((base) => (opts.wrapTools ? (o: Parameters<typeof toolsForSession>[0]) => opts.wrapTools!(base(o)) : base))(opts.extraTools ? (o: Parameters<typeof toolsForSession>[0]) => { const extra = opts.extraTools!(); const names = new Set(extra.map((t) => t.name)); return [...toolsForSession(o).filter((t) => !names.has(t.name)), ...extra]; } : toolsForSession), decide: opts.maxAutonomy && !autonomyAllowed("high", maxAutonomy)
         ? (tool, input, ctx) => decide(tool, input, { ...ctx, interactionMode: ctx.interactionMode === "mission" ? "auto" : ctx.interactionMode })
         : decide, lists: env.lists,
       scriptToolModels: env.s.scriptToolModels, scriptLimits: env.s.scriptLimits,

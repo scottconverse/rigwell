@@ -142,14 +142,22 @@ describe("worktrees end to end", () => {
   });
 
   test("auto-delete skips a worktree with uncommitted work", async () => {
+    const started = Date.now(), stages: { stage: string; ms: number }[] = [];
+    const children: RpcChild[] = [];
+    const mark = (stage: string) => stages.push({ stage, ms: Date.now() - started });
+    const diagnostic = () => console.error("[worktree auto-delete diagnostic]", JSON.stringify({ stages, elapsed: Date.now() - started, children: children.map((c) => ({ stderr: c.stderr, lastMessages: c.messages.slice(-3) })) }));
+    const timer = setTimeout(diagnostic, 4000);
+    try {
     const repo = makeRepo();
     const root = tmp("e2e-root");
-    const limit = { worktreeAutoDeleteLimit: 1 };
+    const limit = { worktreeAutoDeleteLimit: 1 }; mark("repo ready");
     const dirty = await runSession(repo, root, editScript("Hello, "), { prompt: "dirty one" }, {}, limit); // leaves an uncommitted edit
+    children.push(dirty.c); mark("dirty initialized");
     const clean = await runSession(repo, root, idleScript(), { prompt: "clean one" }, {}, limit);
+    children.push(clean.c); mark("clean initialized");
     const pd = dirty.init.worktree.path, pc = clean.init.worktree.path;
     await finish(dirty.c);
-    await finish(clean.c);
+    await finish(clean.c); mark("first sessions closed");
     expect(gitOut(pd, "status", "--porcelain")).toContain("greet.js");
 
     // Age both so the 30 minute "recently used" guard does not apply (dirty is the older one).
@@ -161,10 +169,12 @@ describe("worktrees end to end", () => {
 
     // Creating a third worktree runs the pass: 2 ephemeral > limit 1.
     const third = await runSession(repo, root, idleScript(), { prompt: "third one" }, {}, limit);
+    children.push(third.c); mark("third initialized");
     expect(third.init.worktree.path).not.toBe(pd);
     expect(existsSync(pd)).toBe(true);   // skipped: uncommitted work
     expect(existsSync(pc)).toBe(false);  // removed: clean, least recently used among the removable
     expect(readFileSync(join(pd, "greet.js"), "utf8")).toContain('"Hello, "');
-    await finish(third.c);
+    await finish(third.c); mark("third closed");
+    } catch (e) { diagnostic(); throw e; } finally { clearTimeout(timer); }
   });
 });

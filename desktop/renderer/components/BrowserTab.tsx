@@ -18,13 +18,13 @@ function normalize(input: string): string {
   return `https://duckduckgo.com/?q=${encodeURIComponent(t)}`;
 }
 
-function WebviewTab({ tab, onState, onGone }: { tab: Tab; onState(key: string, patch: Partial<Tab>): void; onGone(key: string): void }) {
+function WebviewTab({ tab, sessionId, onState, onGone }: { tab: Tab; sessionId?: string; onState(key: string, patch: Partial<Tab>): void; onGone(key: string): void }) {
   const ref = useRef<any>(null);
   useEffect(() => {
     const wv = ref.current;
     if (!wv) return;
     const upd = () => onState(tab.key, { url: wv.getURL?.() ?? tab.url, title: wv.getTitle?.() ?? "", canBack: wv.canGoBack?.() ?? false, canForward: wv.canGoForward?.() ?? false });
-    const ready = () => { const id = wv.getWebContentsId(); onState(tab.key, { wcId: id }); void bridge().browser.register(id, tab.requestId).catch(() => {}); upd(); };
+    const ready = () => { const id = wv.getWebContentsId(); onState(tab.key, { wcId: id }); void bridge().browser.register(id, tab.requestId, sessionId).catch(() => {}); upd(); };
     const handlers: [string, (e?: any) => void][] = [
       ["dom-ready", ready], ["did-navigate", upd], ["did-navigate-in-page", upd], ["page-title-updated", upd],
       ["did-start-loading", () => onState(tab.key, { loading: true })], ["did-stop-loading", () => { onState(tab.key, { loading: false }); upd(); }],
@@ -36,7 +36,7 @@ function WebviewTab({ tab, onState, onGone }: { tab: Tab; onState(key: string, p
   return createElement("webview", { ref, src: tab.src, partition: PARTITION, className: "webview" });
 }
 
-export function BrowserTab({ visible, onWantVisible }: { visible: boolean; onWantVisible(): void }) {
+export function BrowserTab({ visible, sessionId, onWantVisible }: { visible: boolean; sessionId?: string; onWantVisible(): void }) {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [active, setActive] = useState<string>("");
   const [address, setAddress] = useState("");
@@ -64,15 +64,16 @@ export function BrowserTab({ visible, onWantVisible }: { visible: boolean; onWan
   useEffect(() => {
     const b = bridge().browser;
     const offs = [
-      b.onNewTab(({ requestId, url }) => { onWantVisible(); open(url, requestId); }),
+      b.onNewTab(({ requestId, url, sessionId: owner }) => { if (owner && owner !== sessionId) return; onWantVisible(); open(url, requestId); }),
       b.onCloseTab(({ webContentsId }) => setTabs((t) => { const x = t.find((y) => y.wcId === webContentsId); if (x) setTimeout(() => close(x.key)); return t; })),
       b.onActivateTab(({ webContentsId }) => setTabs((t) => { const x = t.find((y) => y.wcId === webContentsId); if (x) setActive(x.key); return t; })),
       b.onOpenUrl(({ url }) => open(url)),
     ];
     return () => offs.forEach((o) => o());
-  }, [open, close, onWantVisible]);
+  }, [open, close, onWantVisible, sessionId]);
 
   const cur = tabs.find((t) => t.key === active);
+  useEffect(() => { if (cur?.wcId) void bridge().browser.register(cur.wcId, undefined, sessionId, true).catch(() => {}); }, [cur?.wcId, sessionId]);
   useEffect(() => { setAddress(cur?.url ?? ""); }, [cur?.key, cur?.url]);
   useEffect(() => { if (visible && !tabs.length) open("about:blank"); }, [visible, tabs.length, open]);
 
@@ -104,7 +105,7 @@ export function BrowserTab({ visible, onWantVisible }: { visible: boolean; onWan
         <button onClick={() => setImporting(true)} title="Copy cookies of chosen sites from Chrome into this pane">Import cookies</button>
       </div>
       <div className="webviews">
-        {tabs.map((t) => <div key={t.key} className="webview-slot" data-key={t.key} style={{ display: t.key === active ? "flex" : "none" }}><WebviewTab tab={t} onState={patch} onGone={close} /></div>)}
+        {tabs.map((t) => <div key={t.key} className="webview-slot" data-key={t.key} style={{ display: t.key === active ? "flex" : "none" }}><WebviewTab tab={t} sessionId={sessionId} onState={patch} onGone={close} /></div>)}
         {!tabs.length && <div className="empty">No tabs</div>}
       </div>
       {importing && <CookieImportDialog onClose={() => setImporting(false)} />}

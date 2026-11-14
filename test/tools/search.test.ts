@@ -61,12 +61,13 @@ describe("Glob", () => {
 
 describe("registry", () => {
   test("order, gating, skipPermissions schema", () => {
-    expect(createCoreTools().map((t) => t.name)).toEqual(["Read", "LS", "Execute", "Grep", "Glob", "FetchUrl", "Edit", "Create"]);
-    expect(toolsForSession({ autonomy: "off", skipPermissions: false }).map((t) => t.name)).toEqual(["Read", "LS", "Execute", "Grep", "Glob", "FetchUrl"]);
-    expect(toolsForSession({ autonomy: "low", skipPermissions: false }).length).toBe(8);
-    expect(toolsForSession({ autonomy: "low", skipPermissions: false, fileEditProfile: "apply-patch" }).map((t) => t.name)).toEqual(["Read", "LS", "Execute", "Grep", "Glob", "FetchUrl", "ApplyPatch"]);
+    const browsers = ["browser_open", "browser_snapshot", "browser_click", "browser_type", "browser_press", "browser_scroll", "browser_screenshot", "browser_wait", "browser_evaluate", "browser_close"];
+    expect(createCoreTools().map((t) => t.name)).toEqual(["Read", "LS", "Execute", "Grep", "Glob", "FetchUrl", ...browsers, "Edit", "Create"]);
+    expect(toolsForSession({ autonomy: "off", skipPermissions: false }).map((t) => t.name)).toEqual(["Read", "LS", "Execute", "Grep", "Glob", "FetchUrl", ...browsers]);
+    expect(toolsForSession({ autonomy: "low", skipPermissions: false }).length).toBe(18);
+    expect(toolsForSession({ autonomy: "low", skipPermissions: false, fileEditProfile: "apply-patch" }).map((t) => t.name)).toEqual(["Read", "LS", "Execute", "Grep", "Glob", "FetchUrl", ...browsers, "ApplyPatch"]);
     const tools = toolsForSession({ autonomy: "off", skipPermissions: true });
-    expect(tools.length).toBe(8);
+    expect(tools.length).toBe(18);
     const ex = tools.find((t) => t.name === "Execute")!;
     expect(Object.keys((ex.inputSchema as any).properties)).not.toContain("riskLevel");
     expect((ex.inputSchema as any).required).toEqual(["command"]);

@@ -113,7 +113,7 @@ describe.each(PROVIDERS)("Script mode: $provider", (p) => {
     await s.c.call("add_user_message", { text: "hello", messageId: "t1" });
     await s.c.turnCompleted();
     await s.c.close();
-    expect(toolNames(s.server.requests[0])).toEqual(["AskUser", "Create", "Edit", "Execute", "FetchUrl", "Glob", "Grep", "LS", "Read", "Script", "Skill", "TaskOutput", "TaskStop", "TodoWrite", "call_tool", "load_tools", "script_job"]);
+    expect(toolNames(s.server.requests[0])).toEqual(["AskUser", "Create", "Edit", "Execute", "FetchUrl", "Glob", "Grep", "LS", "Read", "Script", "Skill", "TaskOutput", "TaskStop", "TodoWrite", "browser_click", "browser_close", "browser_evaluate", "browser_open", "browser_press", "browser_screenshot", "browser_scroll", "browser_snapshot", "browser_type", "browser_wait", "call_tool", "load_tools", "script_job"]);
 
     const o = await session(p, [{ text: "hi" }], { init: { toolExecutionMode: "script_only" } });
     expect(o.init.settings.toolExecutionMode).toBe("script_only");

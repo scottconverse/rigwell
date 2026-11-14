@@ -14,7 +14,7 @@ export function inProcessTransport(opts: Partial<ConnectionOptions> & { sidePane
   const t: Transport = {
     onMessage: () => {}, onClose: () => {},
     write(message) { conn.peer.feed(message + "\n"); },
-    async close() { await conn.shutdown(); if (sp) { sp.connectionClosed(ctx); sp.closeAll(); } t.onClose(); },
+    async close() { await conn.shutdown(); if (sp) { sp.connectionClosed(ctx); await sp.closeAll(); } t.onClose(); },
   };
   const ctx: ConnCtx = {
     id: crypto.randomUUID(),

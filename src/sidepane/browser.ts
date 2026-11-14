@@ -152,6 +152,8 @@ export class BrowserService {
     const c = await this.cdp();
     const { targetInfos } = await c.send<{ targetInfos: any[] }>("Target.getTargets");
     const pages = targetInfos.filter((t) => t.type === "page" && !String(t.url).startsWith("devtools://"));
+    const visibleActive = pages.find((p) => p.rigwellActive);
+    if (visibleActive) this.activeTarget = visibleActive.targetId;
     if (!this.activeTarget || !pages.some((p) => p.targetId === this.activeTarget)) this.activeTarget = pages[0]?.targetId;
     return pages.map((p) => ({ id: p.targetId, title: p.title, url: p.url, active: p.targetId === this.activeTarget }));
   }
@@ -204,16 +206,27 @@ export class BrowserService {
     return r.result?.value;
   }
 
-  /** Navigates and waits for the load event (or a 15 s cap). */
-  async navigate(url: string) {
+  /** Shared CDP session for the named agent tools; it is also used by the desktop pane. */
+  pageEndpoint() { return this.page(); }
+
+  /** Navigates and waits for load, with an explicit bounded error and cancellation. */
+  async navigate(url: string, signal?: AbortSignal) {
     const { c, sid } = await this.page();
-    const loaded = new Promise<void>((resolve) => {
-      const off = c.on((m, _p, s) => { if (s === sid && m === "Page.loadEventFired") { off(); resolve(); } });
-      setTimeout(() => { off(); resolve(); }, 15_000);
-    });
-    const r = await c.send<any>("Page.navigate", { url }, sid);
-    if (r.errorText) throw new Error(`Navigation failed: ${r.errorText}`);
-    await loaded;
+    let done!: () => void, fail!: (e: Error) => void;
+    const loaded = new Promise<void>((resolve, reject) => { done = resolve; fail = reject; });
+    // A command error can precede awaiting loaded; always observe its rejection.
+    void loaded.catch(() => {});
+    const off = c.on((m, _p, s) => { if (s === sid && m === "Page.loadEventFired") done(); });
+    const timer = setTimeout(() => fail(new Error("Browser navigation did not load within 15 seconds")), 15_000);
+    const abort = () => { void c.send("Page.stopLoading", {}, sid).catch(() => {}); fail(new Error("Browser navigation cancelled")); };
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      if (signal?.aborted) { abort(); await loaded; return; }
+      const r = await c.send<any>("Page.navigate", { url }, sid);
+      if (r.errorText) throw new Error(`Navigation failed: ${r.errorText}`);
+      if (!r.loaderId) done(); // Same-document navigation has no load event.
+      await loaded;
+    } finally { clearTimeout(timer); off(); signal?.removeEventListener("abort", abort); }
   }
 
   async history(delta: -1 | 1) {

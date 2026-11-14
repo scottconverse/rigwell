@@ -146,16 +146,19 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
     workstreams,
     get sessionCount() { return [...conns].filter((c) => c.session).length; },
     stop() {
-      void workstreams.stop();
+      const pending = [...conns].map((c) => c.shutdown());
+      pending.push(workstreams.stop());
       auto?.stop();
       offWorktree();
       housekeeping.stop();
-      sidepane?.closeAll();
-      for (const c of conns) void c.shutdown();
+      if (sidepane) pending.push(sidepane.closeAll());
       server.stop(true);
       wsServer?.stop();
       removeDaemonInfo(home, process.pid, wsServer?.token);
       try { unlinkSync(opts.socketPath); } catch {}
+      const done = Promise.all(pending).then(() => {});
+      void done.catch((e) => opts.log?.(`[daemon] shutdown failed: ${(e as Error).message}`));
+      return done;
     },
   };
 }

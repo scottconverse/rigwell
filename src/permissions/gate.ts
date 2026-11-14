@@ -23,8 +23,21 @@ const SPEC_BLOCK =
 export function decide(tool: string, input: Record<string, unknown>, ctx: PermissionContext): PermissionDecision {
   // Mission mode runs at high autonomy (spec 5.5.3); file protection is enforced by the mission tool wrappers.
   if (ctx.interactionMode === "mission" && ctx.autonomy !== "high") ctx = { ...ctx, autonomy: "high" };
+  if (tool === "browser_evaluate" || (tool === "Browser" && input.action === "evaluate")) return { decision: "ask", confirmationType: "exec", details: { toolName: tool, input }, impactLevel: "high", alwaysLevel: null, reason: "Evaluates JavaScript in the browser page" };
   if (ctx.skipPermissions) return { decision: "allow", reason: "permissions skipped" };
   switch (tool) {
+    case "browser_snapshot":
+    case "browser_screenshot":
+    case "browser_wait":
+    case "browser_close":
+      return { decision: "allow" };
+    case "browser_open":
+    case "browser_click":
+    case "browser_type":
+    case "browser_press":
+    case "browser_scroll":
+      if (ctx.autonomy !== "off") return { decision: "allow" };
+      return { decision: "ask", confirmationType: "exec", details: { toolName: tool, input }, impactLevel: "medium", alwaysLevel: "low", reason: "Interacts with a browser page" };
     case "Read":
     case "LS":
     case "Grep":

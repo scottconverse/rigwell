@@ -15,6 +15,7 @@ import { readOrgManaged } from "./org-managed.ts";
 import { trayModel, type TrayModel } from "./tray.ts";
 import { importFromProfile, listChromeProfiles, listCookieDomains, toElectronCookie, userDataDirs, type ChromeProfile } from "../../src/sidepane/chrome-cookies.ts";
 import { startCdpProxy, type CdpProxy, type PaneHost, type PaneTarget } from "./cdp-proxy.ts";
+import { BrowserRequestGuards, sessionBrowserHost } from "./agent-browser.ts";
 import { browserPermission, buildCsp, isAllowedExternal, isTrustedSender, parseDeepLink } from "./security.ts";
 import { loadDesktopSettings, updateDesktopSettings, type DesktopSettings } from "./settings.ts";
 import { DaemonSupervisor, START_FAILURE_HINT } from "./supervisor.ts";
@@ -204,7 +205,7 @@ function createWindow(route = "/"): BrowserWindow {
   win.on("close", () => {
     if (windows.size === 1) { const bb = win.getNormalBounds(); settings = updateDesktopSettings(HOME, { windowBounds: { ...bb, maximized: win.isMaximized() } }); }
   });
-  win.on("closed", () => { windows.delete(win); slots.delete(win); zooms.delete(win); broker.closeWindow(id); viewing.delete(id); browserTabs.forEach((t, k) => { if (t.host === id) browserTabs.delete(k); }); });
+  win.on("closed", () => { windows.delete(win); slots.delete(win); zooms.delete(win); broker.closeWindow(id); viewing.delete(id); closeWindowBrowsers(id); browserTabs.forEach((t, k) => { if (t.host === id) browserTabs.delete(k); }); });
   void win.loadURL(`${APP_PAGE}#${route}`);
   return win;
 }
@@ -228,13 +229,56 @@ function openRoute(route: string) {
 
 // ------------------------------------------------------------------ browser pane (webviews) + CDP proxy
 
-const browserTabs = new Map<number, { wc: WebContents; host: number }>();
+const browserTabs = new Map<number, { wc: WebContents; host: number; sessionId?: string; active?: boolean }>();
+const browserGuards = new BrowserRequestGuards();
+const scopedBrowsers = new Map<string, { url: string; close(): Promise<void> }>();
+
+function scopedBrowserUrl(windowId: number, sessionId: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(sessionId) || !proxy) throw new Error("Invalid browser session");
+  const key = `${windowId}:${sessionId}`;
+  const previous = scopedBrowsers.get(key); if (previous) return previous.url;
+  const visible = () => [...browserTabs.values()].filter((t) => t.host === windowId && t.sessionId === sessionId && !t.wc.isDestroyed()).map((t) => paneTarget(t.wc));
+  const owned = sessionBrowserHost({
+    visible,
+    async createVisible(url) {
+      const host = webContents.fromId(windowId); if (!host || host.isDestroyed()) throw new Error("Browser window closed");
+      const requestId = crypto.randomUUID();
+      let timer: ReturnType<typeof setTimeout>;
+      const got = new Promise<WebContents>((resolveTab, reject) => {
+        pendingTabs.set(requestId, resolveTab);
+        timer = setTimeout(() => { if (pendingTabs.delete(requestId)) reject(new Error("Browser pane did not register its new tab")); }, 10_000);
+      });
+      host.send("browser:new-tab", { requestId, url, sessionId });
+      try { return paneTarget(await got); } finally { clearTimeout(timer!); }
+    },
+    async createHidden(url) {
+      const hidden = new BrowserWindow({ show: false, webPreferences: { partition: `agent-browser-${sessionId}`, nodeIntegration: false, contextIsolation: true, sandbox: true } });
+      hidden.setSkipTaskbar(true);
+      const wc = hidden.webContents;
+      browserGuards.install(wc.session, true);
+      wc.session.setPermissionRequestHandler((_wc, _permission, done) => done(false));
+      wc.session.setPermissionCheckHandler(() => false); wc.session.setDevicePermissionHandler(() => false);
+      wc.setWindowOpenHandler(() => ({ action: "deny" }));
+      const target = paneTarget(wc);
+      try { await wc.loadURL(url); } catch (e) { hidden.destroy(); throw e; }
+      return { ...target, async close() { if (!hidden.isDestroyed()) hidden.destroy(); } };
+    },
+    closeVisible: (id) => paneHost.closeTab(id), activateVisible: (id) => paneHost.activateTab(id),
+    async setPolicy(target, params) { const wc = webContents.fromId(Number(target.id)); if (!wc || wc.isDestroyed()) throw new Error("Browser tab closed"); browserGuards.set(wc, params); },
+  });
+  const registration = proxy.registerHost(owned.host);
+  scopedBrowsers.set(key, { url: registration.url, async close() { registration.close(); await owned.close(); scopedBrowsers.delete(key); } });
+  return registration.url;
+}
+
+function closeWindowBrowsers(id: number) { for (const [key, owned] of scopedBrowsers) if (key.startsWith(`${id}:`)) void owned.close(); }
 const pendingTabs = new Map<string, (wc: WebContents) => void>();
 
 function paneTarget(wc: WebContents): PaneTarget {
   return {
     id: String(wc.id),
     url: () => wc.getURL(), title: () => wc.getTitle(),
+    active: () => browserTabs.get(wc.id)?.active === true,
     attach() { if (!wc.debugger.isAttached()) wc.debugger.attach("1.3"); },
     detach() { /* kept attached: other CDP sessions may share it */ },
     send: (method, params) => wc.debugger.sendCommand(method, params),
@@ -265,7 +309,7 @@ const paneHost: PaneHost = {
   },
   activateTab(id) {
     const t = browserTabs.get(Number(id));
-    if (t) sendTo(t.host, "browser:activate-tab", { webContentsId: Number(id) });
+    if (t) { for (const other of browserTabs.values()) if (other.host === t.host && other.sessionId === t.sessionId) other.active = false; t.active = true; sendTo(t.host, "browser:activate-tab", { webContentsId: Number(id) }); }
   },
 };
 
@@ -383,13 +427,16 @@ function registerIpc() {
   }));
 
   // Browser pane
-  ipcMain.handle("browser:cdpUrl", guard(() => proxy?.url ?? null));
-  ipcMain.handle("browser:register", guard((e, webContentsId: number, requestId?: string) => {
+  ipcMain.handle("browser:cdpUrl", guard((e, sessionId?: string) => sessionId ? scopedBrowserUrl(e.sender.id, sessionId) : proxy?.url ?? null));
+  ipcMain.handle("browser:register", guard((e, webContentsId: number, requestId?: string, sessionId?: string, active?: boolean) => {
     const wc = webContents.fromId(webContentsId);
     // Only a webview hosted by the calling window may be registered.
     if (!wc || wc.getType() !== "webview" || wc.hostWebContents?.id !== e.sender.id) throw new Error("Not a webview of this window");
-    browserTabs.set(wc.id, { wc, host: e.sender.id });
-    wc.once("destroyed", () => browserTabs.delete(wc.id));
+    if (requestId && pendingTabs.has(requestId)) active = true;
+    if (sessionId !== undefined && (typeof sessionId !== "string" || !/^[A-Za-z0-9_-]+$/.test(sessionId))) throw new Error("Invalid browser session");
+    if (active) for (const t of browserTabs.values()) if (t.host === e.sender.id && t.sessionId === sessionId) t.active = false;
+    if (!browserTabs.has(wc.id)) wc.once("destroyed", () => browserTabs.delete(wc.id));
+    browserTabs.set(wc.id, { wc, host: e.sender.id, sessionId, active: active ?? browserTabs.get(wc.id)?.active });
     if (requestId) pendingTabs.get(requestId)?.(wc), pendingTabs.delete(requestId);
     return true;
   }));
@@ -590,6 +637,7 @@ async function boot() {
     broker.closeAll();
     log("[shutdown] connections closed");
     void Promise.all([
+      ...[...scopedBrowsers.values()].map((owned) => owned.close()),
       supervisor.stop().finally(() => log("[shutdown] daemon stopped")),
       proxy?.stop().finally(() => log("[shutdown] browser proxy stopped")),
     ]).finally(() => {
