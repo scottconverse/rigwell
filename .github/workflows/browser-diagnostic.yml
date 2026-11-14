@@ -1,5 +1,8 @@
 name: browser-diagnostic
 on:
+  push:
+    branches: [phase-1-core-loop]
+    paths: [.github/workflows/browser-diagnostic.yml]
   workflow_dispatch:
 permissions:
   contents: read
