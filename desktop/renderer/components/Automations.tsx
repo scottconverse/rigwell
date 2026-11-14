@@ -98,6 +98,8 @@ function CreateDialog({ onClose, onCreated }: { onClose(): void; onCreated(id: s
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [secret, setSecret] = useState<{ id: string; secret: string }>();
+  const [machines, setMachines] = useState<{ name: string; build?: string }[]>([]);
+  useEffect(() => { void app.request("machine_list", {}).then((r) => setMachines(r.machines ?? [])).catch((e) => setError((e as Error).message)); }, []);
   const set = (p: Partial<CreateForm>) => setF((x) => ({ ...x, ...p }));
   const submit = async () => {
     const r = buildCreate(f);
@@ -120,6 +122,7 @@ function CreateDialog({ onClose, onCreated }: { onClose(): void; onCreated(id: s
   return (
     <Dialog title="New automation" onClose={onClose} wide>
       <label className="field"><span>Name</span><input aria-label="Name" value={f.name} onChange={(e) => set({ name: e.target.value })} /></label>
+      <label className="field"><span>Machine</span><select aria-label="Automation machine" value={f.machine ?? "local"} onChange={(e) => set({ machine: e.target.value, workingDirectory: "" })}><option value="local">Local</option>{machines.map((m) => <option key={m.name} value={m.name} disabled={!m.build}>{m.name}</option>)}</select></label>
       <div className="field"><span>Trigger</span>
         <div className="seg"><button className={f.trigger === "schedule" ? "on" : ""} onClick={() => set({ trigger: "schedule" })}>Schedule</button><button className={f.trigger === "webhook" ? "on" : ""} onClick={() => set({ trigger: "webhook" })}>Webhook</button></div>
       </div>
@@ -130,7 +133,7 @@ function CreateDialog({ onClose, onCreated }: { onClose(): void; onCreated(id: s
         </div>
       )}
       <div className="field"><span>Project folder</span>
-        <div className="dlg-row"><input aria-label="Project folder" value={f.workingDirectory} onChange={(e) => set({ workingDirectory: e.target.value })} /><button onClick={() => void bridge().dialog.pickFolder().then((p) => p && set({ workingDirectory: p }))}>Browse</button></div>
+        <div className="dlg-row"><input aria-label="Project folder" value={f.workingDirectory} onChange={(e) => set({ workingDirectory: e.target.value })} />{(!f.machine || f.machine === "local") && <button onClick={() => void bridge().dialog.pickFolder().then((p) => p && set({ workingDirectory: p }))}>Browse</button>}</div>
       </div>
       <label className="field"><span>Instructions</span><textarea rows={6} aria-label="Instructions" value={f.instructions} onChange={(e) => set({ instructions: e.target.value })} placeholder="What should the agent do each time this runs?" /></label>
       {error && <div className="error-text" role="alert">{error}</div>}
@@ -172,6 +175,7 @@ export function AutomationDetail({ id, go }: { id: string; go(r: string): void }
         <dt>Last run</dt><dd>{when(x.lastRunAt)}{x.lastRunStatus ? ` (${x.lastRunStatus})` : ""}</dd>
         <dt>Next run</dt><dd>{x.paused ? "Paused" : when(x.nextRunAt)}</dd>
         <dt>Runs</dt><dd>{x.runCount}</dd>
+        <dt>Machine</dt><dd>{x.machine ?? "Local"}</dd>
         {x.workingDirectory && <><dt>Folder</dt><dd className="mono">{x.workingDirectory}</dd></>}
       </dl>
       <VisualPanel id={id} runs={runs} />

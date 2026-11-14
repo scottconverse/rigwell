@@ -34,18 +34,23 @@ import { handleSecretsMethod } from "../secrets/methods.ts";
 import { SecretsError, redactSecrets, resolveEnvironment, type ResolvedEnvironment } from "../secrets/store.ts";
 import { RewindError, rewindSession } from "../snapshots/index.ts";
 import { automationSetupParams } from "../automations/setup.ts";
+import type { RpcClient } from "../sdk/client.ts";
+import { RemoteSessionStore } from "../machines/sessions.ts";
 
 /** Sessions whose client went away while a prompt was open: kept for a reconnecting load_session (spec 3.1.5 pending lists). */
 const parked = new Map<string, { session: Session; files: SessionFiles; worktree?: SessionWorktree; timer: ReturnType<typeof setTimeout> }>();
 const parkMs = () => Number(process.env.RIGWELL_PARK_MS) || 30 * 60_000;
 
 export interface ConnectionOptions {
+  /** Injected SSH connection factory for fake-process acceptance; production uses the saved machine. */
+  connectMachine?: (name: string) => Promise<RpcClient>;
   codeProviderDeps?: CodeProviderDeps;
   reviewHostDeps?: import("../review/host.ts").ReviewHostDeps;
   /** Owned sessions publish committed user messages to their live transcript views. */
   notifyUserMessages?: boolean;
   /** An owned live session can have transcript/control views without another engine or replacing its host. */
   sharedSession?: (id: string) => { session: Session; alive(): boolean; subscribe(notify: (n: Record<string, unknown>) => void): () => void } | undefined;
+  sharedRemoteSession?: (id: string) => { machine: string; request(method: string, p: Record<string, unknown>): Promise<any>; alive(): boolean; subscribe(notify: (n: Record<string, unknown>) => void): () => void } | undefined;
   maxToolIds?: string[];
   beforeTurn?: import("../agent/session.ts").SessionDeps["beforeTurn"];
   onUsage?: import("../agent/session.ts").SessionDeps["onUsage"];
@@ -58,7 +63,7 @@ export interface ConnectionOptions {
   canPrompt: boolean;
   runtimeSettingsPath?: string;
   /** Values from exec flags; they override what initialize_session asks for. */
-  forced?: { autonomyLevel?: AutonomyLevel; skipPermissions?: boolean; modelId?: string };
+  forced?: { autonomyLevel?: AutonomyLevel; skipPermissions?: boolean; modelId?: string; machine?: string };
   retryBaseDelayMs?: number;
   /** Extra protocol methods (name without the prefix), e.g. the daemon's automation methods. */
   extraMethods?: Record<string, (p: Record<string, unknown>) => unknown>;
@@ -92,8 +97,15 @@ export function createConnection(write: (line: string) => void, opts: Connection
   let closed = false;
   let worktree: SessionWorktree | undefined;
   let shared: ReturnType<NonNullable<ConnectionOptions["sharedSession"]>>;
+  let sharedRemote: ReturnType<NonNullable<ConnectionOptions["sharedRemoteSession"]>>;
+  let sharedRemoteId: string | undefined;
   let unsubscribeShared: (() => void) | undefined;
   let reviews: import("../review/service.ts").ReviewService | undefined;
+  let remote: RpcClient | undefined, remoteName: string | undefined;
+  let openingRemote: Promise<RpcClient> | undefined, shuttingDown = false;
+  let remoteSessionId: string | undefined;
+  let remoteWorker: ReturnType<typeof import("../machines/mission-worker.ts").prepareMissionWorker> | undefined;
+  let remoteMember: import("../machines/member-role.ts").RemoteMemberRole | undefined;
 
   const peer: RpcPeer = new RpcPeer(write, (m, p) => handle(m, p), opts.log);
 
@@ -214,7 +226,8 @@ export function createConnection(write: (line: string) => void, opts: Connection
 
   function build(id: string, cwd: string, settings: SessionSettings, p: Record<string, unknown>, env: ReturnType<typeof environment>, override: ToolExecutionMode | undefined, restored?: { previousSessionId?: string; callingSessionId?: string; allowSubagentsInScripts?: boolean; messages: Message[]; tokenUsage?: any; deferred?: { loaded: string[]; announced: string[] }; archived?: Message[]; anchor?: string; todos?: any; title?: { value: string; manual: boolean } }) {
     // An org autonomy ceiling below high also rules out skip-permissions (it is the highest level of all).
-    const maxAutonomy = opts.maxAutonomy ? clampAutonomy(opts.maxAutonomy, env.s.maxAutonomyLevel) : env.s.maxAutonomyLevel;
+    const ownerCap = remoteMember?.maxAutonomy ?? opts.maxAutonomy;
+    const maxAutonomy = ownerCap ? clampAutonomy(ownerCap, env.s.maxAutonomyLevel) : env.s.maxAutonomyLevel;
     const skip = (opts.forced?.skipPermissions ?? p.skipPermissionsUnsafe === true) && autonomyAllowed("high", maxAutonomy);
     const f = files!;
     const hooksConfig = loadHooksConfig({ cwd, trustProject: env.trusted });
@@ -223,9 +236,14 @@ export function createConnection(write: (line: string) => void, opts: Connection
       id, cwd, settings,
       ...(sessionEnv ? { extraEnv: sessionEnv.env, redact: (t: string) => redactSecrets(t, sessionEnv.secrets) } : {}),
       resolveModel: (mid) => findModel(env.models, mid),
-      createAdapter: (model) => { opts.beforeModel?.(model); return createAdapter(model); }, streamWithRetry: streamWithRetry as any,
-      beforeTurn: opts.beforeTurn, onUsage: opts.onUsage, maxToolIds: opts.maxToolIds,
-      toolsFor: ((base) => (opts.wrapTools ? (o: Parameters<typeof toolsForSession>[0]) => opts.wrapTools!(base(o)) : base))(opts.extraTools ? (o: Parameters<typeof toolsForSession>[0]) => { const extra = opts.extraTools!(); const names = new Set(extra.map((t) => t.name)); return [...toolsForSession(o).filter((t) => !names.has(t.name)), ...extra]; } : toolsForSession), decide: opts.maxAutonomy && !autonomyAllowed("high", maxAutonomy)
+      createAdapter: (model) => { opts.beforeModel?.(model); remoteMember?.beforeModel(model); return createAdapter(model); }, streamWithRetry: streamWithRetry as any,
+      beforeTurn: remoteMember?.beforeTurn ?? opts.beforeTurn, onUsage: remoteMember?.onUsage ?? opts.onUsage, maxToolIds: remoteMember?.maxToolIds ?? opts.maxToolIds,
+      toolsFor: (o) => {
+        const extra = opts.extraTools?.() ?? [], names = new Set(extra.map((t) => t.name));
+        const base = [...toolsForSession(o).filter((t) => !names.has(t.name)), ...extra];
+        const wrapped = opts.wrapTools ? opts.wrapTools(base) : base;
+        return remoteWorker ? remoteWorker.wrap(wrapped) : remoteMember ? remoteMember.wrap(wrapped) : wrapped;
+      }, decide: ownerCap && !autonomyAllowed("high", maxAutonomy)
         ? (tool, input, ctx) => decide(tool, input, { ...ctx, interactionMode: ctx.interactionMode === "mission" ? "auto" : ctx.interactionMode })
         : decide, lists: env.lists,
       scriptToolModels: env.s.scriptToolModels, scriptLimits: env.s.scriptLimits,
@@ -302,7 +320,157 @@ export function createConnection(write: (line: string) => void, opts: Connection
   }
 
   async function handle(method: string, p: Record<string, unknown>): Promise<unknown> {
+    if (shuttingDown) throw new RpcError(ErrorCodes.SESSION_DISCONNECTED, "Connection is closing");
+    if (method === "load_session" && !session && !remote && !sharedRemote && typeof p.sessionId === "string") {
+      sharedRemote = opts.sharedRemoteSession?.(p.sessionId);
+      if (sharedRemote) { sharedRemoteId = p.sessionId; unsubscribeShared = sharedRemote.subscribe((n) => peer.notify(METHOD_PREFIX + "session_notification", { sessionId: p.sessionId, notification: n })); }
+    }
+    if (sharedRemote) {
+      if ((method === "load_session" && p.sessionId !== sharedRemoteId) || method === "initialize_session" || method === "start_automation_setup") throw new RpcError(ErrorCodes.CONFLICT, "This view belongs to one remote member");
+      if (closed || !sharedRemote.alive()) throw new RpcError(ErrorCodes.SESSION_DISCONNECTED, "The remote member owner has ended");
+      if (method === "close_session") { unsubscribeShared?.(); unsubscribeShared = undefined; closed = true; return {}; }
+      const result = await sharedRemote.request(method, p);
+      return method === "load_session" ? { ...result, machine: sharedRemote.machine } : result;
+    }
+    if (method === "initialize_session" || method === "load_session" || method === "start_automation_setup") {
+      if (opts.forced?.machine) p = { ...p, machine: opts.forced.machine };
+      if (remoteWorker) {
+        if (method === "start_automation_setup" || p.sessionId !== remoteWorker.dir.split(/[\\/]/).at(-1)) throw new RpcError(ErrorCodes.CONFLICT, "Owned worker cannot select another session");
+        p = { ...p, cwd: remoteWorker.cwd, interactionMode: "auto", autoRejectPermissionRequests: true, autonomyLevel: "high", skipPermissionsUnsafe: false };
+      }
+      if (remoteMember && (method === "start_automation_setup" || p.sessionId !== remoteMember.sessionId)) throw new RpcError(ErrorCodes.CONFLICT, "Owned member cannot select another session");
+      if (method === "load_session" && p.machine === undefined && typeof p.sessionId === "string" && !findSession(p.sessionId)) {
+        const saved = new RemoteSessionStore().get(p.sessionId); if (saved) p = { ...p, machine: saved.machine, cwd: saved.cwd };
+      }
+      if (p.machine !== undefined && (typeof p.machine !== "string" || !p.machine)) throw new RpcError(ErrorCodes.INVALID_PARAMS, "machine must be a saved machine name");
+      if (typeof p.machine === "string" && !["local", "default"].includes(p.machine)) {
+        if (session || remote || openingRemote) throw new RpcError(ErrorCodes.CONFLICT, "This connection already selected a session machine");
+        if (opts.maxAutonomy || opts.maxToolIds || opts.beforeTurn) throw new RpcError(ErrorCodes.INVALID_PARAMS, "Owned member sessions require the constrained remote member service");
+        remoteName = p.machine;
+        openingRemote = (opts.connectMachine ?? (async (name) => (await import("../machines/bootstrap.ts")).connectMachine(name, { log: opts.log })))(remoteName);
+        try {
+          remote = await openingRemote;
+          if (shuttingDown) { await remote.close(); throw new RpcError(ErrorCodes.SESSION_DISCONNECTED, "Connection closed during SSH startup"); }
+          remote.onNotification = (m, params) => {
+            const n = params.notification;
+            if (remoteSessionId && ["session_title_updated", "agent_turn_completed"].includes(n?.type)) {
+              const store = new RemoteSessionStore(), saved = store.get(remoteSessionId);
+              if (saved) store.update({ ...saved, updatedAt: new Date().toISOString(), ...(n?.type === "session_title_updated" && typeof n.title === "string" ? { title: n.title } : {}) });
+            }
+            opts.onNotification?.(undefined, n ?? {}); peer.notify(METHOD_PREFIX + m, params);
+          };
+          remote.onRequest = (m, params) => opts.canPrompt ? peer.request(METHOD_PREFIX + m, params) : { selectedOption: "cancel", cancelled: true, answers: [], trust: false };
+        } catch (e) { remote = undefined; remoteName = undefined; throw e; }
+        finally { openingRemote = undefined; }
+      }
+    }
+    if (openingRemote) await openingRemote;
+    if (remote) {
+      if (p.machine !== undefined && p.machine !== remoteName) throw new RpcError(ErrorCodes.CONFLICT, "A connection cannot change its machine");
+      const { machine: _machine, ...params } = p;
+      if (!opts.canPrompt && ["initialize_session", "load_session"].includes(method)) params.autoRejectPermissionRequests = true;
+      if (["initialize_session", "load_session"].includes(method)) {
+        if (opts.forced?.autonomyLevel) params.autonomyLevel = opts.forced.autonomyLevel;
+        if (opts.forced?.modelId) params.modelId = opts.forced.modelId;
+        if (opts.forced?.skipPermissions) params.skipPermissionsUnsafe = true;
+      }
+      const result = await remote.request(method, params);
+      if (["initialize_session", "load_session", "start_automation_setup"].includes(method) && typeof result?.sessionId === "string") {
+        if (findSession(result.sessionId)) throw new RpcError(ErrorCodes.CONFLICT, "Remote session id collides with a local session");
+        remoteSessionId = result.sessionId;
+        const store = new RemoteSessionStore(), saved = store.get(remoteSessionId!);
+        store.update({ sessionId: remoteSessionId!, machine: remoteName!, cwd: result.cwd ?? params.cwd ?? saved?.cwd, title: result.title ?? params.title ?? saved?.title ?? "Untitled", updatedAt: new Date().toISOString(), pinned: saved?.pinned ?? false, archivedAt: saved?.archivedAt ?? null, isSubagent: false, hasUserVisibleMessages: saved?.hasUserVisibleMessages ?? method === "load_session" });
+      } else if (method === "fork_session" && typeof result?.newSessionId === "string" && remoteSessionId) {
+        const store = new RemoteSessionStore(), saved = store.get(remoteSessionId);
+        if (saved) store.update({ ...saved, sessionId: result.newSessionId, updatedAt: new Date().toISOString(), pinned: false, archivedAt: null });
+      } else if (remoteSessionId) {
+        const store = new RemoteSessionStore(), saved = store.get(remoteSessionId);
+        if (saved) store.update({ ...saved, updatedAt: new Date().toISOString(), ...(method === "add_user_message" ? { hasUserVisibleMessages: true } : {}), ...(method === "rename_session" && typeof p.title === "string" ? { title: p.title } : {}), ...(method === "pin_session" ? { pinned: p.pinned === true } : {}), ...(method === "archive_session" ? { archivedAt: p.archived ? new Date().toISOString() : null } : {}) });
+      }
+      return ["initialize_session", "load_session", "start_automation_setup"].includes(method) ? { ...result, machine: remoteName } : result;
+    }
     switch (method) {
+      case "prepare_workstream_member": {
+        if (session || remoteWorker || remoteMember) throw new RpcError(ErrorCodes.CONFLICT, "Member role must be selected before opening a session");
+        remoteMember = new (await import("../machines/member-role.ts")).RemoteMemberRole(p, peer);
+        return {};
+      }
+      case "machine_workspace_info": {
+        if (typeof p.cwd !== "string" || !p.cwd) throw new RpcError(ErrorCodes.INVALID_PARAMS, "cwd is required");
+        const cwd = resolve(p.cwd);
+        if (!existsSync(cwd)) throw new RpcError(ErrorCodes.INVALID_PARAMS, "Remote working directory does not exist");
+        return { cwd, repoRoot: await (await import("../worktree/git.ts")).repoTopLevel(cwd) };
+      }
+      case "cleanup_owned_member_worktree": {
+        if (!remoteMember || !closed || !session) throw new RpcError(ErrorCodes.CONFLICT, "Close the owned member before cleanup");
+        if (!worktree) return { removed: false, worktreeKept: false };
+        const manager = worktree.manager, wt = await manager.get(worktree.info.path);
+        if (!wt) return { removed: false, worktreeKept: false };
+        if (!await manager.isSafeToRemove(wt)) return { removed: false, worktreeKept: true };
+        await manager.remove(wt.path);
+        return { removed: true, worktreeKept: false };
+      }
+      case "watch_owned_member_files": {
+        if (!remoteMember || !worktree || closed) throw new RpcError(ErrorCodes.CONFLICT, "No active owned member worktree");
+        remoteMember.watchFiles(p.id, p.glob, worktree.info.path, opts.log); return {};
+      }
+      case "unwatch_owned_member_files": {
+        if (!remoteMember || typeof p.id !== "string") throw new RpcError(ErrorCodes.INVALID_PARAMS, "Invalid member watch");
+        remoteMember.unwatch(p.id); return {};
+      }
+      case "owned_member_message": {
+        if (!remoteMember) throw new RpcError(ErrorCodes.CONFLICT, "No owned member");
+        const um = userMessageFrom(p);
+        if (p.placement !== undefined && !["now", "end_of_loop", "end_of_turn"].includes(p.placement as string)) throw new RpcError(ErrorCodes.INVALID_PARAMS, "Invalid member message priority");
+        need().addUserMessage(um.text, typeof p.messageId === "string" ? p.messageId : undefined, typeof p.userMessageSource === "string" ? p.userMessageSource : undefined, { placement: p.placement as "now" | "end_of_loop" | "end_of_turn" | undefined });
+        return {};
+      }
+      case "prepare_mission_worker": {
+        if (session || remoteWorker) throw new RpcError(ErrorCodes.CONFLICT, "Worker role must be selected before opening a session");
+        const { checkFeaturesJson } = await import("../missions/store.ts");
+        const invalid = checkFeaturesJson(JSON.stringify({ features: [p.feature] }));
+        if (invalid) throw new RpcError(ErrorCodes.INVALID_PARAMS, invalid);
+        remoteWorker = (await import("../machines/mission-worker.ts")).prepareMissionWorker(p, (input) => peer.request(METHOD_PREFIX + "owned_mission_tool", { sessionId: p.sessionId, input }));
+        const { workerPrompt } = await import("../missions/runner.ts");
+        return { dir: remoteWorker.dir, cwd: remoteWorker.cwd, prompt: workerPrompt(remoteWorker.dir, p.feature as import("../missions/store.ts").Feature, p.sessionId as string, remoteWorker.cwd, typeof p.extraMessage === "string" ? p.extraMessage : undefined) };
+      }
+      case "mission_worker_verify_commit": {
+        if (!remoteWorker) throw new RpcError(ErrorCodes.CONFLICT, "No owned mission worker");
+        if (typeof p.repo !== "string" || typeof p.commit !== "string" || !/^[a-fA-F0-9]{4,64}$/.test(p.commit)) return false;
+        const { execFileSync } = await import("node:child_process");
+        try { execFileSync("git", ["-C", p.repo, "cat-file", "-e", `${p.commit}^{commit}`], { stdio: "ignore", timeout: 5000, windowsHide: true }); return true; } catch { return false; }
+      }
+      case "mission_worker_library_snapshot": {
+        if (!remoteWorker || p.sessionId !== remoteWorker.dir.split(/[\\/]/).at(-1)) throw new RpcError(ErrorCodes.CONFLICT, "No matching owned mission worker");
+        const { missionPlanFiles } = await import("../machines/mission-worker.ts");
+        return Object.fromEntries(Object.entries(missionPlanFiles(remoteWorker.dir)).filter(([path]) => path.startsWith("library/")));
+      }
+      case "owned_session_snapshot": {
+        const s = need(); return { ...sessionResult(), cwd: s.cwd, messages: s.uiMessages(), tokenUsage: s.tokenUsage, isAgentLoopInProgress: s.isRunning, workingState: s.workingState, ...pendingLists(s), availableModels: listModelInfo(environment(s.cwd).models) };
+      }
+      case "machine_list": {
+        const { MachineStore } = await import("../machines/store.ts");
+        return { machines: new MachineStore().list() };
+      }
+      case "machine_add": {
+        const { MachineStore, machineDefinition } = await import("../machines/store.ts");
+        return { machine: new MachineStore().save(machineDefinition(p)) };
+      }
+      case "machine_bootstrap": {
+        if (typeof p.name !== "string") throw new RpcError(ErrorCodes.INVALID_PARAMS, "name is required");
+        return { machine: await (await import("../machines/bootstrap.ts")).bootstrapMachine(p.name) };
+      }
+      case "machine_models": {
+        if (typeof p.name !== "string") throw new RpcError(ErrorCodes.INVALID_PARAMS, "name is required");
+        const client = await (opts.connectMachine ?? (async (name) => (await import("../machines/bootstrap.ts")).connectMachine(name)))(p.name);
+        try { return await client.request("list_models"); } finally { await client.close(); }
+      }
+      case "prepare_automation_workspace": {
+        const paths = (await import("../machines/automation-workspace.ts")).automationWorkspace(p.automationId, p.cwd);
+        const env = environment(paths.cwd);
+        return { ...paths, models: listModelInfo(env.models), defaultModel: env.s.sessionDefaultSettings?.model ?? env.models[0]?.id };
+      }
+      case "machine_runtime_info": return (await import("../machines/runtime-info.ts")).machineRuntimeInfo();
       case "start_automation_setup": {
         // Guided "create by chatting" (spec 16.8): a normal session with the setup block added to its system prompt.
         if (typeof p.cwd !== "string" || !p.cwd) throw new RpcError(ErrorCodes.INVALID_PARAMS, "cwd is required");
@@ -379,7 +547,13 @@ export function createConnection(write: (line: string) => void, opts: Connection
         }
         // A session kept alive for a client that went away: adopt it. Its open prompts are listed below; answering
         // one (rigwell.answer_request) resolves the wait the agent is still in.
-        const live = parked.get(id);
+        let live = parked.get(id);
+        if (live && remoteMember) {
+          // Reconnecting owners need fresh admission/usage hooks bound to their SSH channel.
+          clearTimeout(live.timer); parked.delete(id); live.session.interrupt(true);
+          await live.session.idle(); await live.session.stopBackgroundJobs(); await live.session.end("other"); live.worktree?.release();
+          live = undefined;
+        }
         if (live) {
           clearTimeout(live.timer);
           parked.delete(id);
@@ -448,6 +622,10 @@ export function createConnection(write: (line: string) => void, opts: Connection
         });
         return {};
       }
+      case "settle_session": {
+        await need().settled();
+        return {};
+      }
       case "answer_request": {
         // The reconnecting client answers a re-shown prompt (load_session pendingPermissions / pendingAskUserRequests).
         const s = need();
@@ -477,15 +655,19 @@ export function createConnection(write: (line: string) => void, opts: Connection
       }
       case "list_sessions": {
         const limit = typeof p.limit === "number" && p.limit > 0 ? Math.floor(p.limit) : undefined;
-        return { sessions: listSessionEntries({ cwd: typeof p.cwd === "string" ? resolve(p.cwd) : undefined, includeArchived: p.includeArchived === true, includeBtwForks: p.includeBtwForks === true, limit }) };
+        const local = listSessionEntries({ cwd: typeof p.cwd === "string" ? resolve(p.cwd) : undefined, includeArchived: p.includeArchived === true, includeBtwForks: p.includeBtwForks === true });
+        const remote = new RemoteSessionStore().list().filter((r) => !r.isSubagent && (!p.cwd || r.cwd === p.cwd) && (p.includeArchived === true || !r.archivedAt) && r.hasUserVisibleMessages);
+        const rows = [...local, ...remote].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt));
+        return { sessions: limit ? rows.slice(0, limit) : rows };
       }
       case "search_sessions": {
         if (typeof p.query !== "string" || !p.query.trim()) throw new RpcError(ErrorCodes.INVALID_PARAMS, "query must be a non-empty string");
         if (p.mode !== undefined && p.mode !== "lexical" && p.mode !== "semantic") throw new RpcError(ErrorCodes.INVALID_PARAMS, "mode must be lexical or semantic");
         return { hits: await searchSessions(p.query, p.mode ?? "lexical", { cwd: typeof p.cwd === "string" ? resolve(p.cwd) : undefined, includeArchived: p.includeArchived === true, limit: typeof p.limit === "number" ? p.limit : undefined }) };
       }
-      case "interrupt_session": need().interrupt(); return {};
+      case "interrupt_session": need().interrupt(p.discardQueuedMessages === true); return {};
       case "close_session": {
+        remoteMember?.close();
         if (shared) { unsubscribeShared?.(); unsubscribeShared = undefined; closed = true; return {}; }
         if (session) {
           session.interrupt(true);
@@ -665,6 +847,11 @@ export function createConnection(write: (line: string) => void, opts: Connection
     get session() { return session; },
     get closed() { return closed; },
     async shutdown(o: { park?: boolean } = {}) {
+      shuttingDown = true;
+      remoteMember?.close();
+      if (openingRemote) { try { await openingRemote; } catch {} }
+      if (remote) { await remote.close(); peer.end(); return; }
+      if (sharedRemote) { unsubscribeShared?.(); unsubscribeShared = undefined; peer.end(); return; }
       if (shared) { unsubscribeShared?.(); unsubscribeShared = undefined; peer.end(); return; }
       // The client went away while a prompt is open: keep the session for a reconnecting load_session.
       if (o.park && session && !closed && session.isRunning && session.pendingPrompts().length) {

@@ -15,6 +15,7 @@
     "desktop": "bun run build.ts && bun run packaging/stage.ts && electron-builder --config electron-builder.yml"
   },
   "dependencies": {
+    "@novnc/novnc": "1.7.0",
     "@tiptap/core": "3.32.2",
     "@tiptap/extension-document": "3.32.2",
     "@tiptap/extension-hard-break": "3.32.2",

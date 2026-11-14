@@ -42,7 +42,7 @@ const notFound = (e: unknown) => new RpcError(ErrorCodes.ENTITY_NOT_FOUND, (e as
 const str = (p: Params, k: string) => (typeof p[k] === "string" && p[k] ? (p[k] as string) : undefined);
 const need = (p: Params, k: string) => str(p, k) ?? (() => { throw bad(`${k} is required`); })();
 
-const FM_KEYS = ["name", "schedule", "description", "model", "reasoningEffort", "workingDirectory", "paused", "tags", "targetSessionId", "trigger", "timezone", "autonomy", "payloadRegex", "maxRunsPerHour"] as const;
+const FM_KEYS = ["name", "schedule", "description", "model", "reasoningEffort", "workingDirectory", "machine", "paused", "tags", "targetSessionId", "trigger", "timezone", "autonomy", "payloadRegex", "maxRunsPerHour"] as const;
 
 export function createAutomationService(opts: ServiceOptions = {}) {
   const runner = opts.runner ?? createHeadlessRunner({ log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs });
@@ -74,7 +74,7 @@ export function createAutomationService(opts: ServiceOptions = {}) {
     consecutiveFailures: a.state.consecutiveFailures ?? 0,
     nextRunAt: mgr.nextRunAt(a), lastRunAt: a.state.lastRunAt, lastRunId: a.state.lastRunId,
     lastRunSessionId: a.state.lastRunSessionId, lastRunStatus: a.state.lastRunStatus, runCount: a.state.runCount,
-    retryAt: a.state.retry?.at, instructions: a.body,
+    retryAt: a.state.retry?.at, instructions: a.body, machine: a.fm.machine, workingDirectory: a.fm.workingDirectory,
     ...(a.fm.trigger === "webhook" ? { webhookPath: `/hooks/${a.id}`, webhookPort: webhook?.port } : {}),
   });
 

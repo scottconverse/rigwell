@@ -5,9 +5,7 @@ import { rigwellHome } from "../storage/paths.ts";
 import { createConnection, type ConnectionOptions } from "../daemon/connection.ts";
 import { startDaemon, defaultSocketPath } from "../daemon/daemon.ts";
 import type { AutonomyLevel } from "../core/types.ts";
-import { findSession } from "../storage/transcript.ts";
-import { forkSession } from "../storage/fork.ts";
-import { listSessionEntries } from "../storage/session-list.ts";
+import { routedSessionList, forkRoutedSession } from "../machines/resume.ts";
 import { closeAllBrowsers } from "../browser/tools.ts";
 
 const log = (m: string) => process.stderr.write(m + "\n");
@@ -16,9 +14,11 @@ const USAGE = `Usage:
   rigwell exec --input-format stream-jsonrpc --output-format stream-jsonrpc [options]
   rigwell exec [options] "<prompt>"
   rigwell sessions search <query> [--semantic] [--limit <n>] [--cwd <dir>] [--json]
-  rigwell daemon [--socket <path>] [--ws-port <n>] [--no-ws]
+  rigwell daemon [--socket <path>] [--ws-port <n>] [--no-ws] [--no-automations]
+  rigwell daemon --stdio [--socket <path>]   bridge to an already running daemon
   rigwell [tui] [options]        interactive terminal UI (default when no subcommand is given)
   rigwell eval <run|report|tasks> [options]   (see rigwell eval --help)
+  rigwell machine add <name> <user@host> | bootstrap <name>
 
 Sign in with an account plan (OAuth, see docs/auth.md): rigwell auth login <name> [--device] | logout <name> | status
 Credentials: rigwell credential set <name> (value on stdin) | delete <name>; use apiKey "keychain:<name>" in customModels.
@@ -28,6 +28,7 @@ Options for exec:
   --skip-permissions-unsafe    run every tool call without asking (not with --auto)
   -m, --model <id>             model id, e.g. custom:My-Model-0
   --cwd <dir>                  working directory (default: current directory)
+  --machine <name>             run on a saved, bootstrapped SSH machine
   -s, --session-id <id>        continue an existing session (prompt mode)
   -r, --resume [id]            resume a session; without an id, print a numbered list of sessions and exit
                                (an id is a session id of 8 or more characters; a prompt is never taken for one)
@@ -48,6 +49,7 @@ interface ExecArgs {
   inputFormat?: string; outputFormat?: string; auto?: AutonomyLevel; skip: boolean;
   model?: string; cwd: string; sessionId?: string; settings?: string; prompt?: string;
   resume?: string | true; fork?: string; useSpec: boolean; specModel?: string; specEffort?: string;
+  machine?: string;
 }
 
 function fail(msg: string): never { log(`rigwell: ${msg}`); process.exit(2); }
@@ -68,7 +70,8 @@ function parseExec(argv: string[]): ExecArgs {
       }
       case "--skip-permissions-unsafe": a.skip = true; break;
       case "-m": case "--model": a.model = val(); break;
-      case "--cwd": a.cwd = resolve(val()); break;
+      case "--cwd": a.cwd = val(); break;
+      case "--machine": a.machine = val(); break;
       case "-s": case "--session-id": a.sessionId = val(); break;
       case "-r": case "--resume": {
         const next = argv[i + 1];
@@ -88,13 +91,15 @@ function parseExec(argv: string[]): ExecArgs {
     }
   }
   if (a.auto && a.skip) fail("--auto and --skip-permissions-unsafe cannot be used together");
+  if (a.machine && !["local", "default"].includes(a.machine)) { if (!argv.includes("--cwd")) a.cwd = "."; }
+  else a.cwd = resolve(a.cwd);
   if (rest.length) a.prompt = rest.join(" ");
   return a;
 }
 
 /** `-r` without an id: a numbered list of sessions (newest first, pinned first), from list_sessions. */
-function printSessionList(cwd: string) {
-  const rows = listSessionEntries({ cwd });
+async function printSessionList(cwd: string, machine?: string) {
+  const rows = await routedSessionList(cwd, machine);
   if (!rows.length) { process.stdout.write("No sessions to resume in this folder.\n"); return; }
   rows.forEach((r, i) => {
     const when = r.updatedAt.replace("T", " ").slice(0, 16);
@@ -104,15 +109,13 @@ function printSessionList(cwd: string) {
 }
 
 /** Resolves --resume / --fork / -s to the session id to load, or exits after printing the list. */
-function sessionToLoad(a: ExecArgs): string | undefined {
-  if (a.resume === true) { printSessionList(a.cwd); process.exit(0); }
+async function sessionToLoad(a: ExecArgs): Promise<string | undefined> {
+  if (a.resume === true) { await printSessionList(a.cwd, a.machine); process.exit(0); }
   const id = (typeof a.resume === "string" ? a.resume : undefined) ?? a.sessionId;
   if (a.fork) {
-    const src = findSession(a.fork, a.cwd);
-    if (!src) fail(`session not found: ${a.fork}`);
-    const dest = forkSession(src!);
-    log(`[fork] ${a.fork} -> ${dest.id}`);
-    return dest.id;
+    const id = await forkRoutedSession(a.fork, a.cwd, a.machine);
+    log(`[fork] ${a.fork} -> ${id}`);
+    return id;
   }
   return id;
 }
@@ -120,6 +123,7 @@ function sessionToLoad(a: ExecArgs): string | undefined {
 /** initialize_session params for the spec flags. */
 function specParams(a: ExecArgs): Record<string, unknown> {
   return {
+    ...(a.machine ? { machine: a.machine } : {}),
     ...(a.useSpec ? { interactionMode: "spec" } : {}), ...(a.specModel ? { specModeModelId: a.specModel } : {}),
     ...(a.specEffort ? { specModeReasoningEffort: a.specEffort } : {}),
   };
@@ -147,7 +151,7 @@ async function execJsonRpc(a: ExecArgs) {
   }
   const conn = createConnection((line) => process.stdout.write(line), {
     canPrompt: true, runtimeSettingsPath: a.settings, log,
-    forced: { autonomyLevel: a.auto, skipPermissions: a.skip || undefined, modelId: a.model },
+    forced: { autonomyLevel: a.auto, skipPermissions: a.skip || undefined, modelId: a.model, machine: a.machine },
   });
   cleanupOnSignal(() => conn.shutdown());
   await readStdin((s) => conn.peer.feed(s));
@@ -165,7 +169,7 @@ async function execPrompt(a: ExecArgs) {
   let lastReason = "";
   const opts: ConnectionOptions = {
     canPrompt: false, runtimeSettingsPath: a.settings, log,
-    forced: { autonomyLevel: a.auto ?? "off", skipPermissions: a.skip || undefined, modelId: a.model },
+    forced: { autonomyLevel: a.auto ?? "off", skipPermissions: a.skip || undefined, modelId: a.model, machine: a.machine },
   };
   const conn = createConnection((line) => {
     const m = JSON.parse(line);
@@ -194,21 +198,23 @@ async function execPrompt(a: ExecArgs) {
       waiters.set(id, res);
       conn.peer.feed(JSON.stringify({ jsonrpc: "2.0", type: "request", id, method: `rigwell.${method}`, params }) + "\n");
     });
-  const loadId = sessionToLoad(a);
+  const loadId = await sessionToLoad(a);
   const init = loadId
-    ? await call("load_session", { sessionId: loadId, cwd: a.cwd })
+    ? await call("load_session", { sessionId: loadId, cwd: a.cwd, ...(a.machine ? { machine: a.machine } : {}) })
     : await call("initialize_session", { machineId: "default", cwd: a.cwd, ...specParams(a) });
-  if (init.error) fail(init.error.message);
+  if (init.error) { await conn.shutdown(); fail(init.error.message); }
   log(`[session] ${init.result.sessionId} model=${init.result.settings.modelId} autonomy=${init.result.settings.autonomyLevel}`);
   const added = await call("add_user_message", { text: a.prompt });
-  if (added.error) fail(added.error.message);
+  if (added.error) { await conn.shutdown(); fail(added.error.message); }
   let reason = await finished;
   // Background jobs may still be running; wait for them and for the wake turns they cause.
-  await conn.session?.settled();
+  const settled = await call("settle_session", {});
+  if (settled.error) { await conn.shutdown(); fail(settled.error.message); }
   reason = lastReason || reason;
   process.stdout.write("\n");
   await call("close_session", { reason: "other" });
   log(`[turn] ${reason}`);
+  await conn.shutdown();
   process.exit(reason === "completed" ? 0 : 1);
 }
 
@@ -239,7 +245,7 @@ async function tui(argv: string[]) {
   if (a.auto) sessionParams.autonomyLevel = a.auto;
   if (a.skip) sessionParams.skipPermissionsUnsafe = true;
   Object.assign(sessionParams, specParams(a));
-  const resumeSessionId = sessionToLoad(a);
+  const resumeSessionId = await sessionToLoad(a);
   const connection = url ? `WebSocket ${url}` : socket || argv.includes("--daemon") ? `daemon socket ${socket ? resolve(socket) : defaultSocketPath()}` : "in-process";
   const code = await runTui({ cwd: a.cwd, makeTransport, sessionParams, resumeSessionId, homeDir: rigwellHome(), log, connection, settingsPath: a.settings });
   process.exit(code);
@@ -249,7 +255,7 @@ async function main() {
   const [cmd, ...argv] = process.argv.slice(2);
   if (cmd === "exec") {
     const a = parseExec(argv);
-    if (a.resume === true && a.prompt === undefined) { printSessionList(a.cwd); process.exit(0); }
+    if (a.resume === true && a.prompt === undefined) { await printSessionList(a.cwd, a.machine); process.exit(0); }
     if (a.prompt !== undefined && !a.inputFormat) return execPrompt(a);
     return execJsonRpc(a);
   }
@@ -265,6 +271,7 @@ async function main() {
     process.exit(0);
   }
   if (cmd === "auth") process.exit(await (await import("../auth/cli.ts")).authMain(argv));
+  if (cmd === "machine") return (await import("../machines/cli.ts")).machineMain(argv);
   if (cmd === "sessions") {
     const [sub, ...rest] = argv;
     if (sub !== "search") fail("usage: rigwell sessions search <query> [--semantic] [--limit <n>] [--cwd <dir>] [--json]");
@@ -292,10 +299,11 @@ async function main() {
   if (cmd === "daemon") {
     const i = argv.indexOf("--socket");
     const path = i >= 0 ? resolve(argv[i + 1] ?? fail("--socket needs a value")) : defaultSocketPath();
+    if (argv.includes("--stdio")) return (await import("../machines/stdio.ts")).bridgeDaemonStdio(path);
     const w = argv.indexOf("--ws-port");
     const wsPort = w >= 0 ? Number(argv[w + 1]) : undefined;
     if (w >= 0 && !Number.isInteger(wsPort)) fail("--ws-port needs a port number");
-    const d = await startDaemon({ socketPath: path, log, ws: argv.includes("--no-ws") ? false : { port: wsPort } });
+    const d = await startDaemon({ socketPath: path, log, ws: argv.includes("--no-ws") ? false : { port: wsPort }, ...(argv.includes("--no-automations") ? { automations: false } : {}), ...(argv.includes("--no-advertise") ? { advertise: false } : {}), ...(argv.includes("--no-background-services") ? { backgroundServices: false } : {}) });
     log(`[daemon] listening on ${d.socketPath}`);
     if (d.wsUrl) log(`[daemon] WebSocket on ${d.wsUrl} (token in ${join(rigwellHome(), "daemon.json")})`);
     const stop = () => { void d.stop().then(() => process.exit(0), (e) => { log(`rigwell: shutdown failed: ${(e as Error).message}`); process.exit(1); }); };

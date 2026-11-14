@@ -21,6 +21,7 @@ import { MissionStore, missionDirFor, missionsRoot, type Feature } from "./store
 import { orchestratorTools, workerTools } from "./tools.ts";
 import { spawnWorkerSession, type WorkerSpawner } from "./worker.ts";
 import { WakeLock, systemLockSpawner, type LockSpawner } from "./wakelock.ts";
+import { RemoteSessionStore } from "../machines/sessions.ts";
 
 export * from "./store.ts";
 export { MissionRunner, DEFAULT_LIMITS } from "./runner.ts";
@@ -89,7 +90,7 @@ export function createMissionService(opts: MissionServiceOptions = {}) {
     };
     const savedSettings = (s: Session): MissionSettings => {
       const f = findSession(s.id, s.cwd);
-      return ((f && readSessionSettings(f)?.missionSettings) as MissionSettings | undefined) ?? {};
+      return { ...(loadSettings({ cwd: s.cwd }).settings.missions as MissionSettings ?? {}), ...((f && readSessionSettings(f)?.missionSettings) as MissionSettings | undefined) };
     };
     const modelExists = (s: Session, id: string) => !!findModel(resolveModels(loadSettings({ cwd: s.cwd }).settings), id);
 
@@ -103,9 +104,9 @@ export function createMissionService(opts: MissionServiceOptions = {}) {
           settings: () => savedSettings(s), tokenUsage: () => s.tokenUsage,
         },
         spawn, modelExists: (id) => modelExists(s, id),
-        workerWrap: (workerId) => (tools) => {
+        workerWrap: (workerId) => (tools, services) => {
           const wd = () => st.readState()?.workingDirectory || s.cwd;
-          return [...protectTools(tools, { role: "worker" }), ...workerTools({ sessionId: workerId, store: st, workingDirectory: wd })];
+          return [...protectTools(tools, { role: "worker" }), ...workerTools({ sessionId: workerId, store: st, workingDirectory: wd, ...services })];
         },
         // The store already reports state changes; the runner's own copies are dropped.
         notify: (n) => { if (n.type !== "mission_state_changed") conn.notify(n); },
@@ -115,7 +116,7 @@ export function createMissionService(opts: MissionServiceOptions = {}) {
           const wd = st.readState()?.workingDirectory || s.cwd;
           for (const id of ids) {
             const f = findSession(id, wd);
-            const u = f && (readSessionSettings(f)?.tokenUsage as TokenUsage | undefined);
+            const u = f ? readSessionSettings(f)?.tokenUsage as TokenUsage | undefined : new RemoteSessionStore().get(id)?.tokenUsage;
             if (u) for (const k of Object.keys(t) as (keyof TokenUsage)[]) t[k] += u[k] ?? 0;
           }
           return t;

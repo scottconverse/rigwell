@@ -30,13 +30,14 @@ const FIELDS = {
   model: { type: "string", description: "Model id for the runs. Leave out for the default." },
   reasoningEffort: { type: "string" },
   workingDirectory: { type: "string", description: "Folder the runs work in. Defaults to the automation's own folder." },
+  machine: { type: "string", description: "Saved remote machine name. Omit to run locally. Remote runs use that machine's settings and credentials." },
   timezone: { type: "string", description: "IANA zone the schedule is read in. Defaults to the machine zone." },
   autonomy: { type: "string", enum: ["off", "low", "medium", "high"], description: "Autonomy for runs (default high). Anything needing approval is denied." },
   trigger: { type: "string", enum: ["schedule", "webhook"] },
   targetSessionId: { type: "string", description: "Add each run's prompt to this existing session instead of starting a new one." },
 } as const;
 
-const FM_KEYS = ["name", "schedule", "description", "model", "reasoningEffort", "workingDirectory", "timezone", "autonomy", "trigger", "targetSessionId"] as const;
+const FM_KEYS = ["name", "schedule", "description", "model", "reasoningEffort", "workingDirectory", "machine", "timezone", "autonomy", "trigger", "targetSessionId"] as const;
 
 function pick(input: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};

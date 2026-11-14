@@ -1,5 +1,6 @@
 // Session list logic for the sidebar and Session Management (spec §14.3, §12.1). Pure functions, no DOM.
 export interface SessionRow {
+  machine?: string;
   id: string; title: string; cwd?: string; updatedAt: number;
   pinned?: boolean; archivedAt?: number | null; isSubagent?: boolean; hasUserVisibleMessages?: boolean;
 }
@@ -10,7 +11,7 @@ const asMs = (v: unknown): number => (typeof v === "number" ? v : typeof v === "
 export function normalizeSession(r: any): SessionRow {
   const archived = r.archivedAt == null ? null : asMs(r.archivedAt) || Date.now();
   return {
-    id: String(r.sessionId ?? r.id), title: String(r.title || "Untitled"), cwd: r.cwd, updatedAt: asMs(r.updatedAt),
+    id: String(r.sessionId ?? r.id), title: String(r.title || "Untitled"), cwd: r.cwd, machine: r.machine, updatedAt: asMs(r.updatedAt),
     pinned: r.pinned === true, archivedAt: archived, isSubagent: r.isSubagent === true, hasUserVisibleMessages: r.hasUserVisibleMessages !== false,
   };
 }

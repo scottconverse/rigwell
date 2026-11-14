@@ -2,7 +2,7 @@
 export interface AutomationRow {
   id: string; name: string; description?: string; isValid: boolean; invalidReason?: string; schedule?: string; timezone?: string; trigger: string;
   paused: boolean; status: string; nextRunAt?: number; lastRunAt?: number; lastRunStatus?: string; lastRunSessionId?: string; runCount: number;
-  instructions?: string; workingDirectory?: string; webhookPath?: string; webhookPort?: number;
+  instructions?: string; workingDirectory?: string; machine?: string; webhookPath?: string; webhookPort?: number;
 }
 export interface RunRow { runId: string; sessionId?: string; status: string; trigger: string; attempt: number; startedAt: number; finishedAt?: number; failureReason?: string; errorMessage?: string }
 
@@ -14,7 +14,7 @@ export const SCHEDULE_PRESETS: { id: string; label: string; value: string }[] = 
   { id: "custom", label: "Custom", value: "" },
 ];
 
-export interface CreateForm { name: string; preset: string; custom: string; instructions: string; workingDirectory: string; trigger: "schedule" | "webhook" }
+export interface CreateForm { name: string; preset: string; custom: string; instructions: string; workingDirectory: string; machine?: string; trigger: "schedule" | "webhook" }
 
 /** Validates the form; returns the create_automation params or an error message. */
 export function buildCreate(f: CreateForm): { params: Record<string, unknown> } | { error: string } {
@@ -23,6 +23,7 @@ export function buildCreate(f: CreateForm): { params: Record<string, unknown> } 
   if (!f.instructions.trim()) return { error: "Write the instructions the agent should follow." };
   const params: Record<string, unknown> = { name, instructions: f.instructions, trigger: f.trigger };
   if (f.workingDirectory.trim()) params.workingDirectory = f.workingDirectory.trim();
+  if (f.machine && f.machine !== "local") params.machine = f.machine;
   if (f.trigger === "schedule") {
     const preset = SCHEDULE_PRESETS.find((p) => p.id === f.preset);
     const schedule = preset && preset.id !== "custom" ? preset.value : f.custom.trim();

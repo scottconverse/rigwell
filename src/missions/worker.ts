@@ -6,8 +6,14 @@ import { findSession } from "../storage/transcript.ts";
 import { updateSessionSettings } from "../storage/session-settings.ts";
 import type { Message, TokenUsage, Tool } from "../core/types.ts";
 import { zeroUsage } from "../core/types.ts";
+import { spawnRemoteWorkerSession } from "../machines/remote-worker.ts";
 
 export interface WorkerRequest {
+  machine?: string;
+  missionDir?: string;
+  feature?: import("./store.ts").Feature;
+  extraMessage?: string;
+  connectMachine?: (name: string) => Promise<import("../sdk/client.ts").RpcClient>;
   sessionId: string;
   /** Reload this session instead of creating it (resume after a pause). */
   resume: boolean;
@@ -18,7 +24,7 @@ export interface WorkerRequest {
   missionId: string;
   role: "worker";
   /** Tool list rewrite for the worker's connection (role tools and file protection). */
-  wrapTools: (tools: Tool[]) => Tool[];
+  wrapTools: (tools: Tool[], services?: { workingDirectory?: () => string; verifyCommit(repo: string, commit: string): Promise<boolean> }) => Tool[];
   inactivityMs: number;
   startGraceMs: number;
   retryBaseDelayMs?: number;
@@ -68,6 +74,7 @@ export function skeleton(messages: Message[], max = 200): unknown[] {
 }
 
 export const spawnWorkerSession: WorkerSpawner = (req) => {
+  if (req.machine && !["local", "default"].includes(req.machine)) return spawnRemoteWorkerSession(req);
   let reqN = 0;
   let text = "";
   let errorMessage: string | undefined;

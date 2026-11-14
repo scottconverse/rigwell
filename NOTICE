@@ -6,3 +6,8 @@ This product includes protocol message shapes adapted from the type definitions 
 `@factory/droid-sdk` version 0.10.0, which is licensed under the Apache License, Version 2.0
 (https://www.apache.org/licenses/LICENSE-2.0). The shapes were read and adapted; the SDK code
 is not redistributed here.
+
+The desktop includes noVNC 1.7.0, copyright the noVNC authors, under MPL-2.0.
+The unmodified browser library source, author list and bundled dependency licenses
+are included in desktop/dist/third-party/novnc (also inside the packaged app).
+Upstream source: https://github.com/novnc/noVNC/tree/v1.7.0

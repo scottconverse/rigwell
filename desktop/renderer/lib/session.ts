@@ -36,6 +36,7 @@ export const trustAsks = new TrustAsks();
 export interface SideEntry { id: string; question: string; answer: string; status: "pending" | "streaming" | "complete" | "error"; createdAt: number; forkId?: string; promotedTo?: string }
 
 export interface SessionState {
+  machine?: string;
   phase: "connecting" | "ready" | "disconnected" | "error";
   error?: string;
   sessionId?: string;
@@ -59,6 +60,7 @@ const empty = (cwd: string): SessionState => ({
 });
 
 export type CreateOptions = {
+  machine?: string;
   cwd: string; title?: string; modelId?: string; autonomyLevel?: string; interactionMode?: string; reasoningEffort?: string;
   /** Run the session in its own git worktree (spec §18.1). */
   worktree?: boolean | { enabled: true; lifecycle?: "ephemeral" | "persistent"; setupProfile?: string };
@@ -92,10 +94,10 @@ export class SessionController extends Store<SessionState> {
   }
 
   /** Reattaches to a stored session (after a reload or a daemon restart). */
-  static async resume(sessionId: string, cwd: string, info?: { title?: string; pinned?: boolean; archived?: boolean }): Promise<SessionController> {
+  static async resume(sessionId: string, cwd: string, info?: { title?: string; pinned?: boolean; archived?: boolean; machine?: string }): Promise<SessionController> {
     const c = new SessionController(cwd);
     c.set({ sessionId, ...(info?.title ? { title: info.title } : {}), pinned: info?.pinned === true, archived: info?.archived === true });
-    await c.connect((conn) => conn.request("load_session", { sessionId, cwd }));
+    await c.connect((conn) => conn.request("load_session", { sessionId, cwd, ...(info?.machine ? { machine: info.machine } : {}) }));
     return c;
   }
 
@@ -109,7 +111,7 @@ export class SessionController extends Store<SessionState> {
       const r = await init(conn);
       const models = (r.availableModels ?? []).map(normalizeModel);
       this.set({
-        phase: "ready", sessionId: r.sessionId, cwd: r.cwd ?? this.state.cwd, items: fromMessages(r.session?.messages ?? []),
+        phase: "ready", sessionId: r.sessionId, machine: r.machine, cwd: r.cwd ?? this.state.cwd, items: fromMessages(r.session?.messages ?? []),
         settings: r.settings ?? {}, models, working: r.workingState ?? "idle",
         title: this.state.title,
       });
@@ -227,12 +229,12 @@ export class SessionController extends Store<SessionState> {
   // ---- missions (spec §15.1): the mode chip's Mission entry
   async enterMission(continueAnyway = false): Promise<{ entered: boolean; readiness?: any; modelSwitched?: string }> {
     const r = await this.request("enter_mission_mode", continueAnyway ? { continue: true } : {});
-    if (r.entered) {
+    if (r.entered && !this.state.machine) {
       // Worker and validator models from the Missions settings page become this session's missionSettings.
       try {
         const m = (await bridge().userSettings.get()).missions ?? {};
         const ms: Record<string, unknown> = {};
-        for (const k of ["workerModel", "workerReasoningEffort", "validationWorkerModel", "validationWorkerReasoningEffort", "skipScrutiny", "skipUserTesting"]) if (m[k] !== undefined) ms[k] = m[k];
+        for (const k of ["machine", "workerWorkingDirectory", "workerModel", "workerReasoningEffort", "validationWorkerModel", "validationWorkerReasoningEffort", "skipScrutiny", "skipUserTesting"]) if (m[k] !== undefined) ms[k] = m[k];
         if (Object.keys(ms).length) await this.request("update_session_settings", { missionSettings: ms });
       } catch { /* the defaults stay */ }
     }
@@ -258,6 +260,7 @@ export class SessionController extends Store<SessionState> {
   private attaching?: Promise<void>;
   /** Registers the browser pane with the daemon. `send` waits for this (briefly), so a Browser tool call never beats the attach. */
   attachBrowser(): Promise<void> {
+    if (this.state.machine) return Promise.resolve();
     return (this.attaching ??= (async () => {
       const url = await bridge().browser.cdpUrl(this.state.sessionId);
       if (url) await this.request("daemon.browser_attach", { cdpUrl: url }).catch(() => {});

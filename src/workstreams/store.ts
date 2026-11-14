@@ -21,6 +21,7 @@ export interface Workstream {
   settings: WorkstreamSettings;
 }
 export interface AgentEntry {
+  machine?: string;
   initialPrompt?: string;
   usageByModel?: Record<string, TokenUsage>;
   costKnown?: boolean;

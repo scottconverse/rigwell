@@ -33,6 +33,13 @@ const api = {
     onStatus: (cb: Cb<{ state: string; error?: string }>) => on("daemon:status", cb),
   },
   view: { set: (sessionId: string | null): Promise<void> => ipcRenderer.invoke("view:set", sessionId) },
+  remoteView: {
+    open: (machine: string, port: number, kind: "browser" | "desktop"): Promise<{ id: string; url?: string }> => ipcRenderer.invoke("remoteView:open", machine, port, kind),
+    receive: (id: string): Promise<void> => ipcRenderer.invoke("remoteView:receive", id),
+    send: (id: string, data: Uint8Array): Promise<void> => ipcRenderer.invoke("remoteView:send", id, data),
+    close: (id: string): Promise<void> => ipcRenderer.invoke("remoteView:close", id),
+    onData: (cb: Cb<{ id: string; data?: Uint8Array; closed?: boolean; error?: string }>) => on("remoteView:data", cb),
+  },
   settings: {
     get: (): Promise<unknown> => ipcRenderer.invoke("settings:get"),
     update: (patch: unknown): Promise<unknown> => ipcRenderer.invoke("settings:update", patch),

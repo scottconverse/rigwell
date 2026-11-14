@@ -37,7 +37,7 @@ function useController(sessionId: string): { ctl?: SessionController; error?: st
   useEffect(() => {
     if ((ctl && !down) || trying.current || a.daemon.state !== "running" || !cwd) return;
     trying.current = true;
-    SessionController.resume(sessionId, cwd, { title: row?.title, pinned: row?.pinned, archived: row?.archivedAt != null }).then((c) => { live.set(sessionId, c); setCtl(c); setError(undefined); }, (e) => setError((e as Error).message)).finally(() => { trying.current = false; });
+    SessionController.resume(sessionId, cwd, { title: row?.title, pinned: row?.pinned, archived: row?.archivedAt != null, machine: row?.machine }).then((c) => { live.set(sessionId, c); setCtl(c); setError(undefined); }, (e) => setError((e as Error).message)).finally(() => { trying.current = false; });
   }, [ctl, down, a.daemon.state, cwd, sessionId]);
   useEffect(() => { if (!cwd && a.daemon.state === "running" && !ctl) void app.refresh(); }, [cwd, a.daemon.state, ctl]);
   return { ctl, error };
@@ -116,6 +116,7 @@ function Loaded({ ctl }: { ctl: SessionController }) {
         <header className="session-head">
           <h1 title={state.cwd}>{state.title}</h1>
           <span className="muted cwd">{state.cwd}</span>
+          <span className="chip static" aria-label="Session machine">{state.machine ?? "Local"}</span>
           <span className="spacer" />
           {state.phase === "disconnected" && <span className="badge warn">Reconnecting</span>}
           <button aria-label="Toggle tools panel" onClick={() => setPaneOpen(!paneOpen)} title="Tools panel (Alt+Ctrl+B)">Tools</button>

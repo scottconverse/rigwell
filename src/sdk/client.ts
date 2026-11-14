@@ -6,6 +6,12 @@ export type IncomingRequestHandler = (method: string, params: Record<string, unk
 
 /** Request timeouts from spec §3.1.5 (ms). Methods not listed have none. */
 const TIMEOUTS: Record<string, number> = {
+  machine_runtime_info: 10_000,
+  prepare_automation_workspace: 30_000,
+  prepare_mission_worker: 30_000, mission_worker_verify_commit: 10_000, owned_session_snapshot: 30_000,
+  prepare_workstream_member: 30_000,
+  machine_workspace_info: 10_000, cleanup_owned_member_worktree: 30_000,
+  watch_owned_member_files: 10_000, unwatch_owned_member_files: 10_000,
   initialize_session: 60_000, load_session: 60_000, interrupt_session: 30_000, close_session: 30_000,
   update_session_settings: 30_000, compact_session: 240_000, fork_session: 30_000, list_tools: 30_000,
   list_models: 30_000, list_mcp_servers: 30_000, get_context_stats: 30_000,

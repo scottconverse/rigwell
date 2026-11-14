@@ -44,6 +44,7 @@ export interface PickOptionsRequest { toolCallId: string; title: string; hint?: 
 export interface PickOptionsAnswer { cancelled?: boolean; selectedIds: string[]; refresh?: boolean }
 
 export interface SessionOptions {
+  machine?: string;
   cwd?: string;
   machineId?: string;
   modelId?: string;
@@ -258,7 +259,7 @@ export class RigwellSession {
 
 function initParams(o: SessionOptions): Record<string, unknown> {
   const p: Record<string, unknown> = {
-    machineId: o.machineId ?? "default", cwd: o.cwd ?? process.cwd(), sessionOriginHint: "sdk", ...(o.initParams ?? {}),
+    machineId: o.machineId ?? "default", ...(o.machine ? { machine: o.machine } : {}), cwd: o.cwd ?? (o.machine ? "." : process.cwd()), sessionOriginHint: "sdk", ...(o.initParams ?? {}),
   };
   for (const k of ["modelId", "reasoningEffort", "interactionMode", "autonomyLevel", "systemPrompt", "title", "sessionId", "autoRejectPermissionRequests", "skipPermissionsUnsafe"] as const) {
     if (o[k] !== undefined) p[k] = o[k];
@@ -274,7 +275,7 @@ export async function openSession(transport: Transport, opts: SessionOptions): P
   client.onRequest = (method, params) => answerHarnessRequest(opts, method, params);
   try {
     const init = opts.resumeSessionId
-      ? await client.request("load_session", { sessionId: opts.resumeSessionId, cwd: opts.cwd ?? process.cwd(), ...(opts.autoRejectPermissionRequests ? { autoRejectPermissionRequests: true } : {}) })
+      ? await client.request("load_session", { sessionId: opts.resumeSessionId, cwd: opts.cwd ?? (opts.machine ? "." : process.cwd()), ...(opts.machine ? { machine: opts.machine } : {}), ...(opts.autoRejectPermissionRequests ? { autoRejectPermissionRequests: true } : {}) })
       : await client.request("initialize_session", initParams(opts));
     const session = new RigwellSession(client, init, opts);
     if (opts.resumeSessionId) void session.reshowPending(init);

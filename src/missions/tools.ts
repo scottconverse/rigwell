@@ -97,6 +97,7 @@ export interface WorkerEnv {
   sessionId: string;
   store: MissionStore;
   workingDirectory(): string;
+  verifyCommit?(repo: string, commit: string): Promise<boolean>;
 }
 
 function commitExists(repo: string, commit: string): boolean {
@@ -130,7 +131,7 @@ export function workerTools(env: WorkerEnv): Tool[] {
       if ("error" in h) return fail(h.error);
       const repo = typeof input.repoPath === "string" && input.repoPath ? input.repoPath : env.workingDirectory();
       if (typeof input.commitId === "string" && input.commitId) {
-        if (!commitExists(repo, input.commitId)) return fail(`commitId ${input.commitId} was not found in ${repo}. Give the right repoPath, or omit commitId.`);
+        if (!(env.verifyCommit ? await env.verifyCommit(repo, input.commitId) : commitExists(repo, input.commitId))) return fail(`commitId ${input.commitId} was not found in ${repo}. Give the right repoPath, or omit commitId.`);
       }
       if (st === "success" && input.validatorsPassed !== true) return fail("success requires validatorsPassed: true. Run the validators (tests, checks) and fix failures first, or report partial or failure.");
       const rec: HandoffRecord = {

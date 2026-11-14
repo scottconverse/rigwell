@@ -241,11 +241,13 @@ export class AutomationManager {
 
   private async execute(a: Automation, rec: RunRecord, d: Dispatch): Promise<RunRecord> {
     const fm = a.fm;
-    const cwd = fm.workingDirectory && existsSync(fm.workingDirectory) ? fm.workingDirectory : a.dir;
+    const remote = fm.machine && !["local", "default"].includes(fm.machine);
+    const cwd = remote ? fm.workingDirectory ?? "." : fm.workingDirectory && existsSync(fm.workingDirectory) ? fm.workingDirectory : a.dir;
     let result;
     try {
       result = await this.opts.runner({
         cwd, title: `[Automation] ${fm.name}`, prompt: this.buildPrompt(a, d),
+        ...(remote ? { machine: fm.machine, automationId: a.id, remoteWorkingDirectory: fm.workingDirectory } : {}),
         modelId: fm.model, reasoningEffort: fm.reasoningEffort, autonomy: (fm.autonomy ?? "high") as AutonomyLevel,
         targetSessionId: fm.targetSessionId, startTimeoutMs: this.limits.startTimeoutMs, maxRunMs: this.limits.maxRunMs,
       });
@@ -297,7 +299,7 @@ export class AutomationManager {
     const parts = [
       `You are running as an unattended automation named "${a.fm.name}". It was triggered by: ${d.trigger}.`,
       `Finish the job in this one turn. Nobody is watching, so any action that would need approval is denied; carry on without it.`,
-      `Keep notes for future runs in ${join(a.dir, "memory")} and write output files to ${join(a.dir, "reports")}. Do not edit HEARTBEAT.md.`,
+      ...(!a.fm.machine || ["local", "default"].includes(a.fm.machine) ? [`Keep notes for future runs in ${join(a.dir, "memory")} and write output files to ${join(a.dir, "reports")}. Do not edit HEARTBEAT.md.`] : []),
       "", a.body.trim(),
     ];
     if (d.payload !== undefined) {

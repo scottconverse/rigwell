@@ -74,6 +74,9 @@ export function SessionDefaults() {
 export function MissionSettings() {
   const a = useApp();
   const m = (a.userSettings.missions ?? {}) as Record<string, any>;
+  const [machines, setMachines] = useState<{ name: string; build?: string }[]>([]);
+  const [machineError, setMachineError] = useState("");
+  useEffect(() => { void app.request("machine_list", {}).then((r) => setMachines(r.machines ?? [])).catch((e) => setMachineError((e as Error).message)); }, []);
   const { save, status } = useSave();
   const set = (k: string, v: unknown) => { const next = { ...m }; if (v === "" || v === undefined || v === false) delete next[k]; else next[k] = v; void save({ missions: next }); };
   const allowed: string[] = m.allowedModels ?? [];
@@ -88,10 +91,13 @@ export function MissionSettings() {
       <Row label="Model" hint="Used when the current model is not on the allowed list"><ModelSelect label="Orchestrator model" value={m.orchestratorModel} onChange={(v) => set("orchestratorModel", v)} allowNone="Keep current" /></Row>
       <Row label="Reasoning">{eff("orchestratorReasoningEffort", "Orchestrator reasoning")}</Row>
       <h3>Worker</h3>
-      <Row label="Model"><ModelSelect label="Worker model" value={m.workerModel} onChange={(v) => set("workerModel", v)} allowNone="Same as orchestrator" /></Row>
+      <Row label="Machine"><select aria-label="Mission worker machine" value={m.machine ?? ""} onChange={(e) => set("machine", e.target.value)}><option value="">Local</option>{machines.map((machine) => <option key={machine.name} value={machine.name} disabled={!machine.build}>{machine.name}</option>)}</select></Row>
+      {machineError && <p className="error-text" role="alert">{machineError}</p>}
+      {m.machine && <Row label="Remote repository" hint="An existing repository on the selected machine"><input aria-label="Mission remote working directory" value={m.workerWorkingDirectory ?? ""} onChange={(e) => set("workerWorkingDirectory", e.target.value)} /></Row>}
+      <Row label="Model">{m.machine ? <input aria-label="Remote worker model" value={m.workerModel ?? ""} placeholder="Remote profile ID" onChange={(e) => set("workerModel", e.target.value)} /> : <ModelSelect label="Worker model" value={m.workerModel} onChange={(v) => set("workerModel", v)} allowNone="Same as orchestrator" />}</Row>
       <Row label="Reasoning">{eff("workerReasoningEffort", "Worker reasoning")}</Row>
       <h3>Validator</h3>
-      <Row label="Model"><ModelSelect label="Validator model" value={m.validationWorkerModel} onChange={(v) => set("validationWorkerModel", v)} allowNone="Same as worker" /></Row>
+      <Row label="Model">{m.machine ? <input aria-label="Remote validator model" value={m.validationWorkerModel ?? ""} placeholder="Same as worker" onChange={(e) => set("validationWorkerModel", e.target.value)} /> : <ModelSelect label="Validator model" value={m.validationWorkerModel} onChange={(v) => set("validationWorkerModel", v)} allowNone="Same as worker" />}</Row>
       <Row label="Reasoning">{eff("validationWorkerReasoningEffort", "Validator reasoning")}</Row>
       <Row label="Skip scrutiny validation"><input type="checkbox" aria-label="Skip scrutiny" checked={m.skipScrutiny === true} onChange={(e) => set("skipScrutiny", e.target.checked)} /></Row>
       <Row label="Skip user-testing validation"><input type="checkbox" aria-label="Skip user testing" checked={m.skipUserTesting === true} onChange={(e) => set("skipUserTesting", e.target.checked)} /></Row>

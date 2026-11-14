@@ -159,7 +159,7 @@ export interface SessionDeps {
   maxToolIds?: string[];
   /** Admission applies to every ordinary turn, including message and background wakes. */
   beforeTurn?: (signal: AbortSignal) => Promise<() => void>;
-  onUsage?: (modelId: string, usage: TokenUsage) => void;
+  onUsage?: (modelId: string, usage: TokenUsage) => void | Promise<void>;
   id: string;
   cwd: string;
   settings: SessionSettings;
@@ -1009,7 +1009,7 @@ export class Session {
         this.builder.monitor.recordUsage(done.usage);
         turnUsage = addUsage(turnUsage, done.usage);
         this.tokenUsage = addUsage(this.tokenUsage, done.usage);
-        this.deps.onUsage?.(model.id, done.usage);
+        await this.deps.onUsage?.(model.id, done.usage);
         this.lastCallTokenUsage = { inputTokens: done.usage.inputTokens, cacheReadTokens: done.usage.cacheReadTokens, outputTokens: done.usage.outputTokens };
         this.providerLock ??= model.provider;
         await this.push({
@@ -1387,7 +1387,7 @@ export class Session {
       if (!text) throw new ModelError("empty_response", "The summarizer returned no text.");
       if (usage) {
         this.tokenUsage = addUsage(this.tokenUsage, usage);
-        this.deps.onUsage?.(model.id, usage);
+        await this.deps.onUsage?.(model.id, usage);
         this.notifyUsage();
       }
 
@@ -1500,7 +1500,7 @@ export class Session {
       for await (const ev of this.deps.streamWithRetry(this.deps.createAdapter(model), req, { strategy: "non_interactive", baseDelayMs: this.deps.retryBaseDelayMs })) {
         if (ev.type === "message_done") {
           this.tokenUsage = addUsage(this.tokenUsage, ev.usage);
-          this.deps.onUsage?.(model.id, ev.usage);
+          await this.deps.onUsage?.(model.id, ev.usage);
           this.deps.log?.(`[cache] warmup: read ${ev.usage.cacheReadTokens}, created ${ev.usage.cacheCreationTokens}, uncached ${ev.usage.inputTokens}`);
         }
       }
@@ -2030,7 +2030,7 @@ export class Session {
         messages: [{ id: "title-request", role: "user" as const, content: [{ type: "text" as const, text: firstMessage.slice(0, 2000) }] }],
       };
       const { text, usage } = await collectSummary(this.deps.streamWithRetry(this.deps.createAdapter(model), req, { strategy: "no_retry" }));
-      if (usage) { this.tokenUsage = addUsage(this.tokenUsage, usage); this.deps.onUsage?.(model.id, usage); this.notifyUsage(); }
+      if (usage) { this.tokenUsage = addUsage(this.tokenUsage, usage); await this.deps.onUsage?.(model.id, usage); this.notifyUsage(); }
       const clean = text.split("\n")[0]!.replace(/^["'`#*\s]+|["'`.*\s]+$/g, "").slice(0, 80);
       if (!clean || this.title.manual) return;
       await this.setTitle(clean, false);

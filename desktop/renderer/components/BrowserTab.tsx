@@ -36,7 +36,7 @@ function WebviewTab({ tab, sessionId, onState, onGone }: { tab: Tab; sessionId?:
   return createElement("webview", { ref, src: tab.src, partition: PARTITION, className: "webview" });
 }
 
-export function BrowserTab({ visible, sessionId, onWantVisible }: { visible: boolean; sessionId?: string; onWantVisible(): void }) {
+export function BrowserTab({ visible, sessionId, onWantVisible, initialUrl }: { visible: boolean; sessionId?: string; onWantVisible(): void; initialUrl?: string }) {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [active, setActive] = useState<string>("");
   const [address, setAddress] = useState("");
@@ -75,7 +75,7 @@ export function BrowserTab({ visible, sessionId, onWantVisible }: { visible: boo
   const cur = tabs.find((t) => t.key === active);
   useEffect(() => { if (cur?.wcId) void bridge().browser.register(cur.wcId, undefined, sessionId, true).catch(() => {}); }, [cur?.wcId, sessionId]);
   useEffect(() => { setAddress(cur?.url ?? ""); }, [cur?.key, cur?.url]);
-  useEffect(() => { if (visible && !tabs.length) open("about:blank"); }, [visible, tabs.length, open]);
+  useEffect(() => { if (visible && !tabs.length) open(initialUrl ?? "about:blank"); }, [visible, tabs.length, open, initialUrl]);
 
   const nav = (fn: (w: any) => void) => { const w = document.querySelector(`.webview-slot[data-key="${active}"] webview`) as any; if (w) fn(w); };
 

@@ -14,7 +14,7 @@ import { DEFAULT_WS_PORT, removeDaemonInfo, startWsServer, writeDaemonInfo } fro
 
 export const defaultSocketPath = () => join(rigwellHome(), "daemon.sock");
 
-export async function startDaemon(opts: { socketPath: string; log?: (m: string) => void; retryBaseDelayMs?: number; automations?: false | ServiceOptions; ws?: false | { port?: number; token?: string }; sidepane?: false | SidePaneOptions }) {
+export async function startDaemon(opts: { socketPath: string; advertise?: boolean; backgroundServices?: boolean; log?: (m: string) => void; retryBaseDelayMs?: number; automations?: false | ServiceOptions; ws?: false | { port?: number; token?: string }; sidepane?: false | SidePaneOptions }) {
   mkdirSync(dirname(opts.socketPath), { recursive: true });
   if (existsSync(opts.socketPath)) unlinkSync(opts.socketPath);
   const conns = new Set<ReturnType<typeof createConnection>>();
@@ -49,7 +49,7 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
   const autoTools = auto ? automationTools(auto) : [];
   // Worktrees (spec 18): removal and branch-change broadcasts, and the 5-minute housekeeping pass.
   const offWorktree = onWorktreeNotification((method, params) => { for (const c of conns) c.peer.notify(METHOD_PREFIX + method, params); });
-  const housekeeping = startWorktreeHousekeeping({ log: opts.log });
+  const housekeeping = opts.backgroundServices === false ? undefined : startWorktreeHousekeeping({ log: opts.log });
   // Side pane (spec §17): files, terminals, browser control and side chat. The app's CDP proxy port and endpoint
   // arrive through the environment (RIGWELL_BROWSER_CDP_PORT / RIGWELL_BROWSER_CDP_URL) or `daemon.browser_attach`.
   const sidepane = opts.sidepane === false ? undefined : createSidePane({
@@ -59,7 +59,7 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
     ...opts.sidepane,
   });
   const missions = createMissionService({ log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs });
-  const workstreams = createWorkstreamService({ log: opts.log });
+  const workstreams = createWorkstreamService({ log: opts.log, recover: opts.backgroundServices });
   await workstreams.ready;
   const workstreamClients = new Map<ReturnType<typeof createConnection>, () => void>();
   const ctxs = new Map<ReturnType<typeof createConnection>, ConnCtx>();
@@ -79,6 +79,7 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
       canPrompt: true, log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs,
       onNotification: (s, n) => { if (s) workstreams.observe(s, n); },
       sharedSession: workstreams.sharedSession,
+      sharedRemoteSession: workstreams.sharedRemoteSession,
       extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx), ...mission.methods, ...stream.methods },
       wrapTools: (tools) => stream.wrapTools(mission.wrapTools(tools)),
       extraTools: sidepane || autoTools.length ? () => [...(sidepane ? sidepane.tools() : []), ...autoTools] : undefined,
@@ -131,7 +132,7 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
   }
   const home = rigwellHome();
   try {
-    writeDaemonInfo(home, {
+    if (opts.advertise !== false) writeDaemonInfo(home, {
       pid: process.pid, socketPath: opts.socketPath, startedAt: new Date().toISOString(),
       ...(wsServer ? { ws: { url: wsServer.url, host: "127.0.0.1", port: wsServer.port }, token: wsServer.token } : {}),
     });
@@ -150,11 +151,11 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
       pending.push(workstreams.stop());
       auto?.stop();
       offWorktree();
-      housekeeping.stop();
+      housekeeping?.stop();
       if (sidepane) pending.push(sidepane.closeAll());
       server.stop(true);
       wsServer?.stop();
-      removeDaemonInfo(home, process.pid, wsServer?.token);
+      if (opts.advertise !== false) removeDaemonInfo(home, process.pid, wsServer?.token);
       try { unlinkSync(opts.socketPath); } catch {}
       const done = Promise.all(pending).then(() => {});
       void done.catch((e) => opts.log?.(`[daemon] shutdown failed: ${(e as Error).message}`));

@@ -19,6 +19,7 @@ export interface Frontmatter {
   model?: string;
   reasoningEffort?: string;
   workingDirectory?: string;
+  machine?: string;
   paused?: boolean;
   tags?: string[];
   targetSessionId?: string;
@@ -142,6 +143,7 @@ const AUTONOMY = ["off", "low", "medium", "high"];
 /** Validates frontmatter fields shared by create and update. Throws ScheduleError / Error with a clear message. */
 export function validateFrontmatter(fm: Frontmatter): Schedule | undefined {
   if (typeof fm.name !== "string" || !fm.name.trim()) throw new Error("name is required");
+  if (fm.machine !== undefined && (typeof fm.machine !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$/.test(fm.machine))) throw new Error("Invalid machine name");
   if (fm.trigger !== undefined && fm.trigger !== "schedule" && fm.trigger !== "webhook") throw new Error("trigger must be schedule or webhook");
   if (fm.timezone !== undefined && !validTimeZone(fm.timezone)) throw new Error(`unknown time zone: ${fm.timezone}`);
   if (fm.autonomy !== undefined && !AUTONOMY.includes(fm.autonomy)) throw new Error("autonomy must be off, low, medium or high");

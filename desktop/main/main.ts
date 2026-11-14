@@ -23,6 +23,7 @@ import { deleteLocalProfile, gitRoot, listProfileViews, readUserSettings, saveLo
 import { listSkillViews } from "./skills.ts";
 import { synthWav } from "./sounds.ts";
 import { freeSlot, saveZoom, stepZoom, zoomFor } from "./window-zoom.ts";
+import { RemoteViews } from "./remote-view.ts";
 
 // The bundle lives in <app>/dist next to preload.cjs and renderer/. app.getAppPath() is the folder with package.json
 // (also correct inside an asar), which is more reliable than __dirname because bundlers may inline that.
@@ -57,6 +58,7 @@ function guard<T>(fn: (e: IpcMainInvokeEvent, ...a: any[]) => T) {
 }
 const log = (m: string) => { try { process.stderr.write(m + "\n"); } catch {} };
 const sendTo = (id: number, channel: string, payload: unknown) => { const w = webContents.fromId(id); if (w && !w.isDestroyed()) w.send(channel, payload); };
+const remoteViews = new RemoteViews(HOME, (owner, event) => sendTo(owner, "remoteView:data", event));
 const broadcast = (channel: string, payload: unknown) => { for (const id of winIds()) sendTo(id, channel, payload); };
 
 function windowState(): WindowState {
@@ -205,7 +207,7 @@ function createWindow(route = "/"): BrowserWindow {
   win.on("close", () => {
     if (windows.size === 1) { const bb = win.getNormalBounds(); settings = updateDesktopSettings(HOME, { windowBounds: { ...bb, maximized: win.isMaximized() } }); }
   });
-  win.on("closed", () => { windows.delete(win); slots.delete(win); zooms.delete(win); broker.closeWindow(id); viewing.delete(id); closeWindowBrowsers(id); browserTabs.forEach((t, k) => { if (t.host === id) browserTabs.delete(k); }); });
+  win.on("closed", () => { void remoteViews.closeOwner(id); windows.delete(win); slots.delete(win); zooms.delete(win); broker.closeWindow(id); viewing.delete(id); closeWindowBrowsers(id); browserTabs.forEach((t, k) => { if (t.host === id) browserTabs.delete(k); }); });
   void win.loadURL(`${APP_PAGE}#${route}`);
   return win;
 }
@@ -340,6 +342,10 @@ function registerIpc() {
     broker.send(e.sender.id, connId, message);
   }));
   ipcMain.handle("daemon:close", guard((e, connId: number) => broker.closeConnection(e.sender.id, connId)));
+  ipcMain.handle("remoteView:open", guard((e, name: string, port: number, kind: "browser" | "desktop") => remoteViews.open(e.sender.id, name, port, kind)));
+  ipcMain.handle("remoteView:receive", guard((e, id: string) => remoteViews.receive(e.sender.id, id)));
+  ipcMain.handle("remoteView:send", guard((e, id: string, data: unknown) => remoteViews.send(e.sender.id, id, data)));
+  ipcMain.handle("remoteView:close", guard((e, id: string) => remoteViews.close(e.sender.id, id)));
 
   ipcMain.handle("deeplink:claim", guard((e, state: string) => { claims.set(String(state), { windowId: e.sender.id, at: Date.now() }); }));
   ipcMain.handle("view:set", guard((e, sessionId: string | null) => { viewing.set(e.sender.id, sessionId ?? undefined); }));
@@ -637,6 +643,7 @@ async function boot() {
     broker.closeAll();
     log("[shutdown] connections closed");
     void Promise.all([
+      remoteViews.closeAll(),
       ...[...scopedBrowsers.values()].map((owned) => owned.close()),
       supervisor.stop().finally(() => log("[shutdown] daemon stopped")),
       proxy?.stop().finally(() => log("[shutdown] browser proxy stopped")),

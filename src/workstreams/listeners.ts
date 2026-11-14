@@ -10,9 +10,10 @@ interface Waiting { storeId: string; owner: string; check(): void; cancel(): voi
 /** One daemon owns scheduling; definitions and fired/wait-read events survive its lifetime. */
 export class WorkstreamListeners {
   private handles = new Map<string, () => void>();
+  private readiness = new Map<string, Promise<void>>();
   private waiting = new Set<Waiting>();
   private closed = false;
-  constructor(private opts: { fire(store: WorkstreamStore, listener: WorkstreamListener, event: WorkstreamEvent): void; log?(text: string): void; watch?: typeof watch }) {}
+  constructor(private opts: { fire(store: WorkstreamStore, listener: WorkstreamListener, event: WorkstreamEvent): void; log?(text: string): void; watch?: typeof watch; remoteFileWatch?(store: WorkstreamStore, listener: WorkstreamListener, fire: (event: Record<string, unknown>) => void): { stop(): void; ready: Promise<void> } }) {}
 
   create(store: WorkstreamStore, owner: string, input: Record<string, unknown>) {
     if (this.closed) throw new Error("Listener service is closed");
@@ -29,7 +30,7 @@ export class WorkstreamListeners {
       const ms = listener.filter.afterMs;
       if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0 || (!listener.once && ms === 0)) throw new Error("timer needs nonnegative filter.afterMs (positive for recurring timers)");
     }
-    if (listener.on === "file_changed") this.fileTarget(store, listener);
+    if (listener.on === "file_changed" && !this.remoteTarget(store, listener)) this.fileTarget(store, listener);
     store.writeListeners([...store.listeners(), listener]);
     store.event("listener_created", { listenerId: listener.id, owner, on: listener.on });
     try { this.arm(store, listener); }
@@ -58,7 +59,7 @@ export class WorkstreamListeners {
     if (!store.listeners().some((l) => l.id === listener.id)) return;
     const now = Date.now();
     store.writeListeners(store.listeners().flatMap((l) => l.id !== listener.id ? [l] : listener.once ? [] : [{ ...l, lastFiredAt: now }]));
-    if (listener.once) { this.handles.get(listener.id)?.(); this.handles.delete(listener.id); }
+    if (listener.once) { this.handles.get(listener.id)?.(); this.handles.delete(listener.id); this.readiness.delete(listener.id); }
     const event = store.event("listener_fired", { listenerId: listener.id, owner: listener.owner, on: listener.on, ...(listener.note ? { note: listener.note } : {}), trigger });
     this.opts.fire(store, listener, event);
     for (const waiting of [...this.waiting]) if (waiting.storeId === store.id && waiting.owner === listener.owner) waiting.check();
@@ -81,6 +82,18 @@ export class WorkstreamListeners {
     if (pattern.split("/").includes("..")) throw new Error("File listener glob cannot escape its root");
     return { root: realpathSync.native(root), glob: new Bun.Glob(pattern.includes("/") ? pattern : `**/${pattern}`) };
   }
+  private remoteTarget(store: WorkstreamStore, listener: WorkstreamListener) {
+    const f = listener.filter;
+    const agent = store.roster().find((a) => a.agentId === f.agentId || !!f.name && a.name.toLowerCase() === f.name.toLowerCase());
+    if (!agent?.machine) return;
+    if (!agent.worktreePath) throw new Error("File listeners need an existing member worktree");
+    if (!f.glob?.trim() || f.glob.replaceAll("\\", "/").split("/").includes("..")) throw new Error("Remote file glob must stay inside the member worktree");
+    return agent;
+  }
+  async whenReady(store: WorkstreamStore, id: string) {
+    try { await this.readiness.get(id); }
+    catch (e) { this.handles.get(id)?.(); this.handles.delete(id); this.readiness.delete(id); store.writeListeners(store.listeners().filter((l) => l.id !== id)); throw e; }
+  }
 
   private arm(store: WorkstreamStore, listener: WorkstreamListener) {
     if (this.closed) return;
@@ -96,6 +109,13 @@ export class WorkstreamListeners {
       }, Math.max(0, due - Date.now()));
       timer.unref?.(); this.handles.set(listener.id, () => clearTimeout(timer));
     } else if (listener.on === "file_changed") {
+      if (this.remoteTarget(store, listener)) {
+        if (!this.opts.remoteFileWatch) throw new Error("Remote member file watcher is unavailable");
+        const watch = this.opts.remoteFileWatch(store, listener, (event) => this.fire(store, listener, event));
+        this.handles.set(listener.id, watch.stop); this.readiness.set(listener.id, watch.ready);
+        void watch.ready.catch((e) => this.opts.log?.(`Remote file watch ${listener.id}: ${e.message}`));
+        return;
+      }
       const { root, glob } = this.fileTarget(store, listener);
       const stamp = (path: string) => {
         try {
@@ -172,7 +192,7 @@ export class WorkstreamListeners {
     catch (e) { store.event("listener_rearm_failed", { listenerId: listener.id, message: (e as Error).message }); this.opts.log?.(`[workstream] Listener ${listener.id} could not rearm: ${(e as Error).message}`); }
   }
   archive(store: WorkstreamStore) {
-    for (const listener of store.listeners()) { this.handles.get(listener.id)?.(); this.handles.delete(listener.id); }
+    for (const listener of store.listeners()) { this.handles.get(listener.id)?.(); this.handles.delete(listener.id); this.readiness.delete(listener.id); }
     store.writeListeners([]);
     for (const waiting of [...this.waiting]) if (waiting.storeId === store.id) waiting.cancel();
   }
@@ -203,5 +223,5 @@ export class WorkstreamListeners {
       timer.unref?.(); this.waiting.add(waiting); signal?.addEventListener("abort", waiting.cancel, { once: true });
     });
   }
-  close() { this.closed = true; for (const close of this.handles.values()) close(); this.handles.clear(); for (const waiting of [...this.waiting]) waiting.cancel(); }
+  close() { this.closed = true; for (const close of this.handles.values()) close(); this.handles.clear(); this.readiness.clear(); for (const waiting of [...this.waiting]) waiting.cancel(); }
 }

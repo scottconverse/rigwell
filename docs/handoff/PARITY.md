@@ -23,9 +23,9 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 7. Code-provider connections page for GitHub and GitLab (§20.21). Implemented on b0bb979, all four CI jobs and packages green; real device sign-in awaits the owner's public registered client IDs.
 8. PR and semantic-diff review view, `/review` (§20.10). Delivered on c2a7847: all four CI jobs/packages green; native file-save cause unresolved and instrumented (360).
 
-## 3. Agent quality (the biggest gap; nothing measured yet)
+## 3. Agent quality (bounded live smoke verified; full comparisons remain)
 
-9. Real-model smoke run on every adapter, including a free local model (§20.1). Pending real runs: existing Google key/local servers located; private-runtime model-ID constraint clarification pending.
+9. Real-model smoke run on every adapter, including a free local model (§20.1). Bounded Windows coding task passed on both signed-in subscription clients and local Chat Completions. Workstream coordination also passed on both subscriptions (5f2e6ef). These do not establish every direct adapter's live coverage. Bedrock cannot be live-tested without an owner's account; its documented adapter/fake tests remain. Runtime model IDs are allowed outside Git.
 10. A task suite of 40+ real coding tasks for `rigwell eval` (§20.1). Delivered on f32bc06: 43 graded tasks, six categories, all four CI jobs/packages green.
 11. Head-to-head with the reference CLI on the same tasks and models, three trials each (spec 20.1). Machinery delivered on 52f145b, all four CI jobs/packages green. Real same-model/account comparison remains pending.
 12. Tune prompts, tool descriptions, result shapes and guards until Rigwell matches on every model family (§20.1).
@@ -37,12 +37,12 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 
 16. MCP OAuth (§20.3). Delivered on 2c8d082: resource/issuer discovery, PKCE/DCR or owned clients, URL-bound credentials, refresh, Connectors/settings and /mcp sign-in/out. Fake-service/headless checks and all four CI jobs/packages pass. Workstream missed notifications reconciled (374); deletion assertion aliases corrected (375).
 17. Connector catalog (§20.4). Implemented: bundled public servers, search/categories, required values, credential references, OAuth start, explicit user sources fetched only on Catalog open. Affected 84 tests/438 assertions, both typechecks/headless build pass; delivered on 342ce8c with all four CI jobs/packages green.
-18. Browser automation tools for the agent and the `agent-browser` skill (§20.5).
+18. Browser automation tools for the agent and the `agent-browser` skill (§20.5). Delivered on de2f47a, all four CI jobs and unsigned platform packages green. Separate elevated launch defect fixed; intermittent Windows navigation stall remains instrumented, with no root cause claimed.
 
 ## 5. Your other machines
 
 19. Remote machines over SSH, including sessions, automations, mission workers and Workstream members on them,
-    and the remote desktop viewer (§20.6).
+    and the remote desktop viewer (§20.6). Implemented and headless affected checks green: owned startup recovery, complete selected-machine Files/Terminal, remote mission library handoff, persistent member restart/listener rearm and optional viewer. Candidate commit and all four CI gates are next. No real remote-host or VNC screen acceptance claimed. See HANDOFF State and docs/machines.md.
 20. Fleet management page and `rigwell machine` commands (§20.7).
 21. Session sync between your machines, share and export, import (§20.8).
 22. Remote access from a phone with pairing (§20.9).
