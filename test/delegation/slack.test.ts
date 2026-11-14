@@ -15,7 +15,7 @@ import { DelegationStore, validateDelegation } from "../../src/delegation/store.
 const buttons = (post: any): any[] => post?.blocks?.flatMap((b: any) => b.elements ?? []) ?? [];
 
 test("Slack delegates through real daemon engines, shares Socket Mode, binds approvals, redacts output and resumes stored sessions", async () => {
-  const env = tmpEnv(), slack = fakeSlack(), marker = join(env.root, "allowed.txt"), denied = join(env.root, "denied.txt"), thread = `${Date.now() / 1000}`;
+  const env = tmpEnv(), slack = fakeSlack(), marker = join(env.root, "allowed.txt"), denied = join(env.root, "denied.txt"), thread = (Date.now() / 1000).toFixed(3);
   const command = (file: string) => `node -e "require('fs').writeFileSync('${file.replace(/\\/g, "/")}','ok')"`;
   const fake = await startFakeAnthropic([
     { toolCalls: [{ name: "AskUser", input: { questions: [{ index: 0, topic: "Color", question: "Which color?", options: ["Blue", "Green"] }] } }] },
@@ -49,13 +49,13 @@ test("Slack delegates through real daemon engines, shares Socket Mode, binds app
     expect(readFileSync(marker, "utf8")).toBe("ok"); expect(JSON.stringify(slack.posts)).not.toContain("fake-bot-secret");
     expect(listSessionEntries().find((s) => s.sessionId === binding.sessionId)?.source).toBe("slack"); expect(scanSessionEntries().find((s) => s.sessionId === binding.sessionId)?.source).toBe("slack");
     slack.event("start", "demo: duplicate", { ts: thread }); slack.action("replay", blue, thread); await until(() => slack.acks.includes("replay")); expect(fake.requests).toHaveLength(3);
-    const before = slack.posts.length; slack.event("deny-task", "do another write", { ts: `${Date.now() / 1000}`, thread_ts: thread, type: "message" });
+    const before = slack.posts.length; slack.event("deny-task", "do another write", { ts: (Date.now() / 1000).toFixed(3), thread_ts: thread, type: "message" });
     await until(() => slack.posts.slice(before).some((p) => p.text.includes("Permission required")));
     const denyPost = slack.posts.slice(before).find((p) => p.text.includes("Permission required")), cancel = buttons(denyPost).find((b) => /cancel|deny|no,/i.test(b.text.text));
     slack.action("deny", cancel.value, thread); await until(() => slack.posts.slice(before).some((p) => p.text.startsWith("Finished"))); expect(existsSync(denied)).toBe(false);
     await desktop.close(); desktop = undefined; await daemon.stop(); daemon = undefined; await until(() => slack.sockets.size === 0);
     daemon = await startDaemon({ ...options, automations: false }); await until(() => slack.sockets.size === 1);
-    slack.event("start", "demo: duplicate after restart", { ts: thread }); slack.event("resume", "continue", { type: "message", ts: `${Date.now() / 1000}`, thread_ts: thread });
+    slack.event("start", "demo: duplicate after restart", { ts: thread }); slack.event("resume", "continue", { type: "message", ts: (Date.now() / 1000).toFixed(3), thread_ts: thread });
     await until(() => slack.posts.some((p) => p.text.includes("Resumed after restart"))); expect(daemon.delegation!.store.bindings()).toHaveLength(1); expect(fake.requests).toHaveLength(5);
     await daemon.delegation!.methods.configure_delegation({ confirmed: true, config: { ...config, slack: { ...config.slack, enabled: false } } });
     expect(daemon.delegation!.status().sessions[0]!.live).toBe(false);
@@ -65,7 +65,7 @@ test("Slack delegates through real daemon engines, shares Socket Mode, binds app
 }, 15_000);
 
 test("clipped permission details require review in the full Rigwell view and never expose a chat approval button", async () => {
-  const env = tmpEnv(), slack = fakeSlack(), thread = String(Date.now() / 1000), marker = join(env.root, "clipped-write.txt");
+  const env = tmpEnv(), slack = fakeSlack(), thread = (Date.now() / 1000).toFixed(3), marker = join(env.root, "clipped-write.txt");
   const command = `node -e "${" ".repeat(1800)}require('fs').writeFileSync('${marker.replace(/\\/g, "/")}','bad')"`;
   const fake = await startFakeAnthropic([{ toolCalls: [{ name: "Execute", input: { command, riskLevel: "medium", riskReason: "Long fixture command" } }] }]);
   let daemon: Awaited<ReturnType<typeof startDaemon>> | undefined, desktop: RpcClient | undefined;
@@ -85,7 +85,7 @@ test("clipped permission details require review in the full Rigwell view and nev
 }, 10_000);
 
 test("Slack handles temporary folder trust, multi-select and text questions, desktop answers, and revocation while approval is pending", async () => {
-  const env = tmpEnv(), slack = fakeSlack(), previousTrust = process.env.RIGWELL_TRUST_CWD, thread = `${Date.now() / 1000}`, marker = join(env.root, "must-not-exist.txt");
+  const env = tmpEnv(), slack = fakeSlack(), previousTrust = process.env.RIGWELL_TRUST_CWD, thread = (Date.now() / 1000).toFixed(3), marker = join(env.root, "must-not-exist.txt");
   const fake = await startFakeAnthropic([
     { toolCalls: [{ name: "AskUser", input: { questions: [{ index: 0, topic: "Scope", question: "Choose both", options: ["A", "B"], multiSelect: true }, { index: 1, topic: "Text", question: "Your text?", options: [] }] } }] },
     { toolCalls: [{ name: "AskUser", input: { questions: [{ index: 0, topic: "Desktop", question: "Answer on desktop", options: ["Desktop"] }] } }] },

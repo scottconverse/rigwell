@@ -11,7 +11,7 @@ import { until } from "../workstreams/helpers.ts";
 import { closeSessionIndexes } from "../../src/storage/session-list.ts";
 
 test("durable queued events survive restart, duplicates stay seen and uncertain admitted work is reported without replay", async () => {
-  const env = tmpEnv(), slack = fakeSlack(), fake = await startFakeAnthropic([{ text: "Queued work finished" }]), thread = String(Date.now() / 1000);
+  const env = tmpEnv(), slack = fakeSlack(), fake = await startFakeAnthropic([{ text: "Queued work finished" }]), thread = (Date.now() / 1000).toFixed(3);
   let daemon: Awaited<ReturnType<typeof startDaemon>> | undefined;
   setCredentialStore(new CredentialStore([new FileBackend(() => join(env.root, "credentials.json"))]));
   try {
