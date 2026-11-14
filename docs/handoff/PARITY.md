@@ -9,7 +9,7 @@ Two items need the owner to act, not only approve. Build the code anyway and ask
 - §20.24: the owner buys the Apple Developer ID and Windows code-signing certificate and adds them as CI secrets.
 Real-model runs (§20.1) need API keys from the owner, through the credential store, never committed.
 
-## 1. Finish what is built (blocking)
+## 1. Finish what is built (complete on 0260689)
 
 1. Windows: `test/e2e/worktree.test.ts` "a setup profile runs with secrets stripped..." hangs (HANDOFF open issue 1).
 2. Linux CI `desktop` job: two `test/desktop/electron-handlers.test.ts` tests (HANDOFF open issue 2).
@@ -18,7 +18,7 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 
 ## 2. Core features
 
-5. `create_pr` and PR status, with `gh` and `glab` (spec §18.6, HANDOFF "Next task").
+5. `create_pr` and PR status, with `gh` and `glab` (spec §18.6, HANDOFF "Next task"). Implemented; 215 affected headless tests pass, exact-candidate CI pending.
 6. **Workstreams, local** (spec §15.10, HANDOFF "Next task 2"). The feature the owner wanted Rigwell for.
 7. Code-provider connections page for GitHub and GitLab (§20.21).
 8. PR and semantic-diff review view, `/review` (§20.10).

@@ -174,7 +174,7 @@ export type Effect =
   | { type: "files"; query: string }
   | { type: "copy"; text: string }
   | { type: "editor"; text: string; target?: "input" | "spec" }
-  | { type: "view"; name: "mcp" | "hooks" | "skills" | "commands" | "agents" | "diagnostics" | "statusline" | "automations" | "loop" | "login" | "logout"; args: string }
+  | { type: "view"; name: "pr" | "mcp" | "hooks" | "skills" | "commands" | "agents" | "diagnostics" | "statusline" | "automations" | "loop" | "login" | "logout"; args: string }
   | { type: "rewind"; messageId: string; restoreFiles: boolean }
   | { type: "attention"; kind: "completion" | "awaiting" }
   | { type: "status_line" }

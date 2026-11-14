@@ -8,6 +8,7 @@ import { bulkRename, managementRows, projectName, type SessionRow } from "../lib
 import { addUsage, fmt, percentUsed, total, zero, type TokenUsage } from "../lib/usage.ts";
 import { ManagedNote, OrgCeiling } from "./SettingsAccess.tsx";
 import { AddServerForm, Dialog, ServerList, TextDialog, useMcp } from "./Dialogs.tsx";
+import { WorktreePr } from "./WorktreePr.tsx";
 
 const Row = ({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => (
   <div className="row"><div className="row-label"><div>{label}</div>{hint && <div className="muted small">{hint}</div>}</div><div className="row-ctl">{children}</div></div>
@@ -215,6 +216,7 @@ export function WorktreeSettings() {
       <ul className="plain-list" aria-label="Managed worktrees">
         {managed.map((w) => (
           <li key={w.path} className="srv"><span className="srv-name">{w.branch ?? projectName(w.path)}</span><span className="muted small mono">{w.path}</span><span className="spacer" />
+            <WorktreePr worktreePath={w.path} branch={w.branch} />
             <button className="danger" aria-label={`Remove ${w.path}`} onClick={() => void app.request("inspect_worktree_deletion", { worktreePath: w.path }).then((info) => setRemoving({ w, info })).catch((e) => setErr(e.message))}>Remove</button></li>
         ))}
         {!managed.length && <li className="muted pad">No managed worktrees.</li>}

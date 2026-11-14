@@ -284,6 +284,18 @@ async function logoutView(args: string, c: ViewCtx): Promise<View> {
 
 export async function buildView(name: string, args: string, c: ViewCtx): Promise<View> {
   switch (name) {
+    case "pr": {
+      const title = "Pull request", w = words(args);
+      try {
+        if (w[0] === "create") {
+          const parts = w.slice(1).filter((x) => x !== "--draft");
+          const r = await c.request("create_pr", { worktreePath: c.state.cwd, ...(parts[0] ? { title: parts[0] } : {}), body: parts[1] ?? "", ...(parts[2] ? { base: parts[2] } : {}), draft: w.includes("--draft") });
+          return { title, lines: [`Created #${r.number}`, r.url] };
+        }
+        const r = await c.request("get_pr_status", { worktreePath: c.state.cwd });
+        return { title, lines: [r.state === "none" ? "No PR for this branch." : `#${r.number}: ${r.state}`, ...(r.url ? [r.url] : []), ...(r.checks ?? []).map((x: any) => `${x.name}: ${x.state}`), "", 'Create: /pr create "title" "body" [base] [--draft]'] };
+      } catch (e) { return { title, lines: [errText(e)] }; }
+    }
     case "login": return loginView(args, c);
     case "logout": return logoutView(args, c);
     case "mcp": return mcpView(args, c);

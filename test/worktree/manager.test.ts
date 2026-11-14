@@ -187,7 +187,8 @@ describe("auto-delete", () => {
     const m = mk({ autoDeleteLimit: 2, recentMs: 60_000, now: () => t });
     const ids = ["old00001", "old00002", "old00003", "old00004", "old00005", "old00006"];
     const wts = [];
-    for (const id of ids) { wts.push(await m.create({ repoRoot: repo, sessionId: id, lifecycle: id === "old00006" ? "persistent" : "ephemeral" })); t += 1000; }
+    // This exercises cleanup blockers, so avoid repeated generated-name collision probes in fixture setup.
+    for (const id of ids) { wts.push(await m.create({ repoRoot: repo, sessionId: id, branch: `cleanup-${id}`, lifecycle: id === "old00006" ? "persistent" : "ephemeral" })); t += 1000; }
     const [w1, w2, w3, w4, w5] = wts;
     writeFileSync(join(w1!.path, "dirty.txt"), "wip\n");           // uncommitted work: skipped
     writeFileSync(join(w2!.path, "a.txt"), "ahead\n");              // local-only commit: skipped

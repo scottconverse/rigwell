@@ -23,6 +23,7 @@ export const COMMANDS: SlashCommand[] = [
   { name: "context", desc: "Context usage by category" },
   { name: "cost", desc: "Token usage and cost" },
   { name: "status", desc: "Version, mode, session, folder, model, data folder" },
+  { name: "pr", desc: "PR status or create a PR after approval", args: '[create "title" ["body"] [base] [--draft]]' },
   { name: "compress", desc: "Summarise into a new session", args: "[instructions]", stopsRun: true },
   { name: "rewind-conversation", desc: "Go back to an earlier user turn", stopsRun: true },
   { name: "fork", desc: "Copy this session into a new one" },

@@ -1,7 +1,7 @@
 // Glue between the connection (initialize_session and protocol methods) and the worktree manager.
 // Keeps src/daemon/connection.ts changes small. Protocol methods are `rigwell.<name>` (snake_case):
 //   list_managed_worktrees, get_worktree_status, inspect_worktree_deletion, cleanup_worktree,
-//   list_git_branches, checkout_git_branch, get_git_branch_divergence, git_commit, git_push
+//   list_git_branches, checkout_git_branch, get_git_branch_divergence, git_commit, git_push, create_pr, get_pr_status
 import path from "node:path";
 import { ErrorCodes, RpcError } from "../protocol/rpc.ts";
 import type { RigwellSettings } from "../storage/settings.ts";
@@ -16,6 +16,7 @@ import { findSession } from "../storage/transcript.ts";
 import { readSessionSettings, updateSessionSettings } from "../storage/session-settings.ts";
 import { loadSettings } from "../storage/settings.ts";
 import { rigwellHome } from "../storage/paths.ts";
+import { createPr, getPrStatus, type ApprovePr } from "./pr.ts";
 
 /** Worktrees with a live session in this process (path -> session id); auto-delete and remove skip them. */
 const active = new Map<string, string>();
@@ -198,6 +199,7 @@ export interface MethodContext {
   cwd?: string;
   settings: () => RigwellSettings;
   log?: (m: string) => void;
+  requestPermission?: ApprovePr;
 }
 
 const need = (p: Record<string, unknown>, k: string): string => {
@@ -212,6 +214,12 @@ export async function handleWorktreeMethod(method: string, p: Record<string, unk
   const ok = (result: unknown) => ({ handled: true, result });
   try {
     switch (method) {
+      case "create_pr": {
+        for (const k of ["title", "body", "base"]) if (p[k] !== undefined && typeof p[k] !== "string") throw new RpcError(ErrorCodes.INVALID_PARAMS, `${k} must be a string`);
+        if (p.draft !== undefined && typeof p.draft !== "boolean") throw new RpcError(ErrorCodes.INVALID_PARAMS, "draft must be a boolean");
+        return ok(await createPr(target(), p as any, ctx.requestPermission));
+      }
+      case "get_pr_status": return ok(await getPrStatus(target()));
       case "list_managed_worktrees": {
         const worktrees = await mgr().list(typeof p.repoRoot === "string" ? { repoRoot: p.repoRoot } : undefined);
         return ok({ worktrees });

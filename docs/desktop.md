@@ -45,6 +45,26 @@ The composer has a searchable model picker, a Normal / Spec / Mission mode menu,
 (defaults to the `runInWorktree` setting). The browser pane can reopen closed tabs, move tabs, step to the next or previous tab and take a screenshot.
 Main process helpers: `desktop/main/user-settings.ts` (masked settings file, trusted folders, setup profiles) and `desktop/main/skills.ts`.
 
+## Pull requests
+
+Settings > Worktrees has Create PR and Refresh PR controls for each managed worktree. Enter the title,
+body, optional base and draft state, then review the branch push and PR content in the permission panel.
+Cancel leaves the remote untouched. The daemon checks that the checkout and origin have not changed
+while approval was open, pushes to origin, and creates the PR. It never merges.
+
+GitHub uses a signed-in `gh`, GitLab a signed-in `glab`. Without the corresponding CLI, the daemon uses
+the provider API and the `github` or `gitlab` token in Rigwell's credential store. Public GitHub and
+GitLab origins are supported. A failed provider operation after the push explicitly reports that the
+branch was pushed so the user can check status before retrying.
+
+The TUI command `/pr` shows status and checks; `/pr create "Title" "Body" [base] [--draft]` starts the
+same approval flow. Protocol methods are `rigwell.create_pr {worktreePath, title?, body?, base?, draft?}`
+and `rigwell.get_pr_status {worktreePath}`. Creation returns `{url, number}`; status returns
+`{state: "none" | "open" | "merged" | "closed", url?, number?, checks: [{name, state}]}`.
+Headless connections without an approver refuse creation. Automatic cleanup retains branches with an
+open PR, and retains worktrees when provider status cannot be checked. Merged and closed PRs do not
+prevent cleanup when the other safety checks pass.
+
 ## Packaging, fuses and updates
 
 ```
