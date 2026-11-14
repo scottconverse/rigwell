@@ -24,7 +24,7 @@ function WebviewTab({ tab, sessionId, onState, onGone }: { tab: Tab; sessionId?:
     const wv = ref.current;
     if (!wv) return;
     const upd = () => onState(tab.key, { url: wv.getURL?.() ?? tab.url, title: wv.getTitle?.() ?? "", canBack: wv.canGoBack?.() ?? false, canForward: wv.canGoForward?.() ?? false });
-    const ready = () => { const id = wv.getWebContentsId(); onState(tab.key, { wcId: id }); void bridge().browser.register(id, tab.requestId, sessionId).catch(() => {}); upd(); };
+    const ready = () => { const id = wv.getWebContentsId(); void bridge().browser.register(id, tab.requestId, sessionId).then(() => onState(tab.key, { wcId: id })).catch(() => {}); upd(); };
     const handlers: [string, (e?: any) => void][] = [
       ["dom-ready", ready], ["did-navigate", upd], ["did-navigate-in-page", upd], ["page-title-updated", upd],
       ["did-start-loading", () => onState(tab.key, { loading: true })], ["did-stop-loading", () => { onState(tab.key, { loading: false }); upd(); }],

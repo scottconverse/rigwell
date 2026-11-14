@@ -150,6 +150,8 @@ maybe("desktop app end to end", () => {
 
   test("the agent drives the browser pane", async () => {
     await page.getByRole("tab", { name: "Browser", exact: true }).click();
+    // The pane is ready for agent control after its main-process registration is acknowledged.
+    await page.waitForFunction(() => (document.querySelector('button[title="Take a screenshot of this tab"]') as HTMLButtonElement | null)?.disabled === false);
     await composerSend("please browse the page");
     await page.locator(".tool-name", { hasText: "Browser" }).first().waitFor({ timeout: LOAD_WAIT });
     await page.locator(".assistant", { hasText: "browser done" }).first().waitFor({ timeout: LOAD_WAIT });
@@ -311,12 +313,12 @@ maybe("desktop app end to end", () => {
     expect(seen.length).toBe(2);
     expect(seen[0].startsWith("light|")).toBe(true);
     expect(seen[1]).toBe("dark|rgb(22, 20, 19)|rgb(22, 20, 19)");
-    expect(await app.evaluate(({ BrowserWindow }: any) => BrowserWindow.getAllWindows()[0].getBackgroundColor())).toBe("#161413");
+    expect(await app.evaluate(({ BrowserWindow }: any) => BrowserWindow.getAllWindows().find((w: any) => w.isVisible()).getBackgroundColor())).toBe("#161413");
 
     // Relaunch: the window is created dark and the first frame is already dark.
     await closeElectron(app);
     await launch();
-    const bg = await app.evaluate(({ BrowserWindow }: any) => BrowserWindow.getAllWindows()[0].getBackgroundColor());
+    const bg = await app.evaluate(({ BrowserWindow }: any) => BrowserWindow.getAllWindows().find((w: any) => w.isVisible()).getBackgroundColor());
     expect(bg).toBe("#161413");
     const first = await page.evaluate(() => (window as any).__firstFrame);
     expect(first).toEqual({ theme: "dark", bg: "rgb(22, 20, 19)" });
