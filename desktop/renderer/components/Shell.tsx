@@ -24,6 +24,7 @@ export function Sidebar({ sessions, current, daemon, route, go, openPalette }: {
         <button className="side-btn primary" onClick={() => go("/")}>New Session</button>
         <button className={`side-btn ${route?.startsWith("/missions") ? "on" : ""}`} onClick={() => go("/missions")}>Mission Control</button>
         <button className={`side-btn ${route?.startsWith("/workstreams") ? "on" : ""}`} onClick={() => go("/workstreams")}>Workstreams</button>
+        <button className={`side-btn ${route?.startsWith("/review") ? "on" : ""}`} onClick={() => go("/review")}>Review</button>
         <button className={`side-btn ${route?.startsWith("/automations") ? "on" : ""}`} onClick={() => go("/automations")}>Automations</button>
         <button className="side-btn" onClick={openPalette}>Search <kbd>Ctrl+K</kbd></button>
       </div>
@@ -77,7 +78,7 @@ export function Palette({ sessions, go, close, actions }: { sessions: SessionRow
   const [sel, setSel] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => input.current?.focus(), []);
-  const pages = [{ id: "home", label: "Home", run: () => go("/") }, { id: "missions", label: "Go to Mission Control", run: () => go("/missions") }, { id: "workstreams", label: "Go to Workstreams", run: () => go("/workstreams") }, { id: "automations", label: "Go to Automations", run: () => go("/automations") }];
+  const pages = [{ id: "home", label: "Home", run: () => go("/") }, { id: "missions", label: "Go to Mission Control", run: () => go("/missions") }, { id: "workstreams", label: "Go to Workstreams", run: () => go("/workstreams") }, { id: "review", label: "Go to Review", run: () => go("/review") }, { id: "automations", label: "Go to Automations", run: () => go("/automations") }];
   const settingsPages = ["general", "appearance", "notifications", "session-defaults", "missions", "custom-models", "worktrees", "connectors", "session-management", "usage", "support"].map((p) => ({ id: p, label: `Settings: ${p.split("-").map((w, i) => (i ? w : w[0].toUpperCase() + w.slice(1))).join(" ")}`, run: () => go(`/settings/${p}`) }));
   const items = useMemo(() => {
     const ql = q.toLowerCase();

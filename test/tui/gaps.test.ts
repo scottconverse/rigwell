@@ -25,10 +25,11 @@ beforeAll(() => {
   process.env.RIGWELL_HOME = home;
   mkdirSync(join(proj, ".rigwell", "commands"), { recursive: true });
   mkdirSync(join(home, "commands"), { recursive: true });
-  writeFileSync(join(proj, ".rigwell", "commands", "review.md"), "---\ndescription: Review a file\nargument-hint: <file>\n---\nReview $1 carefully. Extra: $ARGUMENTS\n");
-  writeFileSync(join(home, "commands", "review.md"), "user version");
+  writeFileSync(join(proj, ".rigwell", "commands", "inspect.md"), "---\ndescription: Review a file\nargument-hint: <file>\n---\nReview $1 carefully. Extra: $ARGUMENTS\n");
+  writeFileSync(join(home, "commands", "inspect.md"), "user version");
   writeFileSync(join(home, "commands", "plain.md"), "# Plain prompt\nDo the thing.");
   writeFileSync(join(home, "commands", "help.md"), "shadowed by built-in");
+  writeFileSync(join(proj, ".rigwell", "commands", "review.md"), "shadowed by built-in review");
   mkdirSync(join(proj, ".rigwell", "skills", "tidy"), { recursive: true });
   writeFileSync(join(proj, ".rigwell", "skills", "tidy", "SKILL.md"), "---\nname: tidy\ndescription: Tidy things up\n---\nTidy body");
   mkdirSync(join(proj, ".rigwell", "agents"), { recursive: true });
@@ -44,9 +45,9 @@ describe("custom commands and skills", () => {
   test("loads project and user commands plus skills; built-in names and duplicates are skipped", () => {
     const all = loadCustomEntries(proj, "/nonexistent-home");
     const entries = all.entries.filter((e) => e.origin !== "builtin");
-    expect(entries.map((e) => `${e.kind}:${e.name}:${e.origin}`)).toEqual(["command:review:project", "command:plain:user", "skill:tidy:project-dir"]);
-    // built-in skills are offered too, but the project command "review" wins over the built-in skill of that name
-    expect(all.entries.filter((e) => e.origin === "builtin").map((e) => e.name)).not.toContain("review");
+    expect(entries.map((e) => `${e.kind}:${e.name}:${e.origin}`)).toEqual(["command:inspect:project", "command:plain:user", "skill:tidy:project-dir"]);
+    // /review is now a built-in command; project files cannot shadow it.
+    expect(entries.map((e) => e.name)).not.toContain("review");
     expect(all.skills).toBe(1 + BUILTIN_SKILLS.length);
     expect(entries[0].desc).toBe("Review a file");
     expect(entries[0].argHint).toBe("<file>");
@@ -69,15 +70,15 @@ describe("custom commands and skills", () => {
     let d = driver();
     d = ev(d, { type: "extras", custom: entries, skills, mcps: 2, issues: 1 });
     expect(d.s.header).toMatchObject({ skills: nSkills, mcps: 2, issues: 1 });
-    expect(matchCommands("re", d.s.custom).map((c) => c.name)).toContain("review");
-    d = type(d, "/rev");
-    expect(stripAnsi(render(d.s, { width: 80, height: 30, color: false }).lines.join("\n"))).toContain("/review <file>  Review a file");
+    expect(matchCommands("ins", d.s.custom).map((c) => c.name)).toContain("inspect");
+    d = type(d, "/ins");
+    expect(stripAnsi(render(d.s, { width: 80, height: 30, color: false }).lines.join("\n"))).toContain("/inspect <file>  Review a file");
     d = key(d, "tab");
     d = type(d, "x.ts");
     d = key(d, "enter");
     const send = d.effects.find((e) => e.type === "send") as any;
     expect(send.text).toBe("Review x.ts carefully. Extra: x.ts");
-    expect(d.s.items.at(-1)).toMatchObject({ kind: "user", text: "/review x.ts" });
+    expect(d.s.items.at(-1)).toMatchObject({ kind: "user", text: "/inspect x.ts" });
     expect(d.s.running).toBe(true);
   });
 });
@@ -147,7 +148,7 @@ describe("buildView against a mocked transport", () => {
     expect((await buildView("hooks", "", ctx)).lines.join("\n")).toContain("[Execute] echo hi");
     expect((await buildView("skills", "", ctx)).lines.join("\n")).toContain("tidy  [enabled]  project-dir");
     const cmds = (await buildView("commands", "", ctx)).lines.join("\n");
-    expect(cmds).toContain("/review <file>  (project)");
+    expect(cmds).toContain("/inspect <file>  (project)");
     expect(cmds).toContain("$ARGUMENTS");
     expect((await buildView("agents", "", ctx)).lines.join("\n")).toContain("scout  (project, model inherit)");
   });

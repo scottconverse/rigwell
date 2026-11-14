@@ -41,6 +41,7 @@ const parkMs = () => Number(process.env.RIGWELL_PARK_MS) || 30 * 60_000;
 
 export interface ConnectionOptions {
   codeProviderDeps?: CodeProviderDeps;
+  reviewHostDeps?: import("../review/host.ts").ReviewHostDeps;
   /** Owned sessions publish committed user messages to their live transcript views. */
   notifyUserMessages?: boolean;
   /** An owned live session can have transcript/control views without another engine or replacing its host. */
@@ -92,6 +93,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
   let worktree: SessionWorktree | undefined;
   let shared: ReturnType<NonNullable<ConnectionOptions["sharedSession"]>>;
   let unsubscribeShared: (() => void) | undefined;
+  let reviews: import("../review/service.ts").ReviewService | undefined;
 
   const peer: RpcPeer = new RpcPeer(write, (m, p) => handle(m, p), opts.log);
 
@@ -620,6 +622,10 @@ export function createConnection(write: (line: string) => void, opts: Connection
       }
       default: {
         if (opts.extraMethods?.[method]) return opts.extraMethods[method](p);
+        if (["review_snapshot", "review_task", "review_submit"].includes(method)) {
+          reviews ??= new (await import("../review/service.ts")).ReviewService({ cwd: () => session?.cwd ?? process.cwd(), approve: opts.canPrompt ? hostFor().requestPermission : undefined, host: opts.reviewHostDeps });
+          return reviews.handle(method, p);
+        }
         const w = await handleWorktreeMethod(method, p, { cwd: session?.cwd, settings: () => environment(session?.cwd ?? process.cwd()).s, log: opts.log, requestPermission: hostFor().requestPermission });
         if (w.handled) return w.result;
         const a = await handleAuthMethod(method, p, () => environment(session?.cwd ?? process.cwd()).s);

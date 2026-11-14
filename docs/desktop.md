@@ -140,3 +140,7 @@ Browser tab > Import cookies. Pick a Chrome or Chromium profile, press Show site
 ### Tests for these features
 
 `bun test test/desktop/electron-wave4.test.ts` drives the real app: dictation with a fake speech-to-text program, secrets, OAuth against `test/fakes/fake-oauth.ts`, org labels, templates, overview and guided setup, tray (through the `RIGWELL_TEST_HOOKS=1` hook), spec handoff and cookie import with a synthetic database. Unit tests: `chrome-cookies`, `update-verify`, `dictation`, `tray`, `wave4-lib` in `test/desktop`, `test/tui/login.test.ts`.
+
+### Branch and PR review
+
+See [Review](review.md) for branch/PR loading, semantic changes, line comments, confirmed posting and `/review` in the TUI.

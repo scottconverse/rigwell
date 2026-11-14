@@ -123,6 +123,7 @@ export function permissionPanel(id: string, params: any, display: DisplaySetting
   switch (u.confirmationType) {
     case "propose_workstream": return { ...base, kind: "exit_spec", title: `Workstream for approval: ${d.title}`, body: [`Goal: ${d.goal}`, ...(d.budget ? [`Budget: ${JSON.stringify(d.budget)}`] : []), ...(d.agents?.length ? [`Members: ${JSON.stringify(d.agents)}`] : []), "", ...String(d.plan ?? "").split("\n")], planText: String(d.plan ?? ""), options: opts };
     case "create_pr": return { ...base, kind: "permission", title: "Push branch and create PR?", body: [`Repository: ${d.repository}`, `Branch: ${d.branch}`, `Base: ${d.base}`, `Title: ${d.title}`, `Draft: ${d.draft ? "yes" : "no"}`, "", String(d.body)], options: opts };
+    case "code_review": return { ...base, kind: "permission", title: "Post review to the PR?", body: [`Repository: ${d.repository}`, `PR: #${d.number}`, `Head: ${d.head}`, `Action: ${d.event}`, "", String(d.body), ...(d.comments ?? []).map((c: any) => `${c.path}:${c.line} (${c.side})\n${c.body}`)], options: opts };
     case "exec": {
       const body = [String(d.fullCommand ?? d.command ?? "")];
       if (d.impactLevel) body.push("", `${d.impactLevel} risk`);
@@ -594,7 +595,7 @@ function runCommand(s0: TuiState, line: string): Step {
     case "cwd":
       if (!args) return { state: { ...s, items: [...s.items, info(`Folder: ${s.cwd}. Usage: /cwd <dir>`)] }, effects: [] };
       return guard([{ type: "new_session", cwd: args }], `moves to ${args} in a new session`);
-    case "pr": case "mcp": case "hooks": case "skills": case "commands": case "agents": case "diagnostics": case "statusline": case "automations": case "loop": case "login": case "logout":
+    case "pr": case "review": case "mcp": case "hooks": case "skills": case "commands": case "agents": case "diagnostics": case "statusline": case "automations": case "loop": case "login": case "logout":
       return view(cmd.name as any);
     case "vim": return { state: { ...s, vim: !s.vim, vimMode: "insert", hint: `Vim keys ${s.vim ? "off" : "on"}` }, effects: [] };
     case "themes": {

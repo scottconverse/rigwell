@@ -9,6 +9,7 @@ import { loadCustomCommands } from "./customcmd.ts";
 import { runStatusLine, statusLineConfig, type StatusLineInput } from "./attention.ts";
 import type { TuiState } from "./types.ts";
 import { workstreamsView } from "./workstreams.ts";
+import type { ReviewSnapshot } from "../review/local.ts";
 
 export interface ViewCtx {
   request: (method: string, params: Record<string, unknown>) => Promise<any>;
@@ -286,6 +287,14 @@ async function logoutView(args: string, c: ViewCtx): Promise<View> {
 export async function buildView(name: string, args: string, c: ViewCtx): Promise<View> {
   switch (name) {
     case "workstreams": return workstreamsView(args, c);
+    case "review": {
+      try {
+        const w = words(args);
+        const r: ReviewSnapshot = await c.request("review_snapshot", { cwd: c.state.cwd, ...(w[0] === "pr" ? { pr: w[1] ? Number(w[1]) : true } : w[0] ? { base: w[0] } : {}) });
+        const location = (p: { path: string; line: number } | undefined) => p ? `${p.path}:${p.line}` : "none";
+        return { title: "Review", lines: [r.pr ? `#${r.pr.number} ${r.pr.title} [${r.pr.state}]` : "Branch and working changes", `${r.files.length} files | ${r.base.slice(0, 10)} to ${r.head.slice(0, 10)}`, ...r.files.map((f) => `${f.status} ${f.oldPath ? f.oldPath + " to " : ""}${f.path}${f.binary ? " (binary)" : ""}`), "", "Semantic changes", ...r.semantic.changes.map((s) => `${s.kind}${s.renamed ? "/renamed" : ""} ${s.symbolKind} ${s.name}${s.changed ? " (also changed)" : ""}: ${location(s.from)} to ${location(s.to)}`), ...r.semantic.warnings.map((s) => `${s.path}: ${s.message}`), ...(r.checks.length ? ["", "Checks", ...r.checks.map((s) => `${s.name}: ${s.state}`)] : []), ...(r.comments.length ? ["", "Existing comments", ...r.comments.map((s) => `${s.author ?? "Reviewer"}${s.path ? ` ${s.path}:${s.line ?? ""}` : ""}: ${s.body}`)] : [])] };
+      } catch (e) { return { title: "Review", lines: [errText(e)] }; }
+    }
     case "pr": {
       const title = "Pull request", w = words(args);
       try {

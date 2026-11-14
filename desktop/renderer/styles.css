@@ -246,3 +246,21 @@ h3.cap { text-transform: capitalize; }
 .chip.rec { border-color: #e5484d; color: #e5484d; }
 .menu.note { padding: 10px; max-width: 360px; white-space: normal; }
 .cookie-list { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+.review-layout { display: grid; grid-template-columns: minmax(160px, 220px) minmax(0, 1fr); gap: 16px; margin: 12px 0; }
+.review-tree, .review-tree ul { list-style: none; padding-left: 12px; }
+.review-tree > li { margin: 4px 0; }
+.review-tree [aria-selected="true"] > button { outline: 1px solid var(--accent); }
+.review-content { overflow: auto; min-width: 0; }
+.review-diff { border-collapse: collapse; width: 100%; font: var(--size-code) var(--font-code); }
+.review-diff td { vertical-align: top; padding: 2px 5px; }
+.review-code { white-space: pre; min-width: 240px; }
+.review-code.added { background: #2da44e20; }
+.review-code.removed { background: #cf222e20; }
+.review-line { width: 42px; text-align: right; user-select: none; }
+.review-line button { border: 0; padding: 0 4px; background: transparent; font: inherit; color: var(--fg-muted); }
+.review-line button:hover { color: var(--accent); }
+.review-hunk { color: var(--fg-muted); background: var(--code-bg); }
+.review-page article { border-bottom: 1px solid var(--border); padding: 8px 0; }
+.review-page article p { white-space: pre-wrap; }
+.review-page textarea { display: block; width: min(100%, 800px); min-height: 80px; margin: 8px 0; }
+@media (max-width: 800px) { .review-layout { grid-template-columns: 1fr; } }

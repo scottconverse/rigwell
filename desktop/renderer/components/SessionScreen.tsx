@@ -127,6 +127,7 @@ function Loaded({ ctl }: { ctl: SessionController }) {
                 <button role="menuitem" className="menu-item" onClick={() => { setMenu(false); setDialog("rename"); }}>Rename</button>
                 <button role="menuitem" className="menu-item" onClick={() => void act(() => ctl.setArchived(!state.archived), state.archived ? "Unarchived" : "Archived")}>{state.archived ? "Unarchive" : "Archive"}</button>
                 <button role="menuitem" className="menu-item" onClick={() => { showTab("terminal"); setMenu(false); }}>Open terminal</button>
+                <button role="menuitem" className="menu-item" onClick={() => { window.location.hash = `/review?folder=${encodeURIComponent(state.cwd)}`; setMenu(false); }}>Review changes</button>
                 <button role="menuitem" className="menu-item" onClick={() => void copy(state.cwd, "working folder")}>Copy working folder</button>
                 <button role="menuitem" className="menu-item" onClick={() => void copy(id, "session id")}>Copy session id</button>
                 <button role="menuitem" className="menu-item" onClick={() => void copy(`rigwell://sessions/${id}`, "session link")}>Copy session link</button>
