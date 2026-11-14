@@ -15,6 +15,23 @@ const args=process.argv.slice(2);
 if(args[0]==='auth'){console.log(JSON.stringify({loggedIn:true,authMethod:process.env.FAKE_API?'api_key':'claude.ai',subscriptionType:'max'}));process.exit(0)}
 if(args[0]==='login'){console.error('Logged in using ChatGPT');process.exit(0)}
 let prompt='';for await(const chunk of process.stdin)prompt+=chunk;
+if(process.env.FAKE_BRIDGE){
+ let url,token;
+ if(args[0]==='exec'){
+  url=JSON.parse(args.find(a=>a.startsWith('mcp_servers.rigwell.url=')).split('=').slice(1).join('='));
+  token=process.env.RIGWELL_COORDINATION_TOKEN;
+ }else{
+  const config=JSON.parse(await Bun.file(args[args.indexOf('--mcp-config')+1]).text());
+  url=config.mcpServers.rigwell.url;token=config.mcpServers.rigwell.headers.Authorization.slice(7);
+ }
+ const call=async(method,params={})=>(await(await fetch(url,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})})).json());
+ const tool=process.env.FAKE_ASK?'AskUser':'ListAgents';
+ const listed=await call('tools/list');if(!listed.result.tools.some(t=>t.name===tool))process.exit(12);
+ if(args[0]==='exec'&&!args.includes('mcp_servers.rigwell.tools.'+tool+'.approval_mode="approve"'))process.exit(14);
+ const result=await call('tools/call',{name:tool,arguments:process.env.FAKE_ASK?{questions:[{topic:'Fixture',question:'Which fixture?',options:['one','two']}]}:{}});
+ if(process.env.FAKE_EXPECT_DENIED){if(!result.result.isError)process.exit(15)}
+ else if(!result.result.content[0].text.includes('fixture-roster'))process.exit(13);
+}
 if(process.env.ANTHROPIC_API_KEY||process.env.OPENAI_API_KEY)process.exit(9);
 if(process.env.FAKE_BAD){console.log('not-json');process.exit(0)}
 if(process.env.FAKE_FAIL){console.log(JSON.stringify({type:'turn.failed',error:{message:'failed'}}));process.exit(0)}
@@ -38,6 +55,54 @@ for (const backend of ["claude-cli", "codex-cli"] as const) test(`${backend} com
   expect(done(events).stopReason).toBe("end_turn");
   expect(done(events).usage.cacheReadTokens).toBe(5);
   expect(done(events).content[0]).toMatchObject({ type: "text" });
+});
+
+for (const backend of ["claude-cli", "codex-cli"] as const) test(`${backend} MCP calls use Rigwell Session gates and recorded tool results`, async () => {
+  let called = 0;
+  const s = makeStubSession(() => { throw new Error("must use native client"); }, {
+    resolveModel: () => req(backend).model, createAdapter: () => adapter({ FAKE_BRIDGE: "1" }), streamWithRetry,
+    toolsFor: () => [{ name: "ListAgents", description: "fixture", inputSchema: { type: "object" }, category: "other", async run(_input, ctx) { called++; expect(ctx.sessionId).toBe(s.session.id); return { content: "fixture-roster" }; } }],
+    decide: () => ({ decision: "allow" }),
+  });
+  try {
+    s.session.addUserMessage("Read the Workstream roster"); await s.session.settled();
+    expect(called).toBe(1);
+    expect(s.notes.some((n) => n.type === "tool_result" && n.content === "fixture-roster")).toBe(true);
+    const use = s.stored.flatMap((m) => m.content).find((b) => b.type === "tool_use");
+    expect(use?.type === "tool_use" && use.name).toBe("ListAgents");
+    expect(use?.type === "tool_use" && use.scriptExecution).toBeUndefined();
+  } finally { await s.session.end(); rmSync(s.cwd, { recursive: true, force: true }); }
+});
+
+test("native coordination cannot bypass the owning Session's permission refusal", async () => {
+  let called = false;
+  const s = makeStubSession(() => { throw new Error("must use native client"); }, {
+    resolveModel: () => req("codex-cli").model, createAdapter: () => adapter({ FAKE_BRIDGE: "1", FAKE_EXPECT_DENIED: "1" }), streamWithRetry,
+    toolsFor: () => [{ name: "ListAgents", description: "fixture", inputSchema: { type: "object" }, category: "other", async run() { called = true; return { content: "fixture-roster" }; } }],
+    decide: () => ({ decision: "block", message: "Fixture policy refuses this tool" }),
+  });
+  try {
+    s.session.addUserMessage("Read the roster"); await s.session.settled();
+    expect(called).toBe(false);
+    expect(s.notes.some((n) => n.type === "tool_result" && n.isError && n.content.includes("Fixture policy"))).toBe(true);
+    expect(s.notes.some((n) => n.type === "agent_turn_completed" && n.reason === "completed")).toBe(true);
+  } finally { await s.session.end(); rmSync(s.cwd, { recursive: true, force: true }); }
+});
+
+test("native member questions reach the user through Rigwell AskUser", async () => {
+  let asked = 0;
+  const s = makeStubSession(() => { throw new Error("must use native client"); }, {
+    resolveModel: () => req("codex-cli").model, createAdapter: () => adapter({ FAKE_BRIDGE: "1", FAKE_ASK: "1" }), streamWithRetry,
+    autoRejectPermissionRequests: false,
+  }, { async requestAskUser(params) {
+    asked++; expect(params.questions).toMatchObject([{ topic: "Fixture", question: "Which fixture?" }]);
+    return { answers: [{ index: 0, question: "Which fixture?", answer: "fixture-roster" }] };
+  } });
+  try {
+    s.session.addUserMessage("Ask the user which fixture"); await s.session.settled();
+    expect(asked).toBe(1);
+    expect(s.notes.some((n) => n.type === "tool_result" && n.content.includes("fixture-roster"))).toBe(true);
+  } finally { await s.session.end(); rmSync(s.cwd, { recursive: true, force: true }); }
 });
 test("native auth rejects API-key login before execution", async () => {
   const error = await collect(adapter({ FAKE_API: "1" }).stream(req("claude-cli"))).catch((e) => e);

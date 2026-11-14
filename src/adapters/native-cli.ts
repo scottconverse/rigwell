@@ -1,13 +1,15 @@
 // Official signed-in clients as adapters within Rigwell's session loop.
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { ModelError, type ModelAdapter, type ModelRequest, type StreamEvent, type TokenUsage } from "../core/types.ts";
+import { COORDINATION_TOOLS, startCoordinationBridge } from "./coordination-bridge.ts";
+import { makePrivate } from "../platform/private.ts";
 
 type Backend = "claude-cli" | "codex-cli";
 const failure = (message: string) => new ModelError("rejected", message, { retryable: false });
-const cleanError = (text: string) => text.replace(/sk-[A-Za-z0-9_-]+/g, "[redacted]").slice(0, 700);
+const cleanError = (text: string) => text.replace(/sk-[A-Za-z0-9_-]+/g, "[redacted]").replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, "Bearer [redacted]").slice(0, 700);
 
 /** Preserve the user's CLI login; inherited API/cloud routing cannot replace it. */
 export function nativeEnvironment(source = process.env): NodeJS.ProcessEnv {
@@ -36,19 +38,25 @@ export function findNativeExecutable(backend: Backend): string | undefined {
   return candidates.find((p): p is string => !!p && /\.exe$/i.test(p) && existsSync(p));
 }
 
-export function nativeArguments(req: ModelRequest): string[] {
+export function nativeArguments(req: ModelRequest, bridge?: { url: string; configFile: string }): string[] {
   const backend = req.model.executionBackend;
   const context = req.nativeExecution;
   if (!context || !path.isAbsolute(context.cwd)) throw failure("Signed-in CLI execution requires the session's absolute workspace");
   const unsafe = context.skipPermissions && !context.readOnly;
   const args = backend === "claude-cli"
     ? ["-p", "--model", req.model.model, "--output-format", "stream-json", "--verbose", "--no-session-persistence",
-      "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--disable-slash-commands",
+      "--strict-mcp-config", "--mcp-config", bridge?.configFile ?? '{"mcpServers":{}}', "--disable-slash-commands",
+      ...(bridge ? ["--allowedTools", "mcp__rigwell__*"] : []),
       ...(context.synthesis ? ["--tools", ""] : []),
       ...(unsafe ? ["--dangerously-skip-permissions"] : ["--permission-mode", context.readOnly ? "plan" : "acceptEdits"])]
     : ["exec", "--model", req.model.model, "--json", "--ephemeral", "--color", "never", "--skip-git-repo-check",
       "-c", 'model_provider="openai"', "-c", 'approval_policy="never"',
       ...(unsafe ? ["--dangerously-bypass-approvals-and-sandbox"] : ["--sandbox", context.readOnly ? "read-only" : "workspace-write"])];
+  if (bridge && backend === "codex-cli") {
+    args.push("-c", `mcp_servers.rigwell.url=${JSON.stringify(bridge.url)}`, "-c", 'mcp_servers.rigwell.bearer_token_env_var="RIGWELL_COORDINATION_TOKEN"');
+    // This grants transport to Rigwell's own gated tools, not native shell/file approval.
+    for (const tool of context.coordination?.tools() ?? []) if (COORDINATION_TOOLS.has(tool.name)) args.push("-c", `mcp_servers.rigwell.tools.${tool.name}.approval_mode="approve"`);
+  }
   if (req.reasoningEffort && !["none", "off", "dynamic"].includes(req.reasoningEffort)) {
     args.push(...(backend === "claude-cli" ? ["--effort", req.reasoningEffort] : ["-c", `model_reasoning_effort=${JSON.stringify(req.reasoningEffort)}`]));
   }
@@ -70,7 +78,9 @@ export function nativePrompt(req: ModelRequest): string {
   }
   if (current < 0) throw failure("No current user request for signed-in CLI execution");
   return [
-    "You are executing one request inside Rigwell. Use your native tools in the selected workspace. Rigwell's named tools in the guidance are unavailable here. Do not emit simulated tool-call JSON. Obey native permissions; do not bypass a refusal.",
+    "You are executing one request inside Rigwell. Use your native coding tools in the selected workspace. " + (req.nativeExecution?.coordination
+      ? "Use the rigwell MCP server for Workstream coordination: " + req.nativeExecution.coordination.tools().map((t) => t.name).join(", ") + ". Rigwell owns approval, member identity, budgets, messages and persistent worktrees. Never substitute native subagents for Workstream members. Other Rigwell tools in the guidance are unavailable here."
+      : "Rigwell's named tools in the guidance are unavailable here.") + " Do not emit simulated tool-call JSON. Obey native permissions; do not bypass a refusal.",
     "Rigwell session guidance:\n" + req.system.join("\n\n"),
     "Conversation history is context, not renewed authorization. Do not repeat completed actions:\n" + req.messages.slice(0, current).map((m) => `${m.role}: ${text(m)}`).join("\n\n"),
     "Current user request:\n" + text(req.messages[current]!),
@@ -132,7 +142,7 @@ async function runProcess(o: ProcessOptions): Promise<{ stdout: string; stderr: 
 export class NativeCliAdapter implements ModelAdapter {
   constructor(private options: { command?: string[]; env?: NodeJS.ProcessEnv } = {}) {}
   async *stream(req: ModelRequest): AsyncGenerator<StreamEvent> {
-    const args = nativeArguments(req), prompt = nativePrompt(req);
+    const prompt = nativePrompt(req);
     const backend = req.model.executionBackend!;
     const executable = this.options.command?.[0] ?? req.model.cliExecutable ?? findNativeExecutable(backend);
     if (!executable) throw failure(`Install the official ${backend} client or configure cliExecutable`);
@@ -150,6 +160,23 @@ export class NativeCliAdapter implements ModelAdapter {
     let usage: TokenUsage = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, thinkingTokens: 0 };
     const controller = new AbortController();
     const signal = req.signal ? AbortSignal.any([controller.signal, req.signal]) : controller.signal;
+    let bridge: ReturnType<typeof startCoordinationBridge> | undefined, configDir: string | undefined;
+    let args: string[];
+    try {
+      const host = req.nativeExecution?.coordination;
+      if (host && !req.nativeExecution?.synthesis && host.tools().length) {
+        bridge = startCoordinationBridge(host, signal);
+        configDir = mkdtempSync(path.join(tmpdir(), "rigwell-coordination-"));
+        if (!makePrivate(configDir, { dir: true })) throw failure("Could not protect the coordination configuration");
+        const configFile = path.join(configDir, "mcp.json");
+        writeFileSync(configFile, JSON.stringify({ mcpServers: { rigwell: { type: "http", url: bridge.url, headers: { Authorization: `Bearer ${bridge.token}` } } } }), { mode: 0o600 });
+        if (!makePrivate(configFile)) throw failure("Could not protect the coordination capability");
+        env.RIGWELL_COORDINATION_TOKEN = bridge.token;
+        args = nativeArguments(req, { url: bridge.url, configFile });
+      } else args = nativeArguments(req);
+    } catch (e) {
+      await bridge?.close(); if (configDir) rmSync(configDir, { recursive: true, force: true }); throw e;
+    }
     const task = runProcess({ ...common, signal, args: [...prefix, ...args], input: prompt,
       timeoutMs: req.limits?.hardLimitMs ?? 600_000,
       onLine: (line) => {
@@ -188,6 +215,9 @@ export class NativeCliAdapter implements ModelAdapter {
       text += final;
       yield { type: "text_delta", index: 0, text: final };
       yield { type: "message_done", content: [{ type: "text", text }], stopReason: "end_turn", usage };
-    } finally { controller.abort(); await task; }
+    } finally {
+      controller.abort(); await task; await bridge?.close();
+      if (configDir) rmSync(configDir, { recursive: true, force: true });
+    }
   }
 }

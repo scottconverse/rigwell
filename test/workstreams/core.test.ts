@@ -48,6 +48,20 @@ test("accepted edited proposal persists the shared folder, atomic roster and lif
   } finally { await service.stop(); }
 });
 
+test("a cancelled native proposal cannot create a Workstream after a late approval", async () => {
+  process.env.RIGWELL_HOME = tmp("ws-cancel-proposal");
+  const service = createWorkstreamService(), session = lead(tmp("ws-cwd"));
+  const controller = new AbortController();
+  let answer!: (value: any) => void;
+  try {
+    const pending = service.propose({ session: () => session, notify() {}, request: () => new Promise((resolve) => { answer = resolve; }) }, proposal, controller.signal);
+    controller.abort();
+    expect(await pending).toMatchObject({ accepted: false });
+    answer({ selectedOption: "proceed_once" }); await Bun.sleep(0);
+    expect(listWorkstreamStores()).toEqual([]); expect(service.members.size).toBe(0);
+  } finally { await service.stop(); }
+});
+
 test("two real member sessions use separate worktrees, stay live when idle, and cap autonomy", async () => {
   const fake = await startFakeAnthropic(Array.from({ length: 20 }, () => ({ text: "Member task completed" })));
   const home = makeHome([{ provider: "anthropic", url: fake.url, displayName: "Fixture" }]);

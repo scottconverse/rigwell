@@ -1,4 +1,5 @@
 import type { Session } from "../agent/session.ts";
+import { abortable } from "../core/abort.ts";
 import { zeroUsage, type AutonomyLevel, type ReasoningEffort, type Tool, type ToolContext, type ToolOutput, type TokenUsage } from "../core/types.ts";
 import { loadSettings } from "../storage/settings.ts";
 import { repoTopLevel } from "../worktree/git.ts";
@@ -233,7 +234,8 @@ export function createWorkstreamService(opts: { log?: (text: string) => void } =
     });
     return { messageId: results[0]!.messageId, delivered: results.every((r) => r.delivered), ...(results.length > 1 ? { messageIds: results.map((r) => r.messageId) } : {}) };
   }
-  async function propose(conn: WorkstreamConn, input: Record<string, unknown>): Promise<ProposalResult> {
+  async function propose(conn: WorkstreamConn, input: Record<string, unknown>, signal?: AbortSignal): Promise<ProposalResult> {
+    signal?.throwIfAborted();
     const lead = conn.session(); if (!lead) throw new Error("No lead session");
     if (memberStores.has(lead.id)) throw new Error("Members cannot propose a workstream");
     const settings = workstreamSettings(lead.cwd); if (!settings.enabled) throw new Error("Workstreams are disabled");
@@ -242,10 +244,11 @@ export function createWorkstreamService(opts: { log?: (text: string) => void } =
     const budget = budgetFrom(input.budget);
     if (!conn.request) return { accepted: false, reason: "A user approver is required" };
     const requestId = crypto.randomUUID();
-    const answer = await conn.request("request_permission", { requestId,
+    const answer = await abortable(conn.request("request_permission", { requestId,
       toolUses: [{ toolUse: { type: "tool_use", id: requestId, name: "ProposeWorkstream", input }, confirmationType: "propose_workstream", details: { title, goal, plan, budget, agents: input.agents ?? [] } }],
       options: [{ label: "Accept workstream", value: "proceed_once" }, { label: "Edit plan and accept", value: "proceed_edit" }, { label: "Reject", value: "cancel" }],
-    }).catch(() => ({ selectedOption: "cancel" }));
+    }), signal).catch(() => ({ selectedOption: "cancel" }));
+    if (signal?.aborted) return { accepted: false, reason: "Proposal cancelled" };
     if (!["proceed_once", "proceed_edit"].includes(answer?.selectedOption)) return { accepted: false };
     const edited = typeof answer.editedSpecContent === "string" && answer.editedSpecContent.trim() ? answer.editedSpecContent : undefined;
     if (answer.selectedOption === "proceed_edit" && !edited) return { accepted: false };
@@ -372,7 +375,7 @@ export function createWorkstreamService(opts: { log?: (text: string) => void } =
       }),
     ];
     if (conn && !memberStores.has(sessionId)) extra.unshift(
-      tool("ProposeWorkstream", "Ask the user to approve a local Workstream. No member starts before approval.", { title: { type: "string" }, goal: { type: "string" }, plan: { type: "string" }, budget: { type: "object", properties: { maxTokens: { type: "number" }, maxCostUsd: { type: "number" }, maxWallMinutes: { type: "number" } } }, agents: { type: "array", items: { type: "object" } } }, ["title", "goal", "plan"], (input) => propose(conn, input)),
+      tool("ProposeWorkstream", "Ask the user to approve a local Workstream. No member starts before approval.", { title: { type: "string" }, goal: { type: "string" }, plan: { type: "string" }, budget: { type: "object", properties: { maxTokens: { type: "number" }, maxCostUsd: { type: "number" }, maxWallMinutes: { type: "number" } } }, agents: { type: "array", items: { type: "object" } } }, ["title", "goal", "plan"], (input, ctx) => propose(conn, input, ctx.signal)),
     );
     if (!member || (store?.read().settings.allowNestedSpawn && member.tools?.includes("SpawnAgent") && member.depth < 2)) extra.splice(!member && conn ? 1 : 0, 0,
       tool("SpawnAgent", "Start a persistent member in its own worktree. Autonomy and tools cannot exceed the parent. Nesting requires explicit approval and ends at depth 2.", { name: { type: "string" }, role: { type: "string" }, prompt: { type: "string" }, model: { type: "string" }, reasoningEffort: { type: "string" }, cwd: { type: "string" }, tools: { type: "array", items: { type: "string" } }, worktree: { anyOf: [{ type: "boolean" }, { type: "object", properties: { branch: { type: "string" } } }] }, autonomyLevel: { type: "string", enum: autonomy } }, ["name", "role", "prompt"], (input) => spawn((member ? members.get(member.agentId)?.connection.session : conn?.session())!, input)),

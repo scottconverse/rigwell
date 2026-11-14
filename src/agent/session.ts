@@ -23,6 +23,7 @@ import { AUTO_MODEL_ID, route, type RouteChoice, type RouterConfig } from "./rou
 import type { CompactionRecord } from "../storage/transcript.ts";
 import { DeferredRegistry, type DeferredState } from "./deferred.ts";
 import { RequestBuilder } from "./request.ts";
+import { COORDINATION_TOOLS } from "../adapters/coordination-bridge.ts";
 import { contextBreakdown } from "./context-stats.ts";
 import { estimateTokens } from "./budget.ts";
 import type { HookRunner } from "../hooks/index.ts";
@@ -1443,7 +1444,25 @@ export class Session {
       throw new ModelError("rejected", "The signed-in client cannot enforce this session's Rigwell sandbox, commit scan or restricted tool policy. Use a direct adapter for this session.", { retryable: false });
     }
     return {
-      ...(model.executionBackend ? { nativeExecution: { cwd: this.cwd, readOnly: this.specMode || this.settings.autonomyLevel === "off", skipPermissions: this.deps.skipPermissions } } : {}),
+      ...(model.executionBackend ? { nativeExecution: {
+        cwd: this.cwd, readOnly: this.specMode || this.settings.autonomyLevel === "off", skipPermissions: this.deps.skipPermissions,
+        coordination: {
+          tools: () => this.scriptTools().filter((t) => COORDINATION_TOOLS.has(t.name)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+          call: async (name: string, input: Record<string, unknown>, callSignal: AbortSignal) => {
+            if (callSignal.aborted || signal?.aborted || !COORDINATION_TOOLS.has(name)) throw new Error("Coordination call is no longer available");
+            const runId = `native-${crypto.randomUUID()}`, id = `${runId}-1`;
+            const cancel = () => {
+              for (const p of this.prompts.values()) {
+                const uses = p.params.toolUses as { toolUse?: { id?: string } }[] | undefined;
+                if (p.params.toolCallId === id || uses?.some((u) => u.toolUse?.id === id)) p.resolve(p.fallback);
+              }
+            };
+            callSignal.addEventListener("abort", cancel, { once: true });
+            try { return await this.callInner(name, input, { runId, n: 1, outerId: "", signal: callSignal, foreground: true, native: true }); }
+            finally { callSignal.removeEventListener("abort", cancel); }
+          },
+        },
+      } } : {}),
       model, sessionId: this.id, mode: this.effectiveMode(), tools: this.tools(), messages: this.messages,
       reasoningEffort: this.activeEffort(), signal,
       extraSystem: [...(prof.promptVariant ? [prof.promptVariant] : []), ...(this.deps.extraSystem ?? [])],
@@ -1703,11 +1722,11 @@ export class Session {
    */
   private async callInner(
     name: string, inputIn: Record<string, unknown>,
-    meta: { runId: string; n: number; outerId: string; signal: AbortSignal; foreground: boolean },
+    meta: { runId: string; n: number; outerId: string; signal: AbortSignal; foreground: boolean; native?: boolean },
   ): Promise<ToolOutput> {
     const id = `${meta.runId}-${meta.n}`;
     let input = inputIn;
-    const use: ToolUseBlock = { type: "tool_use", id, name, input, scriptExecution: { runId: meta.runId, outerToolUseId: meta.outerId } };
+    const use: ToolUseBlock = { type: "tool_use", id, name, input, ...(meta.native ? {} : { scriptExecution: { runId: meta.runId, outerToolUseId: meta.outerId } }) };
     this.notify({ type: "tool_call", toolUse: use });
     await this.push({ id: `repl-tool-call:${id}`, role: "assistant", visibility: "user_only", content: [use] });
     const finish = async (content: string, isError: boolean) => {
@@ -1719,6 +1738,11 @@ export class Session {
       throw new ToolCallError(message, errName);
     };
     let tool = this.scriptTools().find((t) => t.name === name);
+    if (meta.native && (!tool || !COORDINATION_TOOLS.has(name))) return refuse("Coordination tool is not available in this session", "PermissionDenied");
+    if (meta.native && tool) {
+      const errors = validate(input, tool.inputSchema);
+      if (errors.length) return refuse(`Invalid coordination arguments: ${errors.join("; ")}`);
+    }
     if (!tool) {
       // A deferred tool: callable once loaded (tools.server.tool is the name server__tool).
       if (!this.deferred.get(name) && !this.deferred.isLoaded(name)) {
@@ -1781,6 +1805,7 @@ export class Session {
     const scanned = await this.secretScanGate(use, input);
     if (scanned) return refuse(scanned, "PermissionDenied");
     try {
+      if (meta.native && meta.signal.aborted) return refuse("Coordination request cancelled", "PermissionDenied");
       this.toolCalls++;
       const out = await tool.run(input, { ...this.toolContext(meta.signal), toolUseId: id, snapshots: this.snapshotHooks(id) });
       await finish(out.content, !!out.isError);

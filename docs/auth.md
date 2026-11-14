@@ -26,9 +26,21 @@ per-tool permission dialogs, sandbox policy, commit secret scan or restricted to
 Rigwell policies refuse this backend rather than silently bypassing them. Use a direct adapter for those sessions.
 Native failures are not automatically replayed, because tools may already have changed files.
 
+Workstream coordination uses Rigwell's request-scoped MCP bridge. Both signed-in clients can propose a Workstream,
+spawn persistent members, send messages, read the roster, register listeners, wait for events and control members
+when the owning Session offers those tools. AskUser routes questions to the actual user, including member prompts.
+Calls use Rigwell's permission gates, hooks and transcript records.
+The service binds actor identity to that Session. The bridge exposes no user approval RPC or general daemon methods.
+Only the user can approve a proposal; a late approval after cancellation cannot create the Workstream.
+
+The bridge binds to loopback with a random capability that expires when the native invocation ends. Claude receives
+an owner-only temporary configuration; Codex receives a per-invocation URL and bearer-token environment reference.
+No global MCP configuration is changed. Native permission grants cover only the Rigwell bridge tools, whose actual
+approval still happens inside Rigwell. Cancelling a request closes the bridge and cancels outstanding event waits.
+
 The Windows live acceptance used one identical isolated coding task through Rigwell on the Anthropic subscription,
 OpenAI subscription and a local Chat Completions server; all three external graders passed. This does not establish
-full native Workstream-tool bridging, long-session quality or every account/model entitlement.
+long-session quality or every account/model entitlement. Separate live Workstream checks exercise coordination.
 
 ## A note on terms of use
 

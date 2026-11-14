@@ -136,7 +136,13 @@ export interface ToolSpec {
 export interface ModelRequest {
   model: ModelConfig;
   sessionId: string;
-  nativeExecution?: { cwd: string; readOnly: boolean; skipPermissions: boolean; synthesis?: boolean };
+  nativeExecution?: {
+    cwd: string; readOnly: boolean; skipPermissions: boolean; synthesis?: boolean;
+    coordination?: {
+      tools(): ToolSpec[];
+      call(name: string, input: Record<string, unknown>, signal: AbortSignal): Promise<ToolOutput>;
+    };
+  };
   /**
    * Explicit prompt cache key (spec 4.6.5); the Responses and Chat adapters send `cacheKey ?? sessionId` as prompt_cache_key.
    * A side-chat fork sets it to its parent session id so both share the cached prefix without sharing any session state (spec 17.4).
