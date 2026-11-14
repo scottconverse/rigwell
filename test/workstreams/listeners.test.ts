@@ -32,11 +32,12 @@ test("recurring file reconciliation detects edits and deletion without native ca
   const listeners = new WorkstreamListeners({ watch: silentWatch, fire() {} });
   try {
     const path = f.store.path("shared/existing.txt"); writeFileSync(path, "Before");
+    const expectedPath = canonicalPath(path);
     const result = listeners.create(f.store, "lead", { on: "file_changed", once: false, filter: { glob: "*.txt" } });
     writeFileSync(f.store.path("shared/ignore.md"), "Not a match"); writeFileSync(path, "Changed contents");
-    expect((await listeners.wait(f.store, "lead", { listenerIds: [result.listenerId], timeoutMs: 3000 })).events).toMatchObject([{ trigger: { path: canonicalPath(path), change: "change" } }]);
+    expect((await listeners.wait(f.store, "lead", { listenerIds: [result.listenerId], timeoutMs: 3000 })).events).toMatchObject([{ trigger: { path: expectedPath, change: "change" } }]);
     rmSync(path);
-    expect((await listeners.wait(f.store, "lead", { listenerIds: [result.listenerId], timeoutMs: 3000 })).events).toMatchObject([{ trigger: { path: canonicalPath(path), change: "rename" } }]);
+    expect((await listeners.wait(f.store, "lead", { listenerIds: [result.listenerId], timeoutMs: 3000 })).events).toMatchObject([{ trigger: { path: expectedPath, change: "rename" } }]);
     expect(f.store.events().filter((e) => e.type === "listener_fired")).toHaveLength(2);
     listeners.archive(f.store); expect(f.store.listeners()).toHaveLength(0);
   } finally { listeners.close(); await f.close(); }
