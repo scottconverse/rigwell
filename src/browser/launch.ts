@@ -49,7 +49,9 @@ export async function launchHeadlessBrowser(policy: BrowserPolicy, signal: Abort
   };
   try {
     proxy = await startProxy({ allowed, denied, listen: { port: 0 }, onViolation: (v) => opts.log?.(`[browser] blocked ${v.host}: ${v.reason}`) });
-    child = spawn(executable, ["--headless=new", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
+    // Automation must retain ownership of this child. On Windows Chromium otherwise
+    // relaunches from elevated callers and exits before publishing its CDP endpoint.
+    child = spawn(executable, ["--headless=new", "--enable-automation", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
       `--proxy-server=http://127.0.0.1:${proxy.address}`, "--proxy-bypass-list=<-loopback>", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
       // This disposable profile must not open a native password-store permission dialog in headless mode.
       "--password-store=basic", "--use-mock-keychain",
