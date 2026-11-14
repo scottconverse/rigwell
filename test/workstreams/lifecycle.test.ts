@@ -11,6 +11,7 @@ import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import { makeHome } from "../e2e/helpers.ts";
 import { WorkstreamStore } from "../../src/workstreams/store.ts";
 import { MemberSession } from "../../src/workstreams/member.ts";
+import { startDaemon } from "../../src/daemon/daemon.ts";
 
 const question: FakeTurnSpec = { toolCalls: [{ name: "AskUser", input: { questions: [{ topic: "Hold", question: "Continue?", options: ["yes", "no"] }] } }] };
 const busy = (body: any): FakeTurnSpec => JSON.stringify(body.messages.at(-1)).includes("BUSY") ? question : { text: "Finished", usage: { input: 10, output: 5, cacheRead: 2, cacheCreation: 3 } };
@@ -114,13 +115,15 @@ test("hard daemon-owner restart retains session identity, interrupted status, qu
   const cwd = tmp("ws-crash"), file = join(cwd, "ready.json");
   const child = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/crash-member.ts")], { env: { ...process.env, FIXTURE_CWD: cwd, FIXTURE_READY: file }, stdout: "pipe", stderr: "pipe" });
   let recovered: ReturnType<typeof createWorkstreamService> | undefined;
+  let daemon: Awaited<ReturnType<typeof startDaemon>> | undefined;
   try {
     await until(() => existsSync(file));
     const { workstreamId, agent, queued } = JSON.parse(readFileSync(file, "utf8"));
     child.kill(9); await child.exited;
     const store = new WorkstreamStore(workstreamId);
     expect(store.agent(agent.agentId)!.status).toBe("waiting_input");
-    recovered = createWorkstreamService(); await recovered.ready;
+    daemon = await startDaemon({ socketPath: join(cwd, "daemon.sock"), automations: false, sidepane: false, ws: false });
+    recovered = daemon.workstreams;
     expect(store.agent(agent.agentId)!.status).toBe("interrupted"); expect(store.read().state).toBe("paused");
     const session = recovered.members.get(agent.agentId)!.connection.session!;
     expect(session.id).toBe(agent.sessionId); expect(session.pendingPrompts()).toHaveLength(0);
@@ -131,7 +134,7 @@ test("hard daemon-owner restart retains session identity, interrupted status, qu
     expect(session.uiMessages().filter((m) => m.id === queued.messageId)).toHaveLength(1);
     expect(store.messages().find((m) => m.id === queued.messageId)?.readAt).toBeTruthy();
     expect(store.events().some((e) => e.type === "listener_wake_delivered" && e.owner === agent.agentId)).toBe(true);
-  } finally { if (child.exitCode === null) child.kill(9); await child.exited; await recovered?.stop(); fake.stop(); }
+  } finally { if (child.exitCode === null) child.kill(9); await child.exited; await recovered?.stop(); daemon?.stop(); fake.stop(); }
 }, 15_000);
 
 test("cost budget refuses unpriced requests and uses explicit per-model cache prices", async () => {

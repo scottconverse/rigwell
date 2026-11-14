@@ -1,12 +1,14 @@
 import { writeFileSync } from "node:fs";
-import { createWorkstreamService } from "../../../src/workstreams/index.ts";
+import { startDaemon } from "../../../src/daemon/daemon.ts";
+import { join } from "node:path";
 import { MemberSession } from "../../../src/workstreams/member.ts";
 import { WorkstreamStore } from "../../../src/workstreams/store.ts";
 import { resolveModels } from "../../../src/storage/models.ts";
 import { loadSettings } from "../../../src/storage/settings.ts";
 
-const cwd = process.env.FIXTURE_CWD!, service = createWorkstreamService();
-await service.ready;
+const cwd = process.env.FIXTURE_CWD!;
+const daemon = await startDaemon({ socketPath: join(cwd, "daemon.sock"), automations: false, sidepane: false, ws: false });
+const service = daemon.workstreams;
 const request = async (_method: string, p: any) => p.toolUses?.[0]?.confirmationType === "propose_workstream" ? { selectedOption: "proceed_once" } : new Promise(() => {});
 const lead = new MemberSession({ tools: (t) => t, notify() {}, request });
 await lead.call("initialize_session", { cwd, modelId: resolveModels(loadSettings({ cwd }).settings)[0]!.id, autonomyLevel: "low" });
