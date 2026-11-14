@@ -16,31 +16,32 @@ class AgentPage {
   private sid?: string;
   policy!: BrowserPolicy;
   private workspaceRoot = "";
-  constructor(readonly service: BrowserService, readonly owned?: HeadlessBrowser) {}
+  constructor(readonly service: BrowserService, readonly owned?: HeadlessBrowser, private trace: (message: string) => void = () => {}) {}
   async prepare(ctx: ToolContext) {
     this.policy = browserPolicy(ctx.sessionId, ctx.cwd); this.owned?.update(this.policy);
     this.workspaceRoot = resolvedBrowserPath(ctx.cwd);
     // Refresh the selected target: a newly opened desktop pane takes precedence over its hidden fallback.
-    await this.service.tabs();
+    this.trace("prepare targets"); await this.service.tabs();
     const { c, sid } = await this.service.pageEndpoint();
     if (this.connection !== c || this.sid !== sid) {
       this.off?.(); this.connection = c; this.sid = sid; this.refs.clear();
       this.off = c.on((method, p, sessionId) => {
+        if (sessionId === sid && ["Fetch.requestPaused", "Network.loadingFailed", "Page.loadEventFired"].includes(method)) this.trace(`event ${method}${method === "Network.loadingFailed" ? ` ${String(p.errorText)}` : ""}`);
         if (method !== "Fetch.requestPaused" || sessionId !== sid) return;
         const allowed = this.policy.canRequest(String(p.request?.url ?? ""));
         void c.send(allowed ? "Fetch.continueRequest" : "Fetch.failRequest", { requestId: p.requestId, ...(!allowed ? { errorReason: "BlockedByClient" } : {}) }, sid).catch(() => {});
       });
-      await c.send("Network.enable", {}, sid);
+      this.trace("install request guards"); await c.send("Network.enable", {}, sid);
       await c.send("Network.setBypassServiceWorker", { bypass: true }, sid);
       await c.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] }, sid);
     }
-    const directory = this.outputDirectory(false);
+    this.trace("prepare output policy"); const directory = this.outputDirectory(false);
     // Desktop proxy applies the same rules to all request types, including WebSockets and child frames.
     await c.send("Rigwell.setBrowserPolicy", { targetId: (await this.service.tabs()).find((t) => t.active)?.id, allowed: this.policy.allowed, denied: this.policy.denied, writable: this.policy.writable, blockedPaths: this.policy.blockedPaths, downloadPath: directory }, undefined, 2000).catch((e) => {
       if (String(e).includes("wasn't found") || String(e).includes("not found") || String(e).includes("-32601")) return;
       throw e;
     });
-    if (this.owned) await c.send("Browser.setDownloadBehavior", { behavior: directory ? "allowAndName" : "deny", ...(directory ? { downloadPath: directory } : {}) });
+    this.trace("prepare downloads"); if (this.owned) await c.send("Browser.setDownloadBehavior", { behavior: directory ? "allowAndName" : "deny", ...(directory ? { downloadPath: directory } : {}) });
     else await c.send("Page.setDownloadBehavior", { behavior: directory ? "allow" : "deny", ...(directory ? { downloadPath: directory } : {}) }, sid);
   }
   private outputDirectory(required: boolean): string | undefined {
@@ -118,6 +119,7 @@ class AgentPage {
 }
 
 export class AgentBrowserManager {
+  private trace = (message: string) => { if (process.env.RIGWELL_BROWSER_TRACE === "1") (this.opts.log ?? console.error)(`[browser trace] ${message}`); };
   private pages = new Map<string, AgentPage>();
   private queues = new Map<string, Promise<unknown>>();
   private controllers = new Map<string, AbortController>();
@@ -125,10 +127,10 @@ export class AgentBrowserManager {
   private async page(ctx: ToolContext) {
     const pane = this.panes.get(ctx.sessionId);
     let page = this.pages.get(ctx.sessionId);
-    if (pane && page?.service !== pane) { await page?.close(); page = new AgentPage(pane); this.pages.set(ctx.sessionId, page); }
+    if (pane && page?.service !== pane) { await page?.close(); page = new AgentPage(pane, undefined, this.trace); this.pages.set(ctx.sessionId, page); }
     if (!page) {
-      const owned = await launchHeadlessBrowser(browserPolicy(ctx.sessionId, ctx.cwd), ctx.signal, this.opts);
-      page = new AgentPage(new BrowserService({ cdpUrl: owned.url }), owned); this.pages.set(ctx.sessionId, page);
+      this.trace("launch owned browser"); const owned = await launchHeadlessBrowser(browserPolicy(ctx.sessionId, ctx.cwd), ctx.signal, { ...this.opts, log: process.env.RIGWELL_BROWSER_TRACE === "1" ? this.trace : this.opts.log });
+      this.trace("owned CDP ready"); page = new AgentPage(new BrowserService({ cdpUrl: owned.url }), owned, this.trace); this.pages.set(ctx.sessionId, page);
     }
     await page.prepare(ctx); return page;
   }
@@ -140,6 +142,7 @@ export class AgentBrowserManager {
     const pending = prior.catch(() => {}).then(async (): Promise<ToolOutput> => {
       if (ctx.signal.aborted) return { content: "Browser action cancelled", isError: true };
       try {
+        this.trace(`begin ${name}`);
         if (name === "browser_close") { const p = this.pages.get(ctx.sessionId); if (p) { await p.close(); this.pages.delete(ctx.sessionId); } return { content: "Browser closed" }; }
         if (name === "Browser" && !this.panes.get(ctx.sessionId)) return createBrowserTool(this.panes).run(input, ctx);
         const p = await this.page(ctx);
@@ -155,7 +158,7 @@ export class AgentBrowserManager {
             if (input.action === "screenshot" && !p.policy.canWrite(p.service.screenshotDir)) throw new Error("Browser screenshot path is blocked by the file policy");
             return createBrowserTool(this.panes).run(input, ctx);
           }
-          case "browser_open": { const url = browserUrl(input.url); if (!p.policy.canRequest(url)) throw new Error("Browser URL is blocked by the network policy"); await p.service.navigate(url, ctx.signal); break; }
+          case "browser_open": { const url = browserUrl(input.url); if (!p.policy.canRequest(url)) throw new Error("Browser URL is blocked by the network policy"); this.trace("navigate"); await p.service.navigate(url, ctx.signal); this.trace("navigation loaded"); break; }
           case "browser_snapshot": break;
           case "browser_click": await p.click(input.ref); break;
           case "browser_type": if (typeof input.text !== "string") throw new Error("text is required"); await p.type(input.ref, input.text, input.clear !== false); break;

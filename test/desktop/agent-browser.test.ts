@@ -26,21 +26,25 @@ const ref = (snapshot: string, role: string, name: string) => {
     (body) => { if (!lastToolResult(body).includes("Task form")) throw new Error("Browser snapshot did not reach the agent"); return { toolCalls: [{ name: "browser_evaluate", input: { expression: `fetch('http://127.0.0.1:${web.port}/trap')` } }] }; },
   ]);
   writeJson(join(env.rigwellHome, "settings.json"), { customModels: [{ model: "fake-browser", displayName: "Fixture", provider: "anthropic", baseUrl: fake.url, apiKey: "fake-key" }] });
-  const child = spawn(process.execPath, [CLI, "exec", "--auto", "high", "--model", "custom:Fixture-0", "--cwd", env.root, "Inspect the fixture"], { windowsHide: true, env: { ...process.env, RIGWELL_BROWSER_EXECUTABLE: pw.chromium.executablePath() }, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [CLI, "exec", "--auto", "high", "--model", "custom:Fixture-0", "--cwd", env.root, "Inspect the fixture"], { windowsHide: true, env: { ...process.env, RIGWELL_BROWSER_TRACE: "1", RIGWELL_BROWSER_EXECUTABLE: pw.chromium.executablePath() }, stdio: ["ignore", "pipe", "pipe"] });
   let output = "", errors = ""; child.stdout.on("data", (data) => output += data); child.stderr.on("data", (data) => errors += data);
   const exited = new Promise<number | null>((resolve, reject) => { child.once("exit", resolve); child.once("error", reject); });
+  const diagnostic = setTimeout(() => console.error("[browser CLI pending]", JSON.stringify({ requests: fake.requests.length, errors, output })), 8000);
   try {
     const code = await exited;
     expect({ code, errors }).toMatchObject({ code: 1 }); expect(errors).toContain("no_approver_available"); expect(fake.requests.length).toBe(2); expect(trapHits).toBe(0);
     expect(readdirSync(join(env.rigwellHome, "browser-profiles"))).toEqual([]);
-  } finally { if (child.exitCode === null) { child.kill(); await exited; } fake.stop(); web.stop(true); env.cleanup(); }
+  } finally { clearTimeout(diagnostic); if (child.exitCode === null) { child.kill(); await exited; } fake.stop(); web.stop(true); env.cleanup(); }
 }, 15_000);
 (reason ? test.skip : test)("standalone named tools drive real headless Chromium, accessibility refs, downloads and owned cleanup", async () => {
   const env = tmpEnv();
+  const previousTrace = process.env.RIGWELL_BROWSER_TRACE; process.env.RIGWELL_BROWSER_TRACE = "1";
+  const trace: string[] = []; let phase = "opening";
+  const diagnostic = setTimeout(() => console.error("[standalone browser pending]", JSON.stringify({ phase, trace })), 8000);
   const web = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) { return new URL(req.url).pathname === "/download" ? new Response("fixture-download", { headers: { "content-disposition": 'attachment; filename="fixture.txt"' } }) : new Response(PAGE, { headers: { "content-type": "text/html" } }); } });
-  const manager = new AgentBrowserManager(undefined, { executable: pw.chromium.executablePath() });
+  const manager = new AgentBrowserManager(undefined, { executable: pw.chromium.executablePath(), log: (message) => { trace.push(message); if (trace.length > 100) trace.shift(); } });
   const ctx: ToolContext = { cwd: env.root, sessionId: "browser-fixture", readFiles: new Map(), signal: new AbortController().signal, imagesSupported: false };
-  const run = async (name: string, input: Record<string, unknown> = {}) => { const r = await manager.run(name, input, ctx); if (r.isError) throw new Error(r.content); return r; };
+  const run = async (name: string, input: Record<string, unknown> = {}) => { phase = name; const r = await manager.run(name, input, ctx); if (r.isError) throw new Error(r.content); return r; };
   try {
     let r = await run("browser_open", { url: `http://127.0.0.1:${web.port}` }); expect(r.content).toContain("Accessibility tree:"); expect(r.content).toContain('heading "Task form"');
     r = await run("browser_type", { ref: ref(r.content, "textbox", "Task"), text: "first value" }); expect(r.content).toContain('value="first value"');
@@ -59,7 +63,7 @@ const ref = (snapshot: string, role: string, name: string) => {
     expect((await run("browser_evaluate", { expression: "document.title" })).content).toBe('"Fixture browser"');
     expect((await manager.run("browser_click", { ref: 99999 }, ctx)).content).toContain("Unknown element ref");
     await run("browser_close"); expect(readdirSync(join(env.rigwellHome, "browser-profiles"))).toEqual([]);
-  } finally { await manager.closeAll(); web.stop(true); env.cleanup(); }
+  } finally { clearTimeout(diagnostic); await manager.closeAll(); web.stop(true); env.cleanup(); if (previousTrace === undefined) delete process.env.RIGWELL_BROWSER_TRACE; else process.env.RIGWELL_BROWSER_TRACE = previousTrace; }
 }, 15_000);
 
 (reason ? test.skip : test)("closing a session cancels an active browser wait and releases its owned profile", async () => {
