@@ -167,28 +167,21 @@ describe("removal broadcast, trust, archive", () => {
     expect(Object.keys(j.trustedFolders)).toEqual([resolve("/some/folder")]); // stored as an absolute path (Windows adds the drive)
   });
 
-  test("onSessionArchived removes a safe ephemeral worktree, keeps dirty, persistent and pinned ones", async () => {
+  test.each(["safe", "dirty", "persistent", "pinned"] as const)("onSessionArchived handles a %s worktree", async (kind) => {
     const repo = makeGitRepo();
     const root = tmp("root");
     const s = settingsFor(root);
     const m = managerFor(s);
     const events: string[] = [];
     const off = onWorktreeNotification((method, p) => events.push(`${method}:${p.sessionId}`));
-    const safe = await m.create({ repoRoot: repo, sessionId: "s-40000001", prompt: "safe one here" });
-    const dirty = await m.create({ repoRoot: repo, sessionId: "s-40000002", prompt: "dirty one here" });
-    writeFileSync(join(dirty.path, "mine.txt"), "work\n");
-    const persistent = await m.create({ repoRoot: repo, sessionId: "s-40000003", prompt: "kept one here", lifecycle: "persistent" });
-    const pinned = await m.create({ repoRoot: repo, sessionId: "s-40000004", prompt: "pinned one here" });
-    await m.updateMeta(pinned.path, { pinned: true });
+    const wt = await m.create({ repoRoot: repo, sessionId: "s-40000001", prompt: `${kind} one here`, ...(kind === "persistent" ? { lifecycle: "persistent" as const } : {}) });
+    if (kind === "dirty") writeFileSync(join(wt.path, "mine.txt"), "work\n");
+    if (kind === "pinned") await m.updateMeta(wt.path, { pinned: true });
 
-    expect(await onSessionArchived("s-40000001", s)).toBe(safe.path);
-    expect(existsSync(safe.path)).toBe(false);
-    expect(await onSessionArchived("s-40000002", s)).toBeNull();
-    expect(await onSessionArchived("s-40000003", s)).toBeNull();
-    expect(await onSessionArchived("s-40000004", s)).toBeNull();
+    expect(await onSessionArchived("s-40000001", s)).toBe(kind === "safe" ? wt.path : null);
+    expect(existsSync(wt.path)).toBe(kind !== "safe");
     expect(await onSessionArchived("no-such-session", s)).toBeNull();
-    expect(existsSync(dirty.path) && existsSync(persistent.path) && existsSync(pinned.path)).toBe(true);
-    expect(events).toEqual(["worktree.removed:s-40000001"]);
+    expect(events).toEqual(kind === "safe" ? ["worktree.removed:s-40000001"] : []);
     off();
     closeHeadWatchers();
   });

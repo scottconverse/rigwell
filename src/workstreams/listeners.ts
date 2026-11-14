@@ -98,6 +98,7 @@ export class WorkstreamListeners {
       const { root, glob } = this.fileTarget(store, listener);
       let watcher: FSWatcher;
       watcher = watch(root, { recursive: true }, (change, filename) => {
+        this.opts.log?.(`[workstream] File listener ${listener.id} event ${change}: ${String(filename)}`);
         if (!filename) return;
         const name = String(filename).replaceAll("\\", "/");
         if (!glob.match(name)) return;
@@ -105,6 +106,7 @@ export class WorkstreamListeners {
         try { const real = realpathSync.native(path), rel = relative(root, real); if (rel.startsWith("..") || isAbsolute(rel)) return; } catch { /* a deleted file still produces a change */ }
         this.fire(store, listener, { path, change });
       });
+      this.opts.log?.(`[workstream] File listener ${listener.id} armed at ${root}`);
       watcher.on("error", (e) => this.opts.log?.(`[workstream] File listener ${listener.id}: ${e.message}`));
       watcher.unref(); this.handles.set(listener.id, () => watcher.close());
     }

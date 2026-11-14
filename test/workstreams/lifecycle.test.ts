@@ -116,20 +116,25 @@ test("hard daemon-owner restart retains session identity, interrupted status, qu
   const child = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/crash-member.ts")], { env: { ...process.env, FIXTURE_CWD: cwd, FIXTURE_READY: file }, stdout: "pipe", stderr: "pipe" });
   let recovered: ReturnType<typeof createWorkstreamService> | undefined;
   let daemon: Awaited<ReturnType<typeof startDaemon>> | undefined;
+  const listenerLog: string[] = [];
   try {
     await until(() => existsSync(file));
     const { workstreamId, agent, queued } = JSON.parse(readFileSync(file, "utf8"));
     child.kill(9); await child.exited;
     const store = new WorkstreamStore(workstreamId);
     expect(store.agent(agent.agentId)!.status).toBe("waiting_input");
-    daemon = await startDaemon({ socketPath: join(cwd, "daemon.sock"), automations: false, sidepane: false, ws: false });
+    daemon = await startDaemon({ socketPath: join(cwd, "daemon.sock"), automations: false, sidepane: false, ws: false, log: (line) => listenerLog.push(line) });
     recovered = daemon.workstreams;
     expect(store.agent(agent.agentId)!.status).toBe("interrupted"); expect(store.read().state).toBe("paused");
     const session = recovered.members.get(agent.agentId)!.connection.session!;
     expect(session.id).toBe(agent.sessionId); expect(session.pendingPrompts()).toHaveLength(0);
     expect(store.messages().find((m) => m.id === queued.messageId)?.deliveredAt).toBeUndefined();
     writeFileSync(store.path("shared/restarted.txt"), "Watch after restart");
-    await until(() => store.events().some((e) => e.type === "listener_fired" && e.on === "file_changed"));
+    try { await until(() => store.events().some((e) => e.type === "listener_fired" && e.on === "file_changed")); }
+    catch (error) {
+      console.error("Restarted file listener diagnostics", JSON.stringify({ listenerLog, listeners: store.listeners(), events: store.events(), fileExists: existsSync(store.path("shared/restarted.txt")) }));
+      throw error;
+    }
     await recovered.resume(store.id); await session.idle();
     expect(session.uiMessages().filter((m) => m.id === queued.messageId)).toHaveLength(1);
     expect(store.messages().find((m) => m.id === queued.messageId)?.readAt).toBeTruthy();
