@@ -8,12 +8,12 @@ const STATUS: Record<SideEntry["status"], string> = { pending: "Queued", streami
 export function SideChatTab({ ctl, entries, writes, prefill, onPrefillUsed, onPromoted }: { ctl: SessionController; entries: SideEntry[]; writes: boolean; prefill?: string; onPrefillUsed(): void; onPromoted(sessionId: string): void }) {
   const [q, setQ] = useState("");
   const [error, setError] = useState("");
-  const [savingWrites, setSavingWrites] = useState(false);
+  const [pendingWrites, setPendingWrites] = useState<boolean | null>(null);
   const changeWrites = async (enabled: boolean) => {
-    setSavingWrites(true); setError("");
+    setPendingWrites(enabled); setError("");
     try { await ctl.setSideWrites(enabled); }
     catch (er) { setError((er as Error).message); }
-    finally { setSavingWrites(false); }
+    finally { setPendingWrites(null); }
   };
   const promote = async (id: string) => { setError(""); try { onPromoted(await ctl.promoteSide(id)); } catch (e) { setError((e as Error).message); } };
   const end = useRef<HTMLDivElement>(null);
@@ -24,7 +24,7 @@ export function SideChatTab({ ctl, entries, writes, prefill, onPrefillUsed, onPr
     <div className="sidechat">
       <div className="sc-tools">
         <label className="check small" title="Off: the side chat can only read. On: it may edit files when you ask it to.">
-          <input type="checkbox" checked={writes} disabled={savingWrites} onChange={(e) => void changeWrites(e.target.checked)} />Allow edits in this side chat
+          <input type="checkbox" checked={pendingWrites ?? writes} disabled={pendingWrites !== null} aria-busy={pendingWrites !== null} onChange={(e) => void changeWrites(e.target.checked)} />Allow edits in this side chat
         </label>
         {error && <span className="attach-error" role="alert">{error}</span>}
       </div>

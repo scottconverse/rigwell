@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { setup, until } from "./helpers.ts";
 import { makeGitRepo, tmp } from "../worktree/util.ts";
 import type { FakeTurnSpec } from "../fakes/types.ts";
+import { canonicalPath } from "../../src/worktree/git.ts";
 
 const question: FakeTurnSpec = { toolCalls: [{ name: "AskUser", input: { questions: [{ topic: "Hold", question: "Continue?", options: ["yes", "no"] }] } }] };
 const answer = { answers: [{ index: 1, question: "Continue?", answer: "yes" }] };
@@ -86,7 +87,7 @@ test("file listeners watch matching shared files and refuse globs outside allowe
     mkdirSync(f.store.path("shared/sub"));
     writeFileSync(f.store.path("shared/ignore.md"), "unmatched");
     const path = f.store.path("shared/sub/notes.txt"); writeFileSync(path, "handoff");
-    expect((await waiting).events).toMatchObject([{ on: "file_changed", trigger: { path } }]);
+    expect((await waiting).events).toMatchObject([{ on: "file_changed", trigger: { path: canonicalPath(path) } }]);
     expect(f.store.listeners()).toHaveLength(0);
   } finally { await f.close(); }
 });
@@ -99,7 +100,7 @@ test("file listener scopes an existing member's separate worktree", async () => 
     const file = f.service.listeners.create(f.store, "lead", { on: "file_changed", filter: { agentId: agent.agentId, glob: "*.txt" } });
     const waiting = f.service.listeners.wait(f.store, "lead", { listenerIds: [file.listenerId], timeoutMs: 3000 });
     const path = join(agent.worktreePath!, "member-notes.txt"); writeFileSync(path, "member handoff");
-    expect((await waiting).events).toMatchObject([{ on: "file_changed", trigger: { path } }]);
+    expect((await waiting).events).toMatchObject([{ on: "file_changed", trigger: { path: canonicalPath(path) } }]);
   } finally { await f.close(); }
 });
 
