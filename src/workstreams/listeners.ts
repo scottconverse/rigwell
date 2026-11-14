@@ -110,7 +110,15 @@ export class WorkstreamListeners {
     }
   }
 
-  rearm(store: WorkstreamStore) { for (const listener of store.listeners()) this.arm(store, listener); }
+  rearm(store: WorkstreamStore) {
+    for (const listener of store.listeners()) try { this.arm(store, listener); }
+    catch (e) { store.event("listener_rearm_failed", { listenerId: listener.id, message: (e as Error).message }); this.opts.log?.(`[workstream] Listener ${listener.id} could not rearm: ${(e as Error).message}`); }
+  }
+  archive(store: WorkstreamStore) {
+    for (const listener of store.listeners()) { this.handles.get(listener.id)?.(); this.handles.delete(listener.id); }
+    store.writeListeners([]);
+    for (const waiting of [...this.waiting]) if (waiting.storeId === store.id) waiting.cancel();
+  }
 
   wait(store: WorkstreamStore, owner: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<WaitResult> {
     if (this.closed) return Promise.resolve({ events: [], cancelled: true });

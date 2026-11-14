@@ -1,7 +1,7 @@
 // Durable local Workstream state (spec 15.10). The daemon owns metadata and append-only event logs.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AutonomyLevel, ReasoningEffort } from "../core/types.ts";
+import type { AutonomyLevel, ReasoningEffort, TokenUsage } from "../core/types.ts";
 import { rigwellHome } from "../storage/paths.ts";
 
 export type WorkstreamState = "proposed" | "active" | "paused" | "completed" | "archived";
@@ -21,6 +21,9 @@ export interface Workstream {
   settings: WorkstreamSettings;
 }
 export interface AgentEntry {
+  initialPrompt?: string;
+  usageByModel?: Record<string, TokenUsage>;
+  costKnown?: boolean;
   agentId: string; name: string; role: string; sessionId: string; cwd: string;
   worktreePath?: string; branch?: string; model: string; reasoningEffort: ReasoningEffort;
   autonomyLevel: AutonomyLevel; status: AgentStatus; lastActivityAt: number;
@@ -46,6 +49,16 @@ export function atomicJson(file: string, value: unknown) {
   const temp = `${file}.${crypto.randomUUID()}.tmp`;
   writeFileSync(temp, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
   renameSync(temp, file);
+}
+/** A torn last record must not swallow the first complete record appended after recovery. */
+function appendJson(file: string, value: unknown) {
+  const size = statSync(file).size;
+  if (size) {
+    const fd = openSync(file, "r"), last = Buffer.alloc(1);
+    try { readSync(fd, last, 0, 1, size - 1); } finally { closeSync(fd); }
+    if (last[0] !== 10) appendFileSync(file, "\n");
+  }
+  appendFileSync(file, JSON.stringify(value) + "\n", { mode: 0o600 });
 }
 export class WorkstreamStore {
   readonly dir: string;
@@ -78,7 +91,7 @@ export class WorkstreamStore {
   }
   event(type: string, details: Record<string, unknown> = {}): WorkstreamEvent {
     const event = { ...details, id: crypto.randomUUID(), ts: Date.now(), type };
-    appendFileSync(this.path("events.jsonl"), JSON.stringify(event) + "\n"); return event;
+    appendJson(this.path("events.jsonl"), event); return event;
   }
   events(): WorkstreamEvent[] {
     return readFileSync(this.path("events.jsonl"), "utf8").split("\n").filter(Boolean).flatMap((line) => { try { return [JSON.parse(line)]; } catch { return []; } });
@@ -92,7 +105,7 @@ export class WorkstreamStore {
     return [...messages.values()];
   }
   writeMessage(message: WorkstreamMessage) {
-    appendFileSync(this.path("messages.jsonl"), JSON.stringify(message) + "\n", { mode: 0o600 });
+    appendJson(this.path("messages.jsonl"), message);
     return message;
   }
   listeners(): WorkstreamListener[] { return JSON.parse(readFileSync(this.path("listeners.json"), "utf8")); }

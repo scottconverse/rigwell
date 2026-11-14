@@ -60,6 +60,7 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
   });
   const missions = createMissionService({ log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs });
   const workstreams = createWorkstreamService({ log: opts.log });
+  await workstreams.ready;
   const workstreamClients = new Map<ReturnType<typeof createConnection>, () => void>();
   const ctxs = new Map<ReturnType<typeof createConnection>, ConnCtx>();
   const mkConn = (write: (line: string) => void) => {

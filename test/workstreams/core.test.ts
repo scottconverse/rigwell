@@ -14,7 +14,7 @@ import { startDaemon } from "../../src/daemon/daemon.ts";
 import { connect } from "../desktop/helpers.ts";
 
 const proposal = { title: "Local task", goal: "Fix the fixture", plan: "Two independent members" };
-const lead = (cwd: string) => ({ id: crypto.randomUUID(), cwd, settings: { modelId: resolveModels(loadSettings({ cwd }).settings)[0]?.id ?? MODEL, reasoningEffort: "low", autonomyLevel: "low" } }) as unknown as Session;
+const lead = (cwd: string) => ({ id: crypto.randomUUID(), cwd, uiMessages: () => [], settings: { modelId: resolveModels(loadSettings({ cwd }).settings)[0]?.id ?? MODEL, reasoningEffort: "low", autonomyLevel: "low" } }) as unknown as Session;
 async function until(pred: () => boolean, ms = 3000) {
   const end = Date.now() + ms;
   while (!pred()) { if (Date.now() >= end) throw new Error("condition not reached"); await Bun.sleep(5); }
@@ -70,12 +70,14 @@ test("two real member sessions use separate worktrees, stay live when idle, and 
     const member = service.members.get(one.agentId)!;
     await member.call("update_session_settings", { autonomyLevel: "high", interactionMode: "mission" });
     expect(member.connection.session!.settings.autonomyLevel).toBe("low");
-    const leadTools = attached.wrapTools([]); expect(leadTools.map((t) => t.name)).toEqual(["ProposeWorkstream", "SpawnAgent", "ListAgents", "SendMessage", "CreateListener", "WaitForEvents"]);
+    const leadTools = attached.wrapTools([]); expect(leadTools.map((t) => t.name)).toEqual(["ProposeWorkstream", "SpawnAgent", "ListAgents", "SendMessage", "CreateListener", "InterruptAgent", "RenameAgent", "ArchiveAgent", "WaitForEvents"]);
     expect((await leadTools.find((t) => t.name === "ListAgents")!.run({}, {} as any)).data).toMatchObject({ agents: [{ name: "First" }, { name: "Second" }] });
     const prompt = JSON.stringify(fake.requests);
     expect(prompt).toContain(store.path("shared").replace(/\\/g, "\\\\"));
     expect(store.events().filter((e) => e.type === "agent_spawned")).toHaveLength(2);
     expect(readFileSync(store.path("roster.json"), "utf8")).toContain(one.sessionId);
+    expect(await service.archive(session.id, { agentId: two.agentId })).toEqual({ archived: true, worktreeKept: true });
+    expect(existsSync(two.worktreePath!)).toBe(true);
   } finally { attached.close(); await service.stop(); fake.stop(); }
 }, 15_000);
 

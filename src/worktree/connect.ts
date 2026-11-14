@@ -18,8 +18,8 @@ import { loadSettings } from "../storage/settings.ts";
 import { rigwellHome } from "../storage/paths.ts";
 import { createPr, getPrStatus, type ApprovePr } from "./pr.ts";
 
-/** Worktrees with a live session in this process (path -> session id); auto-delete and remove skip them. */
-const active = new Map<string, string>();
+/** Every connection owns an independent hold, including two views of the same session. */
+const active = new Map<string, Map<string, string>>();
 /**
  * Key for `active`. Windows paths compare case-insensitively and may arrive as 8.3 short names, forward slashes or a
  * different drive-letter case from the one the worktree was created with, so the key is the canonical lower-cased path
@@ -28,6 +28,16 @@ const active = new Map<string, string>();
 export const activeKey = (p: string, platform: NodeJS.Platform = process.platform): string =>
   platform === "win32" ? (process.platform === "win32" ? canonicalPath(p) : path.win32.resolve(p)).replace(/\//g, "\\").toLowerCase() : p;
 export const releaseWorktree = (p: string) => { active.delete(activeKey(p)); heads.remove(p); };
+function holdWorktree(p: string, sessionId: string): () => void {
+  const key = activeKey(p), token = crypto.randomUUID(), holds = active.get(key) ?? new Map<string, string>();
+  holds.set(token, sessionId); active.set(key, holds);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true; holds.delete(token);
+    if (!holds.size && active.get(key) === holds) releaseWorktree(p);
+  };
+}
 
 // ---- notifications (spec 18.5 and 18.6): the daemon subscribes and broadcasts to its clients ----
 // Wire names: rigwell.worktree.removed {worktreePath, sessionId, repoRoot, branch}
@@ -39,7 +49,7 @@ const emit: WorktreeNotifier = (m, p) => { for (const l of listeners) { try { l(
 
 const heads = new HeadWatcher({
   onChange: (c) => {
-    emit("worktree.branch_changed", { worktreePath: c.worktreePath, sessionId: active.get(c.worktreePath), branch: c.branch, previousBranch: c.previousBranch });
+    emit("worktree.branch_changed", { worktreePath: c.worktreePath, sessionId: active.get(activeKey(c.worktreePath))?.values().next().value, branch: c.branch, previousBranch: c.previousBranch });
     if (c.branch) void new WorktreeManager({ root: path.dirname(path.dirname(c.worktreePath)) }).updateMeta(c.worktreePath, { branch: c.branch }).catch(() => {});
   },
 });
@@ -119,6 +129,7 @@ function parseRequest(raw: unknown, s: RigwellSettings): WorktreeRequest | null 
 }
 
 export interface SessionWorktree {
+  release(): void;
   manager: WorktreeManager;
   info: ManagedWorktree;
   /** The session's working folder inside the worktree (same relative folder as the request cwd). */
@@ -140,9 +151,9 @@ export async function startSessionWorktree(raw: unknown, cwd: string, sessionId:
   if (!req) {
     const adopted = await manager.containing(cwd);
     if (!adopted) return null;
-    active.set(activeKey(adopted.path), sessionId);
+    const release = holdWorktree(adopted.path, sessionId);
     void heads.add(adopted.path).catch(() => {});
-    return { manager, info: adopted, cwd, adopted: true };
+    return { manager, info: adopted, cwd, adopted: true, release };
   }
   const top = await repoTopLevel(cwd);
   if (!top) throw new RpcError(ErrorCodes.INVALID_PARAMS, "worktree requires cwd to be inside a git repository");
@@ -151,11 +162,11 @@ export async function startSessionWorktree(raw: unknown, cwd: string, sessionId:
       repoRoot: top, sessionId, prompt: req.prompt, branchMode: req.branchMode, branch: req.branch,
       baseRef: req.baseRef, lifecycle: req.lifecycle, setupProfileId: req.setupProfile, pullFromOrigin: req.pullFromOrigin,
     });
-    active.set(activeKey(info.path), sessionId);
+    const release = holdWorktree(info.path, sessionId);
     void heads.add(info.path).catch(() => {});
     if (req.setupProfile) { try { setLastUsedProfile(top, req.setupProfile); } catch { /* the index is a convenience */ } }
     const rel = path.relative(top, canonicalPath(cwd));
-    const out: SessionWorktree = { manager, info, cwd: rel ? path.join(info.path, rel) : info.path, adopted: false };
+    const out: SessionWorktree = { manager, info, cwd: rel ? path.join(info.path, rel) : info.path, adopted: false, release };
     if (req.setupProfile) {
       const r = manager.resolveProfile(info.repoRoot, req.setupProfile);
       if (r.runnable) out.profile = r.profile;
@@ -169,7 +180,7 @@ export async function startSessionWorktree(raw: unknown, cwd: string, sessionId:
 
 /** Removes a worktree created for a session that failed to start (profile cleanup runs first). */
 export async function discardSessionWorktree(w: SessionWorktree): Promise<void> {
-  releaseWorktree(w.info.path);
+  w.release();
   if (w.adopted) return;
   await w.manager.remove(w.info.path, { force: true, deleteLocalBranch: w.info.baseRef !== w.info.branch }).catch(() => {});
 }

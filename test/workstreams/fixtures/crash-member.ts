@@ -1,0 +1,24 @@
+import { writeFileSync } from "node:fs";
+import { createWorkstreamService } from "../../../src/workstreams/index.ts";
+import { MemberSession } from "../../../src/workstreams/member.ts";
+import { WorkstreamStore } from "../../../src/workstreams/store.ts";
+import { resolveModels } from "../../../src/storage/models.ts";
+import { loadSettings } from "../../../src/storage/settings.ts";
+
+const cwd = process.env.FIXTURE_CWD!, service = createWorkstreamService();
+await service.ready;
+const request = async (_method: string, p: any) => p.toolUses?.[0]?.confirmationType === "propose_workstream" ? { selectedOption: "proceed_once" } : new Promise(() => {});
+const lead = new MemberSession({ tools: (t) => t, notify() {}, request });
+await lead.call("initialize_session", { cwd, modelId: resolveModels(loadSettings({ cwd }).settings)[0]!.id, autonomyLevel: "low" });
+const conn = { session: () => lead.connection.session, notify() {}, request };
+service.attach(conn);
+const proposal = await service.propose(conn, { title: "Crash recovery", goal: "Recover", plan: "Keep existing sessions" });
+const agent = await service.spawn(lead.connection.session!, { name: "Interrupted member", role: "task", prompt: "BUSY", worktree: false });
+const session = service.members.get(agent.agentId)!.connection.session!;
+while (!session.pendingPrompts().length) await Bun.sleep(5);
+const store = new WorkstreamStore(proposal.workstreamId!);
+service.listeners.create(store, "lead", { on: "file_changed", filter: { glob: "*.txt" } });
+service.listeners.create(store, agent.agentId, { on: "message" });
+const queued = service.send(lead.connection.session!.id, { to: agent.agentId, message: "LATER AFTER RESTART", priority: "later" });
+writeFileSync(process.env.FIXTURE_READY!, JSON.stringify({ workstreamId: store.id, agent, queued }));
+setInterval(() => {}, 1000);

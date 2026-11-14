@@ -21,7 +21,7 @@ import { streamWithRetry } from "../adapters/retry.ts";
 import { toolsForSession } from "../tools/registry.ts";
 import { decide } from "../permissions/gate.ts";
 import { DEFAULT_COMMAND_LISTS } from "../permissions/lists.ts";
-import { discardSessionWorktree, handleWorktreeMethod, onSessionArchived, onSessionTitleUpdated, releaseWorktree, runSessionSetup, startSessionWorktree, worktreeSettings, type SessionWorktree } from "../worktree/connect.ts";
+import { discardSessionWorktree, handleWorktreeMethod, onSessionArchived, onSessionTitleUpdated, runSessionSetup, startSessionWorktree, worktreeSettings, type SessionWorktree } from "../worktree/connect.ts";
 import type { ToolExecutionMode } from "../core/types.ts";
 import { HookRunner, loadHooksConfig } from "../hooks/index.ts";
 import { fromInitConfigs, type McpServerInitConfig } from "../mcp/index.ts";
@@ -39,6 +39,10 @@ const parked = new Map<string, { session: Session; files: SessionFiles; worktree
 const parkMs = () => Number(process.env.RIGWELL_PARK_MS) || 30 * 60_000;
 
 export interface ConnectionOptions {
+  maxToolIds?: string[];
+  beforeTurn?: import("../agent/session.ts").SessionDeps["beforeTurn"];
+  onUsage?: import("../agent/session.ts").SessionDeps["onUsage"];
+  beforeModel?: (model: import("../core/types.ts").ModelConfig) => void;
   /** Observes normal session notifications without changing the session's host. */
   onNotification?: (session: Session | undefined, notification: Record<string, unknown>) => void;
   /** An owned member session cannot raise its autonomy above its lead's cap. */
@@ -208,7 +212,8 @@ export function createConnection(write: (line: string) => void, opts: Connection
       id, cwd, settings,
       ...(sessionEnv ? { extraEnv: sessionEnv.env, redact: (t: string) => redactSecrets(t, sessionEnv.secrets) } : {}),
       resolveModel: (mid) => findModel(env.models, mid),
-      createAdapter, streamWithRetry: streamWithRetry as any,
+      createAdapter: (model) => { opts.beforeModel?.(model); return createAdapter(model); }, streamWithRetry: streamWithRetry as any,
+      beforeTurn: opts.beforeTurn, onUsage: opts.onUsage, maxToolIds: opts.maxToolIds,
       toolsFor: ((base) => (opts.wrapTools ? (o: Parameters<typeof toolsForSession>[0]) => opts.wrapTools!(base(o)) : base))(opts.extraTools ? (o: Parameters<typeof toolsForSession>[0]) => [...toolsForSession(o), ...opts.extraTools!()] : toolsForSession), decide: opts.maxAutonomy && !autonomyAllowed("high", maxAutonomy)
         ? (tool, input, ctx) => decide(tool, input, { ...ctx, interactionMode: ctx.interactionMode === "mission" ? "auto" : ctx.interactionMode })
         : decide, lists: env.lists,
@@ -405,6 +410,8 @@ export function createConnection(write: (line: string) => void, opts: Connection
           },
         });
         if (typeof saved.providerLock === "string") session.providerLock = saved.providerLock;
+        try { worktree = await startSessionWorktree(false, cwd, id, env.s, opts.log) ?? undefined; }
+        catch (e) { await session.end("other"); session = undefined; throw e; }
         session.start("resume");
         return {
           ...sessionResult(page), cwd, isAgentLoopInProgress: false, workingState: "idle",
@@ -459,13 +466,13 @@ export function createConnection(write: (line: string) => void, opts: Connection
       case "interrupt_session": need().interrupt(); return {};
       case "close_session": {
         if (session) {
-          session.interrupt();
+          session.interrupt(true);
           await session.idle();
           await session.stopBackgroundJobs();
           await session.end(typeof p.reason === "string" ? p.reason : "other");
           notify({ type: "agent_working_state_changed", newState: "idle", backgroundWork: session.backgroundWork() });
         }
-        if (worktree) releaseWorktree(worktree.info.path);
+        worktree?.release();
         closed = true;
         return {};
       }
@@ -615,7 +622,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
         const wt = worktree;
         const timer = setTimeout(() => {
           parked.delete(s.id);
-          if (wt) releaseWorktree(wt.info.path);
+          wt?.release();
           s.interrupt();
           void s.idle().then(() => s.stopBackgroundJobs()).then(() => s.end("other")).catch(() => {});
         }, parkMs());
@@ -624,6 +631,6 @@ export function createConnection(write: (line: string) => void, opts: Connection
         peer.end();
         return;
       }
-      session?.interrupt(); await session?.idle(); await session?.stopBackgroundJobs(); await session?.end("other"); if (worktree) releaseWorktree(worktree.info.path); peer.end(); },
+      session?.interrupt(true); await session?.idle(); await session?.stopBackgroundJobs(); await session?.end("other"); worktree?.release(); peer.end(); },
   };
 }

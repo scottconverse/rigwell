@@ -1,6 +1,7 @@
 // A Workstream member owns a normal connection for its lifetime, including idle time between turns.
 import { createConnection } from "../daemon/connection.ts";
 import type { AutonomyLevel, Tool } from "../core/types.ts";
+import type { ConnectionOptions } from "../daemon/connection.ts";
 
 export interface MemberHost {
   notify(n: Record<string, any>): void;
@@ -11,7 +12,7 @@ export class MemberSession {
   readonly connection: ReturnType<typeof createConnection>;
   private sequence = 0;
   private pending = new Map<string, { resolve(v: any): void; reject(e: Error): void }>();
-  constructor(host: MemberHost, log?: (m: string) => void, maxAutonomy?: AutonomyLevel) {
+  constructor(host: MemberHost, log?: (m: string) => void, maxAutonomy?: AutonomyLevel, limits: Pick<ConnectionOptions, "beforeTurn" | "maxToolIds" | "onUsage" | "beforeModel"> = {}) {
     this.connection = createConnection((line) => {
       for (const text of line.split("\n").filter(Boolean)) {
         const m = JSON.parse(text);
@@ -21,11 +22,11 @@ export class MemberSession {
         } else if (m.type === "request") {
           void host.request(String(m.method).replace(/^rigwell\./, ""), m.params ?? {}).then(
             (result) => this.feed({ type: "response", id: m.id, result }),
-            () => this.feed({ type: "response", id: m.id, result: { selectedOption: "cancel", cancelled: true, answers: [] } }),
+            (e) => this.feed({ type: "response", id: m.id, error: { code: e?.code ?? -32603, message: e?.message ?? "Member request failed" } }),
           );
         } else if (m.params?.notification) host.notify(m.params.notification);
       }
-    }, { canPrompt: true, wrapTools: host.tools, log, retryBaseDelayMs: 1, maxAutonomy });
+    }, { canPrompt: true, wrapTools: host.tools, log, retryBaseDelayMs: 1, maxAutonomy, ...limits });
   }
   private feed(message: Record<string, unknown>) { this.connection.peer.feed(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n"); }
   call(method: string, params: Record<string, unknown> = {}): Promise<any> {

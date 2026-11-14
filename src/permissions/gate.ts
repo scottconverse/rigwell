@@ -62,6 +62,9 @@ export function decide(tool: string, input: Record<string, unknown>, ctx: Permis
     // Workstreams enforce role boundaries and proposal approval in their service.
     case "ProposeWorkstream":
     case "SpawnAgent":
+    case "InterruptAgent":
+    case "RenameAgent":
+    case "ArchiveAgent":
     case "ListAgents":
     case "SendMessage":
     case "CreateListener":
