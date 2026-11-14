@@ -18,6 +18,7 @@ function describe(params: any): { title: string; lines: string[] } {
     case "edit": return { title: `Edit ${d.fileName ?? ""}`, lines: [String(d.filePath ?? ""), ...diff(d.oldContent, d.newContent)] };
     case "create": return { title: `Create ${d.fileName ?? ""}`, lines: [String(d.filePath ?? ""), ...diff(undefined, d.content)] };
     case "exit_spec_mode": return { title: "Specification for approval", lines: String(d.plan ?? d.specContent ?? d.content ?? "").split("\n") };
+    case "propose_workstream": return { title: "Workstream for approval", lines: [`Title: ${d.title}`, `Goal: ${d.goal}`, ...(d.budget ? [`Budget: ${JSON.stringify(d.budget)}`] : []), "", String(d.plan), ...(d.agents?.length ? ["", `Members: ${JSON.stringify(d.agents)}`] : [])] };
     default: return { title: `Approve ${u.toolUse?.name ?? "action"}`, lines: [JSON.stringify(u.toolUse?.input ?? d, null, 2)] };
   }
 }
@@ -32,21 +33,23 @@ function diff(a?: string, b?: string): string[] {
 function Permission({ p, onAnswer }: { p: Prompt; onAnswer: (r: unknown) => void }) {
   const d = describe(p.params);
   const spec = p.params.toolUses?.length === 1 && p.params.toolUses[0].confirmationType === "exit_spec_mode" ? p.params.toolUses[0].details ?? {} : null;
+  const workstream = p.params.toolUses?.length === 1 && p.params.toolUses[0].confirmationType === "propose_workstream" ? p.params.toolUses[0].details ?? {} : null;
   const options = spec ? specOptions(p.params.options ?? [], spec.contextSavingsPercent) : (p.params.options ?? []) as { label: string; value: string }[];
-  const plan = spec ? String(spec.plan ?? spec.specContent ?? spec.content ?? "") : "";
+  const plan = spec ? String(spec.plan ?? spec.specContent ?? spec.content ?? "") : workstream ? String(workstream.plan ?? "") : "";
   const [comment, setComment] = useState("");
   const [showComment, setShowComment] = useState(false);
   const [editing, setEditing] = useState(false);
   const [edited, setEdited] = useState(plan);
   const answer = (value: string) => {
-    if (value === "proceed_edit" && spec && !editing) { setEditing(true); return; } // edit the plan first, then approve it
+    if (value === "proceed_edit" && (spec || workstream) && !editing) { setEditing(true); return; } // edit the plan first, then approve it
     onAnswer(spec ? specAnswer(value, { comment, editedSpec: editing ? edited : undefined }) : permissionAnswer(value, { comment, editedSpec: editing ? edited : undefined }));
   };
   return (
     <div className="prompt" role="alertdialog" aria-label={d.title}>
       <div className="prompt-title">{d.title}</div>
+      {p.params.workstreamTitle && <div className="prompt-sub">{p.params.workstreamTitle} / {p.params.agentName}</div>}
       {editing
-        ? <div className="prompt-field"><textarea className="plan" aria-label="Specification" value={edited} onChange={(e) => setEdited(e.target.value)} /></div>
+        ? <div className="prompt-field"><textarea className="plan" aria-label={workstream ? "Workstream plan" : "Specification"} value={edited} onChange={(e) => setEdited(e.target.value)} /></div>
         : <pre className="prompt-body">{d.lines.join("\n")}</pre>}
       {spec?.filePath && <div className="prompt-sub">Will save to: {String(spec.filePath)}</div>}
       {(showComment || comment) ? (
@@ -58,7 +61,7 @@ function Permission({ p, onAnswer }: { p: Prompt; onAnswer: (r: unknown) => void
       <div className="prompt-actions">
         {options.map((o) => (
           <button key={o.value} className={o.value === "proceed_once" ? "primary" : o.value === "cancel" ? "danger" : ""} disabled={editing && o.value === "proceed_edit" && !edited.trim()} onClick={() => answer(o.value)}>
-            {editing && o.value === "proceed_edit" ? "Approve the edited spec" : o.label}
+            {editing && o.value === "proceed_edit" ? workstream ? "Accept the edited plan" : "Approve the edited spec" : o.label}
           </button>
         ))}
       </div>
@@ -84,6 +87,7 @@ function Questions({ p, onAnswer }: { p: Prompt; onAnswer: (r: unknown) => void 
   return (
     <div className="prompt" role="alertdialog" aria-label="Question">
       <div className="prompt-title">{q.topic ? `[${q.topic}] ` : ""}{q.question}</div>
+      {p.params.workstreamTitle && <div className="prompt-sub">{p.params.workstreamTitle} / {p.params.agentName}</div>}
       <div className="prompt-sub">Question {i + 1} of {qs.length}</div>
       <div className="prompt-actions wrap">
         {options.map((o) => q.multiSelect

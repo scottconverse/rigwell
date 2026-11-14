@@ -5,6 +5,7 @@ import { Automations, AutomationDetail } from "./components/Automations.tsx";
 import { TrustAsks } from "./components/Dialogs.tsx";
 import { Home } from "./components/Home.tsx";
 import { Missions, MissionDetailPage } from "./components/Missions.tsx";
+import { Workstreams } from "./components/Workstreams.tsx";
 import { SessionScreen } from "./components/SessionScreen.tsx";
 import { Settings } from "./components/Settings.tsx";
 import { Palette, Sidebar } from "./components/Shell.tsx";
@@ -75,6 +76,7 @@ function App() {
         <div className="titlebar drag" aria-hidden />
         {parts[0] === "settings" ? <Settings page={parts[1] ?? "general"} go={go} />
           : parts[0] === "missions" ? (parts[1] ? <MissionDetailPage key={parts[1]} sessionId={parts[1]} go={go} /> : <Missions go={go} />)
+          : parts[0] === "workstreams" ? <Workstreams key={parts[1] ?? "list"} id={parts[1]} go={go} />
           : parts[0] === "automations" ? (parts[1] ? <AutomationDetail key={parts[1]} id={parts[1]} go={go} /> : <Automations go={go} />)
           : sessionId ? <SessionScreen key={sessionId} sessionId={sessionId} /> : <Home key={folder ?? "home"} go={go} initialFolder={folder} initialMission={new URLSearchParams(query ?? "").get("mode") === "mission"} />}
       </main>

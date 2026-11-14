@@ -21,7 +21,7 @@ export interface NotifyAction {
 
 export function notificationFor(ev: AttentionEvent, s: DesktopSettings, w: WindowState): NotifyAction | undefined {
   if (ev.kind !== "attention_requested" || ev.cancelled) return undefined;
-  const needs = ev.category === "questions_and_approvals" || ev.category === "mission_needs_input";
+  const needs = ev.category === "questions_and_approvals" || ev.category === "mission_needs_input" || ev.requestKind === "workstream_attention";
   const finished = ev.category === "agent_turn_complete" || ev.category === "mission_complete";
   if (needs && !s.notifications.needsInput) return undefined;
   if (finished && !s.notifications.finished) return undefined;
@@ -29,17 +29,17 @@ export function notificationFor(ev: AttentionEvent, s: DesktopSettings, w: Windo
   // Skip the toast when the user is already looking at that session.
   if (w.focused && w.viewingSessionId === ev.sessionId) return undefined;
   return {
-    tag: `session-${ev.sessionId}`,
-    title: needs ? "Needs your input" : ev.failed ? "Stopped with a problem" : "Finished",
+    tag: ev.workstreamId ? `workstream-${ev.workstreamId}-${ev.agentId ?? "budget"}` : `session-${ev.sessionId}`,
+    title: ev.failed ? "Stopped with a problem" : needs ? "Needs your input" : "Finished",
     body: ev.summary,
-    route: `/sessions/${ev.sessionId}`,
+    route: ev.workstreamId ? `/workstreams/${ev.workstreamId}` : `/sessions/${ev.sessionId}`,
   };
 }
 
 /** Number shown on the app badge: sessions with an unanswered request. */
 export function badgeCount(openRequests: Iterable<AttentionEvent>): number {
   const sessions = new Set<string>();
-  for (const e of openRequests) if (e.kind === "attention_requested" && (e.requestKind === "permission" || e.requestKind === "ask_user" || e.requestKind === "mission_attention")) sessions.add(e.sessionId);
+  for (const e of openRequests) if (e.kind === "attention_requested" && (e.requestKind === "permission" || e.requestKind === "ask_user" || e.requestKind === "mission_attention" || e.requestKind === "workstream_attention")) sessions.add(e.workstreamId ?? e.sessionId);
   return sessions.size;
 }
 
@@ -60,7 +60,7 @@ export function soundFor(ev: AttentionEvent, s: DesktopSettings, w: WindowState,
   if (snd.soundFocusMode === "focused" && !w.focused) return undefined;
   if (snd.soundFocusMode === "unfocused" && w.focused) return undefined;
   let value: SoundValue;
-  if (ev.requestKind === "permission" || ev.requestKind === "ask_user" || ev.requestKind === "mission_attention") value = snd.awaitingInputSound;
+  if (ev.requestKind === "permission" || ev.requestKind === "ask_user" || ev.requestKind === "mission_attention" || ev.requestKind === "workstream_attention") value = snd.awaitingInputSound;
   else if (ev.requestKind === "session_completion" || ev.requestKind === "mission_completion") value = snd.completionSound;
   else return undefined;
   if (nested) {

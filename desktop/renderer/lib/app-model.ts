@@ -42,6 +42,7 @@ export class AppModel extends Store<AppState> {
       if (!this.control || this.control.closed) {
         this.control = await DaemonConn.open();
         this.control.onClose = () => { this.control = undefined; };
+        void this.control.request("list_workstreams").catch(() => {});
       }
       const [s, m] = await Promise.all([this.listSessions(this.control), this.control.request("list_models")]);
       if (version !== this.refreshVersion) return;
@@ -67,6 +68,7 @@ export class AppModel extends Store<AppState> {
     if (!this.control || this.control.closed) {
       this.control = await DaemonConn.open();
       this.control.onClose = () => { this.control = undefined; };
+      void this.control.request("list_workstreams").catch(() => {});
     }
     return this.control.request<T>(method, params);
   }

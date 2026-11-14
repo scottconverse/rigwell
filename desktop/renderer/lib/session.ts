@@ -126,6 +126,19 @@ export class SessionController extends Store<SessionState> {
     if (method !== "session_notification") return;
     const n = p.notification ?? {};
     switch (n.type) {
+      case "workstream_prompt_resolved": {
+        const prompt = this.state.prompts.find((x) => x.requestId === n.requestId && x.params.workstreamId === n.workstreamId);
+        if (prompt) this.answer(prompt.requestId, n.answer);
+        return;
+      }
+      case "workstream_member_notification": {
+        const inner = n.notification ?? {};
+        if (inner.type === "permission_resolved" || inner.type === "agent_turn_completed") {
+          const prompts = this.state.prompts.filter((x) => x.params.agentId === n.agentId && (inner.type === "agent_turn_completed" || x.requestId === inner.requestId));
+          for (const prompt of prompts) this.answer(prompt.requestId, prompt.method === "request_permission" ? { selectedOption: "cancel" } : { cancelled: true, answers: [] });
+        }
+        return;
+      }
       case "daemon.terminal_data": case "daemon.terminal_exit": for (const l of this.terminalListeners) l(n); return;
       case "daemon.side_chat_entry": this.upsertSide(n.entry); return;
       case "agent_working_state_changed": this.set({ working: n.newState }); return;
@@ -180,8 +193,8 @@ export class SessionController extends Store<SessionState> {
 
   /** `cancelReshown` false (the view closes): prompts shown again after a reload stay open in the harness for the next load_session. */
   private resolveAllPrompts(cancelReshown = true) {
-    for (const p of this.state.prompts) if (cancelReshown || !p.reshown) p.resolve(p.method === "request_permission" ? { selectedOption: "cancel" } : p.method === "ask_user" ? { cancelled: true, answers: [] } : { cancelled: true, selectedIds: [] });
-    if (this.state.prompts.length) this.set({ prompts: [] });
+    for (const p of this.state.prompts) if (!p.params.workstreamId && (cancelReshown || !p.reshown)) p.resolve(p.method === "request_permission" ? { selectedOption: "cancel" } : p.method === "ask_user" ? { cancelled: true, answers: [] } : { cancelled: true, selectedIds: [] });
+    if (this.state.prompts.length) this.set({ prompts: this.state.prompts.filter((p) => p.params.workstreamId) });
   }
 
   answer(requestId: string, result: unknown) {
@@ -198,9 +211,10 @@ export class SessionController extends Store<SessionState> {
     const names = [...(attach.images ?? []).map((_, i) => `image ${i + 1}`), ...(attach.files ?? []).map((f) => f.name)];
     const shown = names.length ? `${text}\n[Attached: ${names.join(", ")}]` : text;
     if (this.attaching) await Promise.race([this.attaching, new Promise((r) => setTimeout(r, 3000))]);
-    this.set({ items: [...this.state.items, { kind: "user", id: `u-${Date.now()}`, text: shown }], working: "thinking" });
+    const messageId = crypto.randomUUID();
+    this.set({ items: [...this.state.items, { kind: "user", id: `${messageId}:0`, text: shown }], working: "thinking" });
     if (this.state.title === "New Session") this.set({ title: text.split("\n")[0].slice(0, 60) });
-    try { await this.conn.request("add_user_message", { text, ...(attach.images?.length ? { images: attach.images } : {}), ...(attach.files?.length ? { files: attach.files } : {}) }); } catch (e) { this.set({ items: [...this.state.items, { kind: "info", id: `e-${Date.now()}`, text: (e as Error).message, level: "error" }], working: "idle" }); }
+    try { await this.conn.request("add_user_message", { text, messageId, ...(attach.images?.length ? { images: attach.images } : {}), ...(attach.files?.length ? { files: attach.files } : {}) }); } catch (e) { this.set({ items: [...this.state.items, { kind: "info", id: `e-${Date.now()}`, text: (e as Error).message, level: "error" }], working: "idle" }); }
   }
   interrupt() { void this.conn?.request("interrupt_session").catch(() => {}); }
   async updateSettings(patch: Record<string, unknown>) { await this.conn?.request("update_session_settings", patch); }

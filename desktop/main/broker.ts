@@ -127,11 +127,11 @@ export class DaemonBroker {
     if (typeof m?.result?.sessionId === "string") c.sessionId = m.result.sessionId;
     if (m?.type === "notification" || (m?.method && m.id == null)) {
       if (typeof m.params?.sessionId === "string") c.sessionId = m.params.sessionId;
-      if (m.method === "rigwell.session_notification" && c.sessionId) {
+      if (m.method === "rigwell.session_notification" && (c.sessionId || m.params?.notification?.leadSessionId)) {
         const nested = typeof m.params?.notification?.agentId === "string"; // subagent traffic carries an agent id
         const n = m.params.notification ?? {};
         if (!nested && n.type === "agent_working_state_changed") { const w = n.newState !== "idle"; if (w !== !!c.working) { c.working = w; this.activity(); } }
-        for (const ev of this.tracker.onNotification(c.sessionId, m.params.notification ?? {})) this.attention(ev, nested);
+        for (const ev of this.tracker.onNotification(c.sessionId ?? n.leadSessionId, n)) this.attention(ev, nested);
       }
     } else if (m?.type === "request" && typeof m.method === "string" && typeof m.id === "string") {
       const method = m.method.replace(/^rigwell\./, "");
@@ -143,6 +143,7 @@ export class DaemonBroker {
   private attention(ev: AttentionEvent, nested = false) {
     void nested;
     if (ev.kind === "attention_resolved") this.open.delete(ev.requestId ?? "");
+    if (ev.requestKind === "workstream_attention" && ev.kind === "attention_requested" && ev.requestId) this.open.set(ev.requestId, ev);
     this.host.onAttention(ev, [...this.open.values()]);
   }
 }

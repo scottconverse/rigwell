@@ -5,14 +5,16 @@
 // tracker. The desktop main process feeds it every message it relays (it sees both directions), which is equivalent to
 // the daemon doing it for connected windows. Moving the tracker into the daemon later needs no change to the events.
 export type AttentionKind = "attention_requested" | "attention_resolved" | "source_terminated";
-export type RequestKind = "ask_user" | "permission" | "session_completion" | "mission_attention" | "mission_completion";
-export type AttentionCategory = "questions_and_approvals" | "agent_turn_complete" | "mission_needs_input" | "mission_complete";
+export type RequestKind = "ask_user" | "permission" | "session_completion" | "mission_attention" | "mission_completion" | "workstream_attention";
+export type AttentionCategory = "questions_and_approvals" | "agent_turn_complete" | "mission_needs_input" | "mission_complete" | "workstream_needs_input" | "workstream_agent_failed" | "workstream_budget_reached";
 
 export interface AttentionEvent {
   kind: AttentionKind;
   requestKind?: RequestKind;
   category?: AttentionCategory;
   sessionId: string;
+  workstreamId?: string;
+  agentId?: string;
   summary: string;
   detail: string;
   /** Request id this event resolves or belongs to. */
@@ -27,6 +29,7 @@ export interface AttentionEvent {
 const CATEGORY: Record<RequestKind, AttentionCategory> = {
   ask_user: "questions_and_approvals", permission: "questions_and_approvals", session_completion: "agent_turn_complete",
   mission_attention: "mission_needs_input", mission_completion: "mission_complete",
+  workstream_attention: "workstream_needs_input",
 };
 export const categoryOf = (k: RequestKind) => CATEGORY[k];
 
@@ -63,11 +66,14 @@ export function askUserSummary(params: Record<string, any>): { summary: string; 
 
 /** Per-connection tracker. Feed it relayed traffic; it returns events to act on. */
 export class AttentionTracker {
+  private workstreamStates = new Map<string, string>();
   private lastText = new Map<string, { messageId: string; text: string }>();
   private open = new Map<string, AttentionEvent>(); // by requestId
 
   /** A request from the harness to the client (rigwell.request_permission / ask_user / pick_options). */
   onRequest(sessionId: string, method: string, requestId: string, params: Record<string, any>): AttentionEvent | undefined {
+    // Workstream status events cover these on every subscribed window, even when no lead view is open.
+    if (params.workstreamId) return undefined;
     let s: { summary: string; detail: string }, rk: RequestKind;
     if (method === "request_permission") { s = permissionSummary(params); rk = "permission"; }
     else if (method === "ask_user" || method === "pick_options") { s = method === "ask_user" ? askUserSummary(params) : { summary: String(params.title ?? "Choose an option"), detail: "" }; rk = "ask_user"; }
@@ -79,6 +85,20 @@ export class AttentionTracker {
 
   /** A session_notification. */
   onNotification(sessionId: string, n: Record<string, any>): AttentionEvent[] {
+    if (typeof n.workstreamId === "string") {
+      if (n.type === "workstream_updated" && ["active", "archived"].includes(n.workstream?.state)) {
+        const key = `workstream-${n.workstreamId}-budget`;
+        if (this.workstreamStates.delete(key)) return [{ kind: "attention_resolved", sessionId, workstreamId: n.workstreamId, requestId: key, summary: "", detail: "", at: Date.now() }];
+      }
+      const agent = n.agent, key = `workstream-${n.workstreamId}-${agent?.agentId ?? "budget"}`;
+      const state = n.type === "workstream_agent_status" ? agent?.status : n.type === "workstream_budget_reached" ? "budget" : undefined;
+      if (!state || this.workstreamStates.get(key) === state) return [];
+      this.workstreamStates.set(key, state);
+      if (!["waiting_input", "failed", "budget"].includes(state)) return [{ kind: "attention_resolved", sessionId, workstreamId: n.workstreamId, requestId: key, summary: "", detail: "", at: Date.now() }];
+      return [{ kind: "attention_requested", requestKind: "workstream_attention", category: state === "budget" ? "workstream_budget_reached" : state === "failed" ? "workstream_agent_failed" : "workstream_needs_input",
+        sessionId, workstreamId: n.workstreamId, agentId: agent?.agentId, requestId: key,
+        summary: state === "budget" ? `Workstream budget reached: ${n.reason}` : `${agent.name}: ${state === "failed" ? "stopped with a problem" : "needs your input"}`, detail: String(agent?.lastSummary ?? ""), failed: state === "failed", at: Date.now() }];
+    }
     switch (n.type) {
       case "assistant_text_delta": {
         const cur = this.lastText.get(sessionId);

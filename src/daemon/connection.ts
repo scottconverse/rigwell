@@ -39,6 +39,10 @@ const parked = new Map<string, { session: Session; files: SessionFiles; worktree
 const parkMs = () => Number(process.env.RIGWELL_PARK_MS) || 30 * 60_000;
 
 export interface ConnectionOptions {
+  /** Owned sessions publish committed user messages to their live transcript views. */
+  notifyUserMessages?: boolean;
+  /** An owned live session can have transcript/control views without another engine or replacing its host. */
+  sharedSession?: (id: string) => { session: Session; alive(): boolean; subscribe(notify: (n: Record<string, unknown>) => void): () => void } | undefined;
   maxToolIds?: string[];
   beforeTurn?: import("../agent/session.ts").SessionDeps["beforeTurn"];
   onUsage?: import("../agent/session.ts").SessionDeps["onUsage"];
@@ -84,6 +88,8 @@ export function createConnection(write: (line: string) => void, opts: Connection
   let files: SessionFiles | undefined;
   let closed = false;
   let worktree: SessionWorktree | undefined;
+  let shared: ReturnType<NonNullable<ConnectionOptions["sharedSession"]>>;
+  let unsubscribeShared: (() => void) | undefined;
 
   const peer: RpcPeer = new RpcPeer(write, (m, p) => handle(m, p), opts.log);
 
@@ -97,6 +103,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
   };
 
   function need(): Session {
+    if (closed || (shared && !shared.alive())) throw new RpcError(ErrorCodes.SESSION_DISCONNECTED, "The session owner has ended");
     if (!session) throw new RpcError(ErrorCodes.SESSION_DISCONNECTED, "No session: call initialize_session or load_session first");
     return session;
   }
@@ -192,7 +199,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
 
   function persistenceFor(f: SessionFiles) {
     return {
-      appendMessage: async (msg: Message, parent: string | null) => { await appendMessage(f, msg, parent); },
+      appendMessage: async (msg: Message, parent: string | null) => { await appendMessage(f, msg, parent); if (opts.notifyUserMessages && msg.role === "user" && msg.visibility !== "llm_only") notify({ type: "create_message", message: msg }); },
       appendTurnOutcome: (o: { turnId: string; reason: string; resultKind: "text" | "structured" | null }) => appendTurnOutcome(f, o),
       appendTodoState: (todos: any, idx: number) => appendTodoState(f, todos, idx),
       setTitle: async (title: string, manual: boolean) => { await appendTitle(f, title, manual); updateSessionSettings(f, { title, isSessionTitleManuallySet: manual }); },
@@ -356,6 +363,16 @@ export function createConnection(write: (line: string) => void, opts: Connection
         const id = p.sessionId;
         if (!isValidSessionId(id)) throw new RpcError(ErrorCodes.INVALID_PARAMS, "Invalid sessionId");
         const page = pageFrom(p);
+        const owned = opts.sharedSession?.(id);
+        if (owned) {
+          session = owned.session; shared = owned;
+          files = findSession(id, session.cwd) ?? undefined;
+          unsubscribeShared = owned.subscribe(notify);
+          const env = environment(session.cwd);
+          return { ...sessionResult(page), cwd: session.cwd, isAgentLoopInProgress: session.isRunning,
+            workingState: session.workingState, tokenUsage: session.tokenUsage, availableModels: listModelInfo(env.models),
+            trusted: env.trusted, ...pendingLists(session) };
+        }
         // A session kept alive for a client that went away: adopt it. Its open prompts are listed below; answering
         // one (rigwell.answer_request) resolves the wait the agent is still in.
         const live = parked.get(id);
@@ -465,6 +482,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
       }
       case "interrupt_session": need().interrupt(); return {};
       case "close_session": {
+        if (shared) { unsubscribeShared?.(); unsubscribeShared = undefined; closed = true; return {}; }
         if (session) {
           session.interrupt(true);
           await session.idle();
@@ -616,6 +634,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
     get session() { return session; },
     get closed() { return closed; },
     async shutdown(o: { park?: boolean } = {}) {
+      if (shared) { unsubscribeShared?.(); unsubscribeShared = undefined; peer.end(); return; }
       // The client went away while a prompt is open: keep the session for a reconnecting load_session.
       if (o.park && session && !closed && session.isRunning && session.pendingPrompts().length) {
         const s = session;

@@ -83,6 +83,7 @@ export function reduce(items: Item[], n: { type: string; [k: string]: any }): It
     case "tool_result": return upsertTool(items, n.toolUseId, { status: n.isError ? "error" : "ok", output: text(n.content) });
     case "create_message": {
       const m = n.message;
+      if (m?.role === "user") return [...items, ...fromMessages([m]).filter((next) => !items.some((i) => i.id === next.id))];
       return m?.role === "assistant" ? [...items, ...fromMessages([m])] : items;
     }
     case "llm_retry": return [...items, { kind: "info", id: `retry-${items.length}`, text: `Model call failed (${n.reason}); retry ${n.attempt}`, level: "info" }];

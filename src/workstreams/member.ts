@@ -26,7 +26,7 @@ export class MemberSession {
           );
         } else if (m.params?.notification) host.notify(m.params.notification);
       }
-    }, { canPrompt: true, wrapTools: host.tools, log, retryBaseDelayMs: 1, maxAutonomy, ...limits });
+    }, { canPrompt: true, notifyUserMessages: true, wrapTools: host.tools, log, retryBaseDelayMs: 1, maxAutonomy, ...limits });
   }
   private feed(message: Record<string, unknown>) { this.connection.peer.feed(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n"); }
   call(method: string, params: Record<string, unknown> = {}): Promise<any> {

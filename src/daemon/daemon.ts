@@ -78,7 +78,8 @@ export async function startDaemon(opts: { socketPath: string; log?: (m: string) 
     conn = createConnection(write, {
       canPrompt: true, log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs,
       onNotification: (s, n) => { if (s) workstreams.observe(s, n); },
-      extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx), ...mission.methods },
+      sharedSession: workstreams.sharedSession,
+      extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx), ...mission.methods, ...stream.methods },
       wrapTools: (tools) => stream.wrapTools(mission.wrapTools(tools)),
       extraTools: sidepane || autoTools.length ? () => [...(sidepane ? sidepane.tools() : []), ...autoTools] : undefined,
     });
