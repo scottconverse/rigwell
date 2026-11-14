@@ -78,7 +78,7 @@ export class WorkstreamListeners {
       root = allowed; pattern = relative(root, f.glob).split(sep).join("/");
     }
     if (pattern.split("/").includes("..")) throw new Error("File listener glob cannot escape its root");
-    return { root: realpathSync(root), glob: new Bun.Glob(pattern.includes("/") ? pattern : `**/${pattern}`) };
+    return { root: realpathSync.native(root), glob: new Bun.Glob(pattern.includes("/") ? pattern : `**/${pattern}`) };
   }
 
   private arm(store: WorkstreamStore, listener: WorkstreamListener) {
@@ -102,7 +102,7 @@ export class WorkstreamListeners {
         const name = String(filename).replaceAll("\\", "/");
         if (!glob.match(name)) return;
         const path = resolve(root, name);
-        try { const real = realpathSync(path), rel = relative(root, real); if (rel.startsWith("..") || isAbsolute(rel)) return; } catch { /* a deleted file still produces a change */ }
+        try { const real = realpathSync.native(path), rel = relative(root, real); if (rel.startsWith("..") || isAbsolute(rel)) return; } catch { /* a deleted file still produces a change */ }
         this.fire(store, listener, { path, change });
       });
       watcher.on("error", (e) => this.opts.log?.(`[workstream] File listener ${listener.id}: ${e.message}`));
