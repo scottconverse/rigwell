@@ -69,7 +69,7 @@ export function startProxy(o: ProxyOptions): Promise<ProxyHandle> {
         }
       }
       const verdict = domainAllowed(host, o.allowed, o.denied);
-      o.log?.(`proxy request ${method} allowed=${verdict.ok}`);
+      o.log?.(`proxy request ${method} ${host}:${port} allowed=${verdict.ok}`);
       if (!verdict.ok) {
         o.onViolation({ host, reason: verdict.reason });
         client.end(`HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Type: text/plain\r\n\r\nBlocked by the Rigwell sandbox: ${host} (${verdict.reason}).\n`);

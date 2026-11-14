@@ -65,6 +65,9 @@ export class CdpConnection {
       if (m.error) p.reject(new Error(`${p.method}: ${m.error.message ?? "CDP error"}`));
       else p.resolve(m.result ?? {});
     } else if (m.method) {
+      if (m.method === "Network.requestWillBeSent") {
+        try { const url = new URL(m.params?.request?.url); this.trace(`CDP request ${m.params?.type} ${url.protocol}//${url.host}`); } catch {}
+      }
       if (/^(Page\.(?:frameStartedLoading|frameStoppedLoading|frameNavigated|loadEventFired)|Fetch\.requestPaused|Network\.loadingFailed|Target\.detachedFromTarget)$/.test(m.method)) this.trace(`CDP event ${m.method} session=${m.sessionId ?? "browser"}`);
       for (const l of this.listeners) l(m.method, m.params, m.sessionId);
     }

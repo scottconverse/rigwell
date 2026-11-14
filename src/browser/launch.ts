@@ -52,6 +52,7 @@ export async function launchHeadlessBrowser(policy: BrowserPolicy, signal: Abort
     // Automation must retain ownership of this child. On Windows Chromium otherwise
     // relaunches from elevated callers and exits before publishing its CDP endpoint.
     child = spawn(executable, ["--headless=new", "--enable-automation", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
+      ...(process.env.RIGWELL_BROWSER_NETLOG === "1" ? [`--log-net-log=${join(profile, "network-log.json")}`] : []),
       `--proxy-server=http://127.0.0.1:${proxy.address}`, "--proxy-bypass-list=<-loopback>", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
       // This disposable profile must not open a native password-store permission dialog in headless mode.
       "--password-store=basic", "--use-mock-keychain",
