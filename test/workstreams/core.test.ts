@@ -158,3 +158,18 @@ test("member permission requests reach the user with member labels and honor can
     expect(existsSync(join(cwd, "forbidden.txt"))).toBe(false);
   } finally { await service.stop(); fake.stop(); }
 }, 10_000);
+
+
+test("failed member status survives the session's final idle notification", async () => {
+  const fake = await startFakeAnthropic(Array.from({ length: 12 }, () => ({ status: 400, errorBody: { type: "error", error: { type: "invalid_request_error", message: "fixture failure" } } })));
+  process.env.RIGWELL_HOME = makeHome([{ provider: "anthropic", url: fake.url, displayName: "Fixture" }]);
+  const session = lead(tmp("ws-failed")), service = createWorkstreamService();
+  const conn = { session: () => session, notify() {}, request: async () => ({ selectedOption: "proceed_once" }) };
+  service.attach(conn);
+  try {
+    const approved = await service.propose(conn, proposal), store = new WorkstreamStore(approved.workstreamId!);
+    const agent = await service.spawn(session, { name: "Failing", role: "task", prompt: "Fail", worktree: false });
+    await service.members.get(agent.agentId)!.connection.session!.idle();
+    expect(store.agent(agent.agentId)!.status).toBe("failed");
+  } finally { await service.stop(); fake.stop(); }
+});

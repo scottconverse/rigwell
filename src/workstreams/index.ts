@@ -78,7 +78,11 @@ export function createWorkstreamService(opts: { log?: (text: string) => void } =
     const member = new MemberSession({
       tools: (tools) => toolsFor(sessionId, tools),
       notify: (n) => {
-        if (n.type === "agent_working_state_changed") updateStatus(store, agentId, n.newState === "idle" ? "idle" : "working");
+        if (n.type === "agent_working_state_changed") {
+          // A final idle notification follows the outcome; retain failure/interruption until another turn starts.
+          const terminal = ["failed", "interrupted", "archived"].includes(store.agent(agentId)!.status);
+          if (n.newState !== "idle" || !terminal) updateStatus(store, agentId, n.newState === "idle" ? "idle" : "working");
+        }
         if (n.type === "agent_turn_completed") {
           const s = member.connection.session;
           const messages = s?.uiMessages() ?? [];
