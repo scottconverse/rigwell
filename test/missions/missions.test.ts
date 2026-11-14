@@ -59,7 +59,8 @@ function orchestratorTurn(rig: () => { dir: string }, features: unknown[], after
   };
 }
 
-async function rig(script: (rig: Rig) => (b: any, i: number) => FakeTurnSpec, missionSettings: Record<string, unknown> = {}, svcOpts: Record<string, unknown> = {}): Promise<Rig> {
+async function rig(script: (rig: Rig) => (b: any, i: number) => FakeTurnSpec, missionSettings: Record<string, unknown> = {}, svcOpts: Record<string, unknown> = {}, trace: (phase: string) => void = () => {}): Promise<Rig> {
+  trace("fake model setup");
   const holder: { r?: Rig } = {};
   let built: ((b: any, i: number) => FakeTurnSpec) | undefined;
   const fn = (b: any, i: number) => (built ??= script(holder.r!))(b, i);
@@ -68,7 +69,9 @@ async function rig(script: (rig: Rig) => (b: any, i: number) => FakeTurnSpec, mi
   const home = makeHome([{ provider: "anthropic", url: server.url, displayName: "Fake" }]);
   process.env.RIGWELL_HOME = home;
   process.env.RIGWELL_NO_WAKE_LOCK = "1";
+  trace("Git repository setup");
   const repo = makeRepo();
+  trace("connection setup");
   const out: any[] = [];
   const svc = createMissionService({ lockSpawner: () => undefined, limits: { inactivityMs: 5000, startGraceMs: 2000, heartbeatMs: 60_000 }, retryBaseDelayMs: 1, ...svcOpts });
   let conn!: ReturnType<typeof createConnection>;
@@ -83,9 +86,11 @@ async function rig(script: (rig: Rig) => (b: any, i: number) => FakeTurnSpec, mi
     for (;;) { const v = pred(); if (v) return v; if (Date.now() - t0 > ms) throw new Error("timeout"); await Bun.sleep(5); }
   };
   const call = async (method: string, params: Record<string, unknown>) => {
+    trace(`RPC ${method} sent`);
     const id = `m${++n}`;
     conn.peer.feed(JSON.stringify({ jsonrpc: "2.0", type: "request", id, method: `rigwell.${method}`, params }) + "\n");
     const r = await until(() => out.find((m) => m.type === "response" && m.id === id));
+    trace(`RPC ${method} answered`);
     if (r.error) throw new Error(`${method}: ${r.error.message}`);
     return r.result;
   };
@@ -285,17 +290,29 @@ function lastTextOf(server: FakeServer): string {
 
 describe("crash recovery and mission tools gating", () => {
   test("a stale running state becomes paused when the session is first seen; tools exist only in mission mode", async () => {
-    const r = await rig(() => () => ({ text: "hi" }));
-    mkdirSync(r.dir, { recursive: true });
-    writeFileSync(join(r.dir, "state.json"), JSON.stringify({ missionId: "mis_00000000", state: "running", workingDirectory: r.repo, createdAt: "x", updatedAt: "x", lastReviewedHandoffCount: 0, initialFeatureCount: 0, featureRetryBudgetBonus: {} }));
-    const got = await r.call("mission_get", {});
-    expect(got.state).toBe("paused");
-    expect(got.pauseReason).toBe("crash_recovery");
-    const tools = (await r.call("list_tools", {})).tools.map((t: any) => t.id);
-    expect(tools).toContain("ProposeMission");
-    expect(tools).not.toContain("EndFeatureRun");
-    await r.call("update_session_settings", { interactionMode: "auto" });
-    expect((await r.call("list_tools", {})).tools.map((t: any) => t.id)).not.toContain("ProposeMission");
+    const started = performance.now(), events: { phase: string; elapsedMs: number }[] = [];
+    const trace = (phase: string) => { events.push({ phase, elapsedMs: Math.round(performance.now() - started) }); };
+    const diagnostics = () => console.error("Mission recovery diagnostics", JSON.stringify({ elapsedMs: Math.round(performance.now() - started), events }));
+    const timer = setTimeout(diagnostics, 4000); timer.unref();
+    let r: Rig | undefined;
+    try {
+      r = await rig(() => () => ({ text: "hi" }), {}, {}, trace);
+      trace("write stale mission state");
+      mkdirSync(r.dir, { recursive: true });
+      writeFileSync(join(r.dir, "state.json"), JSON.stringify({ missionId: "mis_00000000", state: "running", workingDirectory: r.repo, createdAt: "x", updatedAt: "x", lastReviewedHandoffCount: 0, initialFeatureCount: 0, featureRetryBudgetBonus: {} }));
+      const got = await r.call("mission_get", {});
+      expect(got.state).toBe("paused");
+      expect(got.pauseReason).toBe("crash_recovery");
+      const tools = (await r.call("list_tools", {})).tools.map((t: any) => t.id);
+      expect(tools).toContain("ProposeMission");
+      expect(tools).not.toContain("EndFeatureRun");
+      await r.call("update_session_settings", { interactionMode: "auto" });
+      expect((await r.call("list_tools", {})).tools.map((t: any) => t.id)).not.toContain("ProposeMission");
+    } finally {
+      clearTimeout(timer);
+      if (performance.now() - started >= 4000) diagnostics();
+      await r?.conn.shutdown();
+    }
   });
 });
 
