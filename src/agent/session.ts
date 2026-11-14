@@ -767,13 +767,14 @@ export class Session {
   /** Accepts a user message. Returns at once; the turn runs in the background. */
   addUserMessage(
     text: string, messageId: string = crypto.randomUUID(), source?: string,
-    opts: { content?: ContentBlock[]; placement?: "end_of_turn" | "end_of_loop"; outputFormat?: OutputFormat | null } = {},
+    opts: { content?: ContentBlock[]; placement?: "end_of_turn" | "end_of_loop" | "now"; outputFormat?: OutputFormat | null } = {},
   ) {
     const entry: QueuedUserMessage = {
       text, messageId, ...(source ? { source } : {}), ...(opts.content?.length ? { content: opts.content } : {}), ...(opts.outputFormat !== undefined ? { outputFormat: opts.outputFormat } : {}),
     };
     // end_of_loop while a turn runs is steering: it is delivered after the next tool call batch (spec 13.3).
-    if (opts.placement === "end_of_loop" && this.running) this.steer.push(entry);
+    if (opts.placement === "now") { this.interrupt(); this.queue.unshift(entry); }
+    else if (opts.placement === "end_of_loop" && this.running) this.steer.push(entry);
     else this.queue.push(entry);
     this.kick();
   }

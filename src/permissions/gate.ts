@@ -63,6 +63,7 @@ export function decide(tool: string, input: Record<string, unknown>, ctx: Permis
     case "ProposeWorkstream":
     case "SpawnAgent":
     case "ListAgents":
+    case "SendMessage":
       return { decision: "allow" };
     case "load_tools":
     case "ToolSearch":

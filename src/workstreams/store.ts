@@ -28,6 +28,11 @@ export interface AgentEntry {
   parentAgentId?: string; depth: number;
 }
 export interface WorkstreamEvent { id: string; ts: number; type: string; [key: string]: unknown }
+export type MessagePriority = "now" | "next" | "later";
+export interface WorkstreamMessage {
+  id: string; ts: number; from: string; to: string; priority: MessagePriority; text: string;
+  deliveredAt?: number; readAt?: number;
+}
 
 export const workstreamsRoot = () => join(rigwellHome(), "workstreams");
 const safeId = (id: string) => { if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error("Invalid workstream id"); return id; };
@@ -71,6 +76,18 @@ export class WorkstreamStore {
   }
   events(): WorkstreamEvent[] {
     return readFileSync(this.path("events.jsonl"), "utf8").split("\n").filter(Boolean).flatMap((line) => { try { return [JSON.parse(line)]; } catch { return []; } });
+  }
+  /** Revisions append with the same id; folding the log preserves one current message per id. */
+  messages(): WorkstreamMessage[] {
+    const messages = new Map<string, WorkstreamMessage>();
+    for (const line of readFileSync(this.path("messages.jsonl"), "utf8").split("\n").filter(Boolean)) {
+      try { const message = JSON.parse(line); messages.set(message.id, message); } catch { /* incomplete final append after a crash */ }
+    }
+    return [...messages.values()];
+  }
+  writeMessage(message: WorkstreamMessage) {
+    appendFileSync(this.path("messages.jsonl"), JSON.stringify(message) + "\n", { mode: 0o600 });
+    return message;
   }
 }
 export function listWorkstreamStores(root = workstreamsRoot()): WorkstreamStore[] {

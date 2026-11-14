@@ -39,6 +39,8 @@ const parked = new Map<string, { session: Session; files: SessionFiles; worktree
 const parkMs = () => Number(process.env.RIGWELL_PARK_MS) || 30 * 60_000;
 
 export interface ConnectionOptions {
+  /** Observes normal session notifications without changing the session's host. */
+  onNotification?: (session: Session | undefined, notification: Record<string, unknown>) => void;
   /** An owned member session cannot raise its autonomy above its lead's cap. */
   maxAutonomy?: AutonomyLevel;
   /** The client can answer rigwell.request_permission (stream-jsonrpc). False for plain `exec "prompt"`. */
@@ -82,6 +84,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
   const peer: RpcPeer = new RpcPeer(write, (m, p) => handle(m, p), opts.log);
 
   const notify = (n: Record<string, unknown>) => {
+    opts.onNotification?.(session, n);
     peer.notify(METHOD_PREFIX + "session_notification", { ...(session ? { sessionId: session.id } : {}), notification: n });
     // A generated title renames a generated worktree branch (spec 18.2).
     if (n.type === "session_title_updated" && n.updateType !== "manual" && worktree && session && typeof n.title === "string") {
