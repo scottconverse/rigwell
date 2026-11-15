@@ -11,6 +11,7 @@ import { Academy } from "../components/Academy.tsx";
 import { Analytics } from "../components/Analytics.tsx";
 import { Evaluations } from "../components/Evaluations.tsx";
 import { SpendLimits } from "../components/SpendLimits.tsx";
+import { FallbackModels } from "../components/FallbackModels.tsx";
 import { Automations, AutomationDetail } from "../components/Automations.tsx";
 import { SessionScreen } from "../components/SessionScreen.tsx";
 import { app, useApp } from "../lib/app-model.ts";
@@ -49,6 +50,7 @@ function Fixture() {
   if (window.location.pathname === "/analytics") return <Analytics />;
   if (window.location.pathname === "/eval") return <Evaluations />;
   if (window.location.pathname === "/spend") return <SpendLimits />;
+  if (window.location.pathname === "/fallback") return <FallbackModels />;
   const [route, go] = useState(window.location.pathname === "/inbox" ? "/inbox" : window.location.pathname === "/sync" ? "/sync" : window.location.pathname === "/automations" ? "/automations" : "/imports");
   if (route === "/inbox") return <Inbox go={go} />;
   if (route === "/settings/email-alerts") return <EmailAlerts />;

@@ -63,6 +63,7 @@ export interface RigwellSettings {
   loopGuards?: Record<string, number>;
   /** Candidates for the "auto" model id: { classifierModel, candidates: [{ model, description, inputCost }], threshold?, timeoutMs? }. */
   autoRouter?: { classifierModel: string; candidates: { model: string; description: string; inputCost: number }[]; threshold?: number; timeoutMs?: number };
+  fallbackModels?: string[];
   compactionThresholdCheckEnabled?: boolean;
   /** "current-model": compaction summaries use the active model; "default" (or unset): `compactionModel` when set. */
   compactionModelMode?: "current-model" | "default";

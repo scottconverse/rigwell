@@ -10,6 +10,7 @@ import { ManagedNote, OrgCeiling } from "./SettingsAccess.tsx";
 import { AddServerForm, Dialog, McpLoginPanel, ServerList, TextDialog, useMcp } from "./Dialogs.tsx";
 import { WorktreePr } from "./WorktreePr.tsx";
 import { SpendLimits } from "./SpendLimits.tsx";
+import { FallbackModels } from "./FallbackModels.tsx";
 
 const Row = ({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => (
   <div className="row"><div className="row-label"><div>{label}</div>{hint && <div className="muted small">{hint}</div>}</div><div className="row-ctl">{children}</div></div>
@@ -55,6 +56,7 @@ export function SessionDefaults() {
       <h2>Session Defaults {status} <ManagedNote keys={["sessionDefaultSettings", "compactionTokenLimit", "compactionModel", "specSaveDir"]} /></h2>
       <OrgCeiling />
       <Row label="Model" hint="Used for new sessions"><ModelSelect label="Default model" value={d.model} onChange={(v) => set("model", v)} allowNone="First available" extra={auto} /></Row>
+      <FallbackModels />
       <Row label="Reasoning"><select aria-label="Default reasoning" value={d.reasoningEffort ?? "high"} onChange={(e) => set("reasoningEffort", e.target.value)}>{EFFORTS.map((x) => <option key={x}>{x}</option>)}</select></Row>
       <Row label="Mode"><select aria-label="Default mode" value={d.interactionMode ?? "auto"} onChange={(e) => set("interactionMode", e.target.value)}><option value="auto">Auto</option><option value="spec">Spec</option></select></Row>
       <Row label="Autonomy" hint="Off asks before every edit and command"><select aria-label="Default autonomy" value={d.autonomyLevel ?? "off"} onChange={(e) => set("autonomyLevel", e.target.value)}>{["off", "low", "medium", "high"].map((x) => <option key={x}>{x}</option>)}</select></Row>

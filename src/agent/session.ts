@@ -13,7 +13,7 @@ import type {
 import type { ModelRequest, ToolContext, ToolExecutionMode, ToolOutput } from "../core/types.ts";
 import { SnapshotRecorder } from "../snapshots/index.ts";
 import { ModelError, zeroUsage } from "../core/types.ts";
-import { assertSpend, readSpendStatus, spendWarnings } from "../spend/spend.ts";
+import { assertSpend, readSpendStatus, spendWarnings, SpendLimitError } from "../spend/spend.ts";
 import { JobManager, type Job } from "../jobs/manager.ts";
 import { ToolCallError } from "../script/bindings.ts";
 import { ScriptService, type ScriptLimits } from "../script/service.ts";
@@ -183,6 +183,8 @@ export interface SessionDeps {
   persistence: SessionPersistence;
   shell: string;
   retryBaseDelayMs?: number;
+  /** Explicit user/managed pool, never discovered from available provider credentials. */
+  fallbackModels?: string[];
   /** Models (ids or API names) that run script_only; every other model runs direct_only (spec §4.1). */
   scriptToolModels?: string[];
   /** Per-session override from initialize_session. */
@@ -366,6 +368,7 @@ export class Session {
   private lastCallContext?: { tokens: number; count: number };
   /** The model "auto" routing picked for the latest request. */
   private routed?: RouteChoice;
+  private requestModel?: ModelConfig;
   // ---- Phase 5 wiring ----
   readonly hooks?: HookRunner;
   readonly instructions: InstructionLoader;
@@ -465,7 +468,7 @@ export class Session {
   }
 
   /** Effective tool mode: the per-session override, else the model allowlist (spec §4.1). */
-  effectiveMode(modelId: string = this.activeModelId()): ToolExecutionMode {
+  effectiveMode(modelId: string = this.currentModel()?.id ?? this.activeModelId()): ToolExecutionMode {
     if (this.deps.toolExecutionModeOverride) return this.deps.toolExecutionModeOverride;
     const list = this.deps.scriptToolModels ?? [];
     const model = this.deps.resolveModel(modelId);
@@ -604,6 +607,7 @@ export class Session {
   settingsSnapshot(): Record<string, unknown> {
     return {
       ...this.settings, toolExecutionMode: this.effectiveMode(), availableAutonomyLevels: ["off", "low", "medium", "high"],
+      ...(this.requestModel && this.activeModelId() !== AUTO_MODEL_ID && this.requestModel.id !== this.activeModelId() ? { effectiveFallbackModel: this.requestModel.id } : {}),
       sandbox: sandboxStatus(this.id, this.cwd),
       ...(this.routed ? { effectiveRouterModel: this.routedSettings(), routedModelId: this.routed.modelId, routedReasoningEffort: this.activeEffort() } : {}),
       ...(this.deps.toolIds?.restrict ? { restrictToolIds: this.deps.toolIds.restrict } : {}),
@@ -624,7 +628,7 @@ export class Session {
     if (p.autonomyLevel !== undefined && this.deps.maxAutonomy) p = { ...p, autonomyLevel: clampAutonomy(p.autonomyLevel, this.deps.maxAutonomy) };
     if (p.autonomyLevel !== undefined && p.autonomyLevel !== this.settings.autonomyLevel) causes.push("autonomy changed (tool list)");
     Object.assign(this.settings, Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined)));
-    if (this.activeModelId() !== modelBefore) causes.push("model changed");
+    if (this.activeModelId() !== modelBefore) { this.requestModel = undefined; causes.push("model changed"); }
     if (this.settings.interactionMode !== modeBefore) {
       causes.push("interaction mode changed (tool list)");
       if (!o.quietModeChange) this.pendingNotices.push(this.specMode ? specOnNotice(this.interactive) : SPEC_OFF_NOTICE);
@@ -963,7 +967,7 @@ export class Session {
     let release: (() => void) | undefined;
     let admitted = false;
     try {
-      const spend = assertSpend(this.activeModelId() === AUTO_MODEL_ID ? undefined : this.activeModelId());
+      const spend = assertSpend(this.activeModelId() === AUTO_MODEL_ID || this.deps.fallbackModels?.length ? undefined : this.activeModelId());
       release = await this.deps.beforeTurn?.(admission.signal);
       if (!admission.signal.aborted) await this.claimSyncOwnership();
       if (!admission.signal.aborted) { admitted = true; await this.warnSpend(spend, this.activeModelId()); await this.runAdmittedTurn(text, turnId, visibility, entry); }
@@ -1225,6 +1229,7 @@ export class Session {
 
   /** The model a request would go to now: the session model, or for "auto" the routed pick (else the first candidate). */
   private currentModel(): ModelConfig | undefined {
+    if (this.requestModel) return this.requestModel;
     const id = this.activeModelId();
     if (id === AUTO_MODEL_ID && this.deps.router) {
       return this.deps.resolveModel(this.routed?.modelId ?? this.deps.router.candidates[0]?.model ?? "");
@@ -1284,21 +1289,49 @@ export class Session {
     return { primary: model, fallbacks: [] };
   }
 
-  /** Streams one answer from the chosen model; when the provider fails for good, the next fallback (routing only). */
-  private async callWithFallbacks(messageId: string, signal: AbortSignal): Promise<{ model: ModelConfig; done: any }> {
-    const { primary, fallbacks } = await this.chooseModels(signal);
-    const order = [primary, ...fallbacks];
+  private fallbackOrder(models: ModelConfig[]): ModelConfig[] {
+    const order = [...models];
+    for (const id of this.deps.fallbackModels ?? []) {
+      const model = this.deps.resolveModel(id);
+      if (model && !order.some((m) => m.id === model.id)) order.push(model);
+      else if (!model) this.deps.log?.(`[fallback] Skipping unavailable or policy-blocked profile ${id}`);
+    }
+    return order;
+  }
+
+  private async tryModels<T>(order: ModelConfig[], signal: AbortSignal | undefined, run: (model: ModelConfig) => Promise<T>): Promise<{ model: ModelConfig; result: T }> {
     for (let i = 0; i < order.length; i++) {
+      if (signal?.aborted) throw new ModelError("unknown", "Request aborted", { retryable: false });
       const model = order[i]!;
-      if (i > 0) this.builder.monitor.expectBreak(`router fallback to ${model.id}`);
-      try {
-        return { model, done: await this.streamOnce(model, messageId, signal) };
-      } catch (e) {
-        if (signal.aborted || !(e instanceof ModelError) || i === order.length - 1) throw e;
-        this.deps.log?.(`[router] ${model.id} failed (${e.message}); trying ${order[i + 1]!.id}`);
+      try { return { model, result: await run(model) }; }
+      catch (e) {
+        if (signal?.aborted || !(e instanceof ModelError) || (e instanceof SpendLimitError && e.scope === "overall") || i === order.length - 1) throw e;
+        const next = order[i + 1]!;
+        this.deps.log?.(`[fallback] ${model.id} failed (${e.message}); trying ${next.id}`);
+        await this.userNote(`Model ${model.id} failed (${e instanceof SpendLimitError ? "profile spend limit" : e.kind}); trying configured fallback ${next.id}.`);
+        this.notify({ type: "llm_retry", attempt: i + 1, reason: "fallback" });
+        this.builder.monitor.expectBreak(`fallback to ${next.id}`);
       }
     }
-    throw new ModelError("unknown", "no model could be called");
+    throw new ModelError("unknown", "No eligible model could be called");
+  }
+
+  /** Same-model retries finish before moving through the explicit ordered pool. */
+  private async callWithFallbacks(messageId: string, signal: AbortSignal): Promise<{ model: ModelConfig; done: any }> {
+    const { primary, fallbacks } = await this.chooseModels(signal);
+    const { model, result } = await this.tryModels(this.fallbackOrder([primary, ...fallbacks]), signal, async (candidate) => {
+      const previousMode = this.effectiveMode();
+      this.requestModel = candidate;
+      const nextMode = this.effectiveMode();
+      if (nextMode !== previousMode) {
+        this.lastMode = nextMode;
+        await this.push({ id: `notice-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: modeNotice(nextMode) }] });
+      }
+      const done = await this.streamOnce(candidate, messageId, signal);
+      this.notify({ type: "settings_updated", settings: this.settingsSnapshot() });
+      return done;
+    });
+    return { model, done: result };
   }
 
   private async streamOnce(model: ModelConfig, messageId: string, signal: AbortSignal): Promise<any> {
@@ -1460,21 +1493,23 @@ export class Session {
       const removed = this.messages.slice(0, cut);
       const real = removed.filter((m) => !m.id.startsWith("context-compact-"));
       if (!real.length) throw new Error("Nothing to compact yet.");
-      const model = this.compactionModel();
-      const g = this.guards(model);
-      const built = buildSummarizerRequest({
-        model, sessionId: this.id, messages: removed, cfg, customInstructions: o.customInstructions,
-        limits: { idleTimeoutMs: g.streamIdleTimeoutMs, hardLimitMs: g.hardResponseLimitMs },
+      const { model, result: { text, usage } } = await this.tryModels(this.fallbackOrder([this.compactionModel()]), o.signal, async (model) => {
+        const g = this.guards(model);
+        const built = buildSummarizerRequest({
+          model, sessionId: this.id, messages: removed, cfg, customInstructions: o.customInstructions,
+          limits: { idleTimeoutMs: g.streamIdleTimeoutMs, hardLimitMs: g.hardResponseLimitMs },
+        });
+        this.deps.log?.(`[compaction] ${o.reason}: summarizing ${real.length} messages (${built.transcriptChars} chars) with ${model.id}; summarizer limit ${built.limit} tokens, max_tokens ${built.req.maxOutputTokens}`);
+        const stream = this.deps.streamWithRetry(this.spendAdapter(model), { ...built.req, signal: o.signal,
+          ...(model.executionBackend ? { nativeExecution: { cwd: this.cwd, readOnly: true, skipPermissions: false, synthesis: true } } : {}),
+        }, {
+          strategy: "non_interactive", baseDelayMs: this.deps.retryBaseDelayMs,
+          onRetry: (attempt: number, why: string) => this.notify({ type: "llm_retry", attempt, reason: why }),
+        });
+        const result = await collectSummary(stream);
+        if (!result.text) throw new ModelError("empty_response", "The summarizer returned no text.");
+        return result;
       });
-      this.deps.log?.(`[compaction] ${o.reason}: summarizing ${real.length} messages (${built.transcriptChars} chars) with ${model.id}; summarizer limit ${built.limit} tokens, max_tokens ${built.req.maxOutputTokens}`);
-      const stream = this.deps.streamWithRetry(this.spendAdapter(model), { ...built.req, signal: o.signal,
-        ...(model.executionBackend ? { nativeExecution: { cwd: this.cwd, readOnly: true, skipPermissions: false, synthesis: true } } : {}),
-      }, {
-        strategy: "non_interactive", baseDelayMs: this.deps.retryBaseDelayMs,
-        onRetry: (attempt: number, why: string) => this.notify({ type: "llm_retry", attempt, reason: why }),
-      });
-      const { text, usage } = await collectSummary(stream);
-      if (!text) throw new ModelError("empty_response", "The summarizer returned no text.");
       if (usage) {
         await this.accountUsage(model.id, usage, "compaction");
         this.notifyUsage();

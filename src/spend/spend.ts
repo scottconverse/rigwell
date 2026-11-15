@@ -35,7 +35,7 @@ export function assertSpend(model?: string): ReturnType<typeof readSpendStatus> 
   const status = readSpendStatus(); if (!status.enabled) return status;
   const relevant = status.rows.filter((r) => r.model === undefined || r.model === model);
   for (const r of relevant) if (r.status === "blocked" || r.status === "unknown") throw new SpendLimitError(`${r.model ?? "Overall"} ${r.period} spend ${r.status === "unknown" ? "cannot be priced" : "cap reached"}. Check Usage settings before starting more requests.`, r.model === undefined ? "overall" : "model", r.model);
-  if (model && relevant.length && !status.prices[model]) throw new SpendLimitError(`Spend caps require an explicit analytics.prices entry for ${model}; unknown prices are not zero.`, relevant.some((r) => r.model === undefined) ? "overall" : "model", model);
+  if (model && relevant.length && !status.prices[model]) throw new SpendLimitError(`Spend caps require an explicit analytics.prices entry for ${model}; unknown prices are not zero.`, "model", model);
   return status;
 }
 export const spendMethods = { get_spend_status: () => readSpendStatus() };

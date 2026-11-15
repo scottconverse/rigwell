@@ -6,6 +6,7 @@ import { ErrorCodes, METHOD_PREFIX, RpcError, RpcPeer } from "../protocol/rpc.ts
 import { Session, SessionBusyError, type SessionHost, type SessionSettings } from "../agent/session.ts";
 import { applyCompaction } from "../agent/compaction.ts";
 import { AUTO_MODEL_ID, type RouterConfig } from "../agent/router.ts";
+import { parseFallbackModels } from "../agent/fallback-config.ts";
 import { autonomyAllowed, clampAutonomy, modelAllowed } from "../storage/org.ts";
 import { handoffBrief, isHandoffId, loadHandoff } from "../agent/handoff.ts";
 import { hasProjectConfig, isFolderTrusted, loadSettings, trustFolder } from "../storage/settings.ts";
@@ -15,7 +16,7 @@ import { listSessionEntries, searchSessions } from "../storage/session-list.ts";
 import { outputFormatFrom, systemPromptFrom, tagsFrom, toolIdUpdates, toolIdsFrom, userMessageFrom } from "./params.ts";
 import { gitRepoOf } from "./gitrepo.ts";
 import { readSessionSettings, updateSessionSettings } from "../storage/session-settings.ts";
-import { hostId, isValidSessionId } from "../storage/paths.ts";
+import { hostId, isValidSessionId, rigwellHome } from "../storage/paths.ts";
 import { createAdapter } from "../adapters/index.ts";
 import { streamWithRetry } from "../adapters/retry.ts";
 import { toolsForSession } from "../tools/registry.ts";
@@ -256,6 +257,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
       skipPermissions: skip,
       autoRejectPermissionRequests: p.autoRejectPermissionRequests === true,
       shell: SHELL, retryBaseDelayMs: opts.retryBaseDelayMs,
+      fallbackModels: parseFallbackModels(loadSettings({ cwd: rigwellHome(), trusted: false }).settings.fallbackModels),
       messages: restored?.messages, tokenUsage: restored?.tokenUsage, deferred: restored?.deferred, log: opts.log,
       todos: restored?.todos, title: restored?.title ?? (typeof p.title === "string" && p.title ? { value: p.title, manual: true } : undefined),
       tags: tagsFrom(p.tags), toolIds: toolIdsFrom(p), systemPrompt: systemPromptFrom(p), structuredOutputFormat: outputFormatFrom(p.structuredOutputFormat, "structuredOutputFormat"),
