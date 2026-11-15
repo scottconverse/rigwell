@@ -66,8 +66,8 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 
 32. Policy file (org model and mission policies). Delivered on 289b7a0 with all four required CI jobs and unsigned packages green. See docs/policy.md and HANDOFF State.
 33. Spend limits (plan usage limits and overage checks). Delivered on 2f326ef with all four required CI jobs and unsigned packages green. See docs/spend-limits.md and HANDOFF State.
-34. Fallback model list (hosted fallback pool). Prepared with owner-only ordered pool, guarded answer/summary selection, actual tool profiles and saved desktop controls; affected 217/1736 and final 21/144 PASS. Required CI pending. See docs/fallback-models.md and HANDOFF State.
-35. Profiles (the local stand-in for org members and the "role" field).
+34. Fallback model list (hosted fallback pool). Delivered on 5f019b6 with all four required CI jobs and unsigned packages green. See docs/fallback-models.md and HANDOFF State.
+35. Profiles (the local stand-in for org members and the "role" field). Prepared with app/CLI selection, separate homes/keys/indexes, inherited policy and confirmed restart; affected 147/948 and final 19/155 PASS. Required CI pending. See docs/local-profiles.md and HANDOFF State.
 36. Feature flags and a Labs page.
 37. Mission readiness report.
 38. Local crash reports and Report a bug (§20.22).

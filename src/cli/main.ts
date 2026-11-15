@@ -1,12 +1,14 @@
 #!/usr/bin/env bun
 // rigwell CLI: `exec` (stdio JSON-RPC or a one-shot prompt) and `daemon` (many sessions over a Unix socket).
 import { join, resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import { rigwellHome } from "../storage/paths.ts";
 import { createConnection, type ConnectionOptions } from "../daemon/connection.ts";
 import { startDaemon, defaultSocketPath } from "../daemon/daemon.ts";
 import type { AutonomyLevel } from "../core/types.ts";
 import { routedSessionList, forkRoutedSession } from "../machines/resume.ts";
 import { closeAllBrowsers } from "../browser/tools.ts";
+import { activeProfile, applyProfileOption, createLocalProfile, listLocalProfiles, profileRoot, updateLocalProfile } from "../storage/local-profiles.ts";
 
 const log = (m: string) => process.stderr.write(m + "\n");
 
@@ -26,6 +28,8 @@ const USAGE = `Usage:
   rigwell plugin list|install|update|disable|enable|uninstall|index-add|index-remove|install-index
   rigwell wiki build|update|list|search|read|video [--cwd <folder>]
   rigwell learn [list|<lesson>|practice <lesson>|check <id>]
+  rigwell profile list|create <id> [name]|edit <id> <name> [role]
+  rigwell --profile <id> <command>   use separate settings, credentials and sessions
 
 Sign in with an account plan (OAuth, see docs/auth.md): rigwell auth login <name> [--device] | logout <name> | status
 Credentials: rigwell credential set <name> (value on stdin) | delete <name>; use apiKey "keychain:<name>" in customModels.
@@ -259,7 +263,15 @@ async function tui(argv: string[]) {
 }
 
 async function main() {
-  const [cmd, ...argv] = process.argv.slice(2);
+  const [cmd, ...argv] = applyProfileOption(process.argv.slice(2));
+  if (cmd === "profile") {
+    const [action, id, name, role] = argv, root = profileRoot();
+    if (action === "list") process.stdout.write(JSON.stringify({ active: activeProfile(), profiles: listLocalProfiles(root) }) + "\n");
+    else if (action === "create" && id) process.stdout.write(JSON.stringify(createLocalProfile(root, id, name)) + "\n");
+    else if (action === "edit" && id && name) process.stdout.write(JSON.stringify(updateLocalProfile(root, id, name, role ?? "")) + "\n");
+    else fail("usage: rigwell profile list|create <id> [name]|edit <id> <name> [role]");
+    return;
+  }
   if (cmd === "exec") {
     const a = parseExec(argv);
     if (a.resume === true && a.prompt === undefined) { await printSessionList(a.cwd, a.machine); process.exit(0); }
@@ -272,7 +284,7 @@ async function main() {
     const [action, name] = argv;
     if (!name || (action !== "set" && action !== "delete")) fail("usage: rigwell credential <set|delete> <name>  (set reads the value from stdin)");
     if (action === "delete") { log(removeCredential(name) ? `deleted ${name}` : `no credential named ${name}`); process.exit(0); }
-    const value = (await Bun.stdin.text()).replace(/\r?\n$/, "");
+    const value = readFileSync(0, "utf8").replace(/\r?\n$/, "");
     if (!value) fail("no value on stdin");
     log(`stored ${name} in ${storeCredential(name, value)}`);
     process.exit(0);

@@ -15,5 +15,8 @@ const testUserHome = mkdtempSync(join(tmpdir(), "rigwell-test-user-home-"));
 process.env.HOME = testUserHome;
 process.env.USERPROFILE = testUserHome;
 process.env.RIGWELL_HOME = join(testUserHome, ".rigwell");
+delete process.env.RIGWELL_PROFILE_ROOT;
+delete process.env.RIGWELL_PROFILE;
+delete process.env.RIGWELL_PROFILE_DEFAULT_USER_DATA;
 process.env.RIGWELL_TRUST_CWD = "1";
 process.env.RIGWELL_NO_AUTO_TITLE = "1";

@@ -18,6 +18,12 @@ function readBoot(): unknown {
 const api = {
   boot: readBoot(),
   platform: process.platform,
+  localProfiles: {
+    list: (): Promise<{ active: string; profiles: import("../../src/storage/local-profiles.ts").LocalProfile[] }> => ipcRenderer.invoke("localProfiles:list"),
+    create: (id: string, name: string, role: string): Promise<unknown> => ipcRenderer.invoke("localProfiles:create", id, name, role),
+    update: (id: string, name: string, role: string): Promise<unknown> => ipcRenderer.invoke("localProfiles:update", id, name, role),
+    switch: (id: string, confirmed: boolean): Promise<{ restarting: boolean }> => ipcRenderer.invoke("localProfiles:switch", id, confirmed),
+  },
   daemon: {
     isIpcAvailable: (): Promise<boolean> => ipcRenderer.invoke("daemon:isIpcAvailable"),
     getTransportMode: (): Promise<string> => ipcRenderer.invoke("daemon:getTransportMode"),

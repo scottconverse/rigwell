@@ -27,12 +27,17 @@ import { listSkillViews } from "./skills.ts";
 import { synthWav } from "./sounds.ts";
 import { freeSlot, saveZoom, stepZoom, zoomFor } from "./window-zoom.ts";
 import { RemoteViews } from "./remote-view.ts";
+import { localProfileController, profileDesktopData, rememberDefaultProfileData } from "./local-profiles.ts";
+import { applyProfileOption } from "../../src/storage/local-profiles.ts";
 
 // The bundle lives in <app>/dist next to preload.cjs and renderer/. app.getAppPath() is the folder with package.json
 // (also correct inside an asar), which is more reliable than __dirname because bundlers may inline that.
 const appRoot = /[\\/]dist$/.test(app.getAppPath()) ? join(app.getAppPath(), "..") : app.getAppPath();
 const here = join(appRoot, "dist");
+rememberDefaultProfileData(app.getPath("userData"));
+applyProfileOption(process.argv.slice(1));
 const HOME = process.env.RIGWELL_HOME ?? join(homedir(), ".rigwell");
+const localProfiles = localProfileController((args) => { app.relaunch({ args }); app.quit(); });
 const DEV_URL = process.env.RIGWELL_RENDERER_URL; // optional dev server
 const APP_PAGE = DEV_URL ?? new URL(`file://${join(here, "renderer", "index.html")}`).toString();
 const SCHEME = "rigwell";
@@ -372,6 +377,10 @@ function registerIpc() {
   ipcMain.handle("userSettings:update", guard((_e, patch: unknown) => updateUserSettings(HOME, patch)));
   ipcMain.handle("userSettings:trustFolder", guard((_e, folder: string) => trustFolder(HOME, String(folder))));
   ipcMain.handle("profiles:list", guard(async (_e, folder: string) => { const root = await gitRoot(String(folder)); return { repoRoot: root, profiles: root ? listProfileViews(HOME, root) : [] }; }));
+  ipcMain.handle("localProfiles:list", guard(() => localProfiles.list()));
+  ipcMain.handle("localProfiles:create", guard((_e, id: string, name: string, role: string) => localProfiles.create(id, name, role)));
+  ipcMain.handle("localProfiles:update", guard((_e, id: string, name: string, role: string) => localProfiles.update(id, name, role)));
+  ipcMain.handle("localProfiles:switch", guard((_e, id: string, confirmed: boolean) => localProfiles.switch(id, confirmed)));
   ipcMain.handle("profiles:save", guard(async (_e, folder: string, p: any) => { const root = await gitRoot(String(folder)); if (!root) throw new Error("Not a git repository"); return saveLocalProfile(HOME, root, p); }));
   ipcMain.handle("profiles:delete", guard(async (_e, folder: string, id: string) => { const root = await gitRoot(String(folder)); if (!root) throw new Error("Not a git repository"); deleteLocalProfile(HOME, root, String(id)); }));
   ipcMain.handle("skills:list", guard((_e, cwd: string) => listSkillViews(String(cwd))));
@@ -596,7 +605,7 @@ async function boot() {
   quietChromium();
   // A custom RIGWELL_HOME is a separate Rigwell install: give it its own Electron profile, so its single-instance lock,
   // cookies and window state do not collide with another home's app (also lets parallel test runs coexist).
-  if (process.env.RIGWELL_HOME) app.setPath("userData", join(process.env.RIGWELL_HOME, "desktop-profile"));
+  app.setPath("userData", profileDesktopData(HOME));
   if (!app.requestSingleInstanceLock()) { app.quit(); return; }
   app.on("second-instance", (_e, argv) => {
     const link = argv.find((a) => a.startsWith(`${SCHEME}://`));

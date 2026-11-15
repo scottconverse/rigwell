@@ -12,6 +12,7 @@ import { Analytics } from "../components/Analytics.tsx";
 import { Evaluations } from "../components/Evaluations.tsx";
 import { SpendLimits } from "../components/SpendLimits.tsx";
 import { FallbackModels } from "../components/FallbackModels.tsx";
+import { LocalProfiles } from "../components/LocalProfiles.tsx";
 import { Automations, AutomationDetail } from "../components/Automations.tsx";
 import { SessionScreen } from "../components/SessionScreen.tsx";
 import { app, useApp } from "../lib/app-model.ts";
@@ -23,6 +24,7 @@ const off = () => () => {};
   view: { async set() {} }, browser: { onNewTab: off, onCloseTab: off, onActivateTab: off, onOpenUrl: off, async cdpUrl() { return null; } },
   dialog: { async saveEvalExport(format: string, content: string) { (window as any).savedEval = { format, content }; return "/fixture/eval." + format; }, async saveAnalyticsExport(content: string) { (window as any).savedAnalytics = content; return "/fixture/analytics.csv"; }, async pickFolder() { return (window as any).fixtureFolder; }, async pickFile() { return (window as any).fixtureSource; }, async saveSessionExport(format: string, content: string) { (window as any).savedExport = { format, content }; return '/fixture/saved.html'; } },
   userSettings: { async get() { return (window as any).fixtureSettings ?? {}; }, async update(patch: unknown) { const response = await fetch("/fixture-settings", { method: "POST", body: JSON.stringify(patch) }); if (!response.ok) throw new Error(await response.text()); return response.json(); } },
+  localProfiles: Object.fromEntries(["list", "create", "update", "switch"].map((method) => [method, async (...args: unknown[]) => { const response = await fetch("/fixture-local-profiles", { method: "POST", body: JSON.stringify({ method, args }) }); if (!response.ok) throw new Error(await response.text()); return response.json(); }])),
   daemon: {
     onMessage(fn: any) { deliver = fn; }, onClosed(fn: any) { closed = fn; },
     async open() {
@@ -51,6 +53,7 @@ function Fixture() {
   if (window.location.pathname === "/eval") return <Evaluations />;
   if (window.location.pathname === "/spend") return <SpendLimits />;
   if (window.location.pathname === "/fallback") return <FallbackModels />;
+  if (window.location.pathname === "/local-profiles") return <LocalProfiles />;
   const [route, go] = useState(window.location.pathname === "/inbox" ? "/inbox" : window.location.pathname === "/sync" ? "/sync" : window.location.pathname === "/automations" ? "/automations" : "/imports");
   if (route === "/inbox") return <Inbox go={go} />;
   if (route === "/settings/email-alerts") return <EmailAlerts />;

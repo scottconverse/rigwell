@@ -5,6 +5,7 @@ import { applyAppearance } from "../lib/appearance.ts";
 import { bridge } from "../lib/rpc.ts";
 import { Accounts, ApiKeys, Environments, VoiceSettings } from "./SettingsAccess.tsx";
 import { CodeProviders } from "./CodeProviders.tsx";
+import { LocalProfiles } from "./LocalProfiles.tsx";
 import { RemoteMachines } from "./Machines.tsx";
 import { PhoneAccessPage } from "./PhoneAccess.tsx";
 import { DelegationPage } from "./Delegation.tsx";
@@ -14,11 +15,12 @@ import { ConnectorSettings, CustomModels, MissionSettings, SessionDefaults, Sess
 const PAGES = [
   ["general", "General"], ["appearance", "Appearance"], ["notifications", "Notifications and sounds"], ["email-alerts", "Email alerts"], ["session-defaults", "Session Defaults"], ["missions", "Missions"], ["delegation", "Slack and Teams"],
   ["custom-models", "Custom Models"], ["machines", "Remote machines"], ["worktrees", "Worktrees"], ["connectors", "Connectors"], ["session-management", "Session Management"], ["usage", "Usage"],
-  ["api-keys", "API keys"], ["environments", "Environments"], ["accounts", "Accounts"], ["code-providers", "Code providers"], ["voice", "Voice dictation"], ["phone-access", "Phone access"], ["support", "Support"],
+  ["api-keys", "API keys"], ["environments", "Environments"], ["accounts", "Accounts"], ["profiles", "Local profiles"], ["code-providers", "Code providers"], ["voice", "Voice dictation"], ["phone-access", "Phone access"], ["support", "Support"],
 ] as const;
 const AGENT_PAGES: Record<string, () => React.ReactElement | null> = {
   "session-defaults": SessionDefaults, missions: MissionSettings, "custom-models": CustomModels, worktrees: WorktreeSettings,
   machines: RemoteMachines,
+  profiles: LocalProfiles,
   "phone-access": PhoneAccessPage,
   delegation: DelegationPage,
   "email-alerts": EmailAlerts,

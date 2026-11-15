@@ -25,7 +25,7 @@ export function readSpendStatus(now = new Date(), config: SpendLimits = spendCon
       }
     }
   }
-  return { enabled, config, day, month, rows, coverage, prices: enabled ? configuredPrices() : {}, basis: "Recorded dated local usage at configured estimates. UTC day/month. Unreported, undated, deleted and remote history cannot establish actual billing." };
+  return { enabled, config, day, month, rows, coverage, prices: enabled ? configuredPrices() : {}, basis: "Recorded dated usage in this local profile at configured estimates. UTC day/month. Other profiles, unreported, undated, deleted and remote history cannot establish actual account billing." };
 }
 export function spendWarnings(status: ReturnType<typeof readSpendStatus>, model?: string) {
   return status.rows.filter((r) => (r.model === undefined || r.model === model) && ["warning", "blocked", "unknown"].includes(r.status)).map((r) => ({ key: JSON.stringify([r.model, r.period, r.capUsd, r.status]), text: `${r.model ?? "Overall"} ${r.period} spend ${r.status}: ${r.spentUsd === null ? "unknown" : `$${r.spentUsd.toFixed(6)}`} of $${r.capUsd.toFixed(6)} estimated.` }));

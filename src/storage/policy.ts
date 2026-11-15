@@ -69,7 +69,7 @@ export function validatePolicy(v: unknown): Policy {
 export function policyPaths(env: Record<string, string | undefined> = process.env, platform: NodeJS.Platform = process.platform) {
   const home = env.RIGWELL_HOME ? path.resolve(env.RIGWELL_HOME) : path.join(env.HOME || env.USERPROFILE || homedir(), ".rigwell");
   const system = platform === "win32" ? path.join(env.ProgramData || "C:\\ProgramData", "Rigwell", "policy.json") : platform === "darwin" ? "/Library/Application Support/Rigwell/policy.json" : "/etc/rigwell/policy.json";
-  return [path.join(home, "policy.json"), system];
+  return [...new Set([...(env.RIGWELL_PROFILE_ROOT ? [path.join(path.resolve(env.RIGWELL_PROFILE_ROOT), "policy.json")] : []), path.join(home, "policy.json"), system])];
 }
 
 /** Read local then system policy. Missing files are optional; unusable present files fail closed. */

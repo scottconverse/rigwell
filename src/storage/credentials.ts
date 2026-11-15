@@ -3,6 +3,8 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { makePrivate } from "../platform/private.ts";
 import path from "node:path";
+import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { rigwellHome } from "./paths.ts";
 
 export const KEYCHAIN_PREFIX = "keychain:";
@@ -133,8 +135,11 @@ export class CredentialStore {
 export function defaultCredentialStore(platform: string = process.platform, run: CommandRunner = spawnRunner): CredentialStore {
   const backends: CredentialBackend[] = [];
   if (process.env.RIGWELL_CREDENTIALS !== "file") {
-    if (platform === "darwin") backends.push(new MacKeychainBackend(run));
-    else if (platform === "linux") backends.push(new SecretToolBackend(run));
+    let home = rigwellHome(); try { home = realpathSync.native(home); } catch { /* a new profile has no stored credentials yet */ }
+    const scope = process.env.RIGWELL_PROFILE && process.env.RIGWELL_PROFILE !== "default" ? `profile:${createHash("sha256").update(process.platform === "win32" ? home.toLowerCase() : home).digest("hex")}:` : "";
+    const scoped = (backend: CredentialBackend): CredentialBackend => scope ? { name: backend.name, available: () => backend.available(), get: (name) => backend.get(scope + name), set: (name, value) => backend.set(scope + name, value), delete: (name) => backend.delete(scope + name) } : backend;
+    if (platform === "darwin") backends.push(scoped(new MacKeychainBackend(run)));
+    else if (platform === "linux") backends.push(scoped(new SecretToolBackend(run)));
   }
   backends.push(new FileBackend());
   return new CredentialStore(backends);
@@ -143,30 +148,37 @@ export function defaultCredentialStore(platform: string = process.platform, run:
 // ---------- lookups for settings ----------
 
 let shared: CredentialStore | undefined;
+let sharedHome: string | undefined;
+let overridden = false;
+function credentialStore() {
+  const home = rigwellHome();
+  if (!shared || (!overridden && sharedHome !== home)) { shared = defaultCredentialStore(); sharedHome = home; }
+  return shared;
+}
 const cache = new Map<string, { value: string | undefined; at: number }>();
 const TTL_MS = 30_000;
 
 /** Replaces the store `resolveCredential` uses (tests). Pass undefined to go back to the default. */
-export function setCredentialStore(s: CredentialStore | undefined) { shared = s; cache.clear(); }
+export function setCredentialStore(s: CredentialStore | undefined) { shared = s; overridden = !!s; sharedHome = undefined; cache.clear(); }
 export function clearCredentialCache() { cache.clear(); }
 
 /** The value behind `keychain:<name>`, or undefined. Keychain lookups run a program, so results are cached for 30 s. */
 export function lookupCredential(name: string): string | undefined {
-  const hit = cache.get(name);
+  const key = `${rigwellHome()}\0${name}`, hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
-  const value = (shared ??= defaultCredentialStore()).get(name);
-  cache.set(name, { value, at: Date.now() });
+  const value = credentialStore().get(name);
+  cache.set(key, { value, at: Date.now() });
   return value;
 }
 
 export function storeCredential(name: string, value: string): string {
-  const where = (shared ??= defaultCredentialStore()).set(name, value);
-  cache.delete(name);
+  const where = credentialStore().set(name, value);
+  cache.delete(`${rigwellHome()}\0${name}`);
   return where;
 }
 
 export function removeCredential(name: string): boolean {
-  const ok = (shared ??= defaultCredentialStore()).delete(name);
-  cache.delete(name);
+  const ok = credentialStore().delete(name);
+  cache.delete(`${rigwellHome()}\0${name}`);
   return ok;
 }
