@@ -1,6 +1,6 @@
 // Desktop shell logic that needs no Electron: daemon supervision, appearance before first paint, alerts and sounds.
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyBoot, bootValues, initialWindowOptions, overlayFor, readableOn, resolveTheme } from "../../desktop/main/appearance.ts";
@@ -64,6 +64,8 @@ describe("daemon supervisor (spec 14.1)", () => {
     const crash = JSON.parse(readFileSync(join(home, "logs", "daemon-critical-error.json"), "utf8"));
     // Windows has no signals: a killed process reports exit code 1 and no signal name.
     if (process.platform === "win32") { expect(crash.signal).toBeNull(); expect(crash.code).not.toBe(0); } else expect(crash.signal).toBe("SIGKILL");
+    const reports = readdirSync(join(home, "crashes")).map((n) => JSON.parse(readFileSync(join(home, "crashes", n), "utf8")));
+    expect(reports.some((r) => r.source === "daemon" && r.kind === "unexpected-exit" && r.detail.includes(String(first.pid)))).toBe(true);
     // A second kill is attempt 1 again, not 2: the counter reset on ready.
     const again = new Promise<any>((r) => s.once("ready", r));
     process.kill(second.pid, "SIGKILL");
@@ -98,6 +100,7 @@ describe("daemon supervisor (spec 14.1)", () => {
     await sleep(400);
     expect(s.state).toBe("stopped");
     expect(alive(info.pid)).toBe(false);
+    expect(existsSync(join(home, "crashes"))).toBe(false);
   }, 30_000);
 });
 

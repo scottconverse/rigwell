@@ -29,6 +29,8 @@ import { freeSlot, saveZoom, stepZoom, zoomFor } from "./window-zoom.ts";
 import { RemoteViews } from "./remote-view.ts";
 import { localProfileController, profileDesktopData, rememberDefaultProfileData } from "./local-profiles.ts";
 import { applyProfileOption } from "../../src/storage/local-profiles.ts";
+import { appendDiagnosticLog, installProcessCrashCapture, recordCrash } from "../../src/diagnostics/reports.ts";
+import { rendererCrashReceiver, saveBugReport } from "./bug-report.ts";
 
 // The bundle lives in <app>/dist next to preload.cjs and renderer/. app.getAppPath() is the folder with package.json
 // (also correct inside an asar), which is more reliable than __dirname because bundlers may inline that.
@@ -37,6 +39,8 @@ const here = join(appRoot, "dist");
 rememberDefaultProfileData(app.getPath("userData"));
 applyProfileOption(process.argv.slice(1));
 const HOME = process.env.RIGWELL_HOME ?? join(homedir(), ".rigwell");
+installProcessCrashCapture(HOME, "main");
+const receiveRendererCrash = rendererCrashReceiver(HOME);
 const localProfiles = localProfileController((args) => { app.relaunch({ args }); app.quit(); });
 const DEV_URL = process.env.RIGWELL_RENDERER_URL; // optional dev server
 const APP_PAGE = DEV_URL ?? new URL(`file://${join(here, "renderer", "index.html")}`).toString();
@@ -64,7 +68,7 @@ function guard<T>(fn: (e: IpcMainInvokeEvent, ...a: any[]) => T) {
     return fn(e, ...a);
   };
 }
-const log = (m: string) => { try { process.stderr.write(m + "\n"); } catch {} };
+const log = (m: string) => { appendDiagnosticLog(HOME, m); try { process.stderr.write(m + "\n"); } catch {} };
 const sendTo = (id: number, channel: string, payload: unknown) => { const w = webContents.fromId(id); if (w && !w.isDestroyed()) w.send(channel, payload); };
 const remoteViews = new RemoteViews(HOME, (owner, event) => sendTo(owner, "remoteView:data", event));
 const broadcast = (channel: string, payload: unknown) => { for (const id of winIds()) sendTo(id, channel, payload); };
@@ -204,7 +208,7 @@ function createWindow(route = "/"): BrowserWindow {
   win.webContents.on("will-navigate", (e, url) => { if (!isTrustedSender(url, [APP_PAGE])) { e.preventDefault(); if (isAllowedExternal(url)) void shell.openExternal(url); } });
   // A reload or navigation drops this window's daemon connections; its terminals live on in the daemon (spec 17.2).
   win.webContents.on("did-start-navigation", (_e, _url, inPlace, isMainFrame) => { if (isMainFrame && !inPlace) { broker.closeWindow(id); viewing.delete(id); } });
-  win.webContents.on("render-process-gone", (_e, d) => log(`[window] renderer gone: ${d.reason}`));
+  win.webContents.on("render-process-gone", (_e, d) => { log(`[window] renderer gone: ${d.reason}`); if (d.reason !== "clean-exit") recordCrash(HOME, "renderer", "render-process-gone", JSON.stringify({ reason: d.reason, exitCode: d.exitCode, windowId: id })); });
   win.on("unresponsive", () => log("[window] unresponsive"));
   win.webContents.on("did-finish-load", () => { const l = zoomFor(HOME, slots.get(win) ?? 0, settings.windowZoomLevel); zooms.set(win, l); win.webContents.setZoomLevel(l); });
   // Chromium remembers zoom per URL, and a file: page's route is part of its URL. Moving between routes would pick up
@@ -339,6 +343,7 @@ function setupBrowserSession() {
 // ------------------------------------------------------------------ IPC
 
 function registerIpc() {
+  ipcMain.handle("diagnostics:rendererCrash", guard((e, value: unknown) => receiveRendererCrash(e.sender.id, value)));
   ipcMain.handle("daemon:isIpcAvailable", guard(() => supervisor.state === "running"));
   ipcMain.handle("daemon:getTransportMode", guard(() => "websocket"));
   ipcMain.handle("daemon:getPort", guard(() => (supervisor.info ? Number(new URL(supervisor.info.wsUrl).port) : null)));
@@ -568,11 +573,21 @@ function buildMenu() {
         const ok = supervisor.info ? await fetch(`http://${new URL(supervisor.info.wsUrl).host}/`).then((r) => r.status === 401, () => false) : false;
         void dialog.showMessageBox({ message: ok ? "The background service answers on loopback." : "The background service is not answering." });
       } },
-      { label: "Report a bug", click: () => void shell.openPath(join(HOME, "logs")) },
+      { label: "Report a bug", click: () => void reportBug() },
       { label: "About", click: () => void dialog.showMessageBox({ message: `Rigwell ${app.getVersion()}`, detail: `Electron ${process.versions.electron}` }) },
     ] },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(tpl));
+}
+
+async function reportBug() {
+  try {
+    const saved = await saveBugReport(HOME, { rigwell: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node }, async () => {
+      const result = await dialog.showSaveDialog({ title: "Save local bug report (no upload)", defaultPath: `rigwell-bug-report-${Date.now()}.zip`, filters: [{ name: "Redacted diagnostic ZIP", extensions: ["zip"] }] });
+      return result.canceled ? null : result.filePath ?? null;
+    });
+    if (saved) await dialog.showMessageBox({ message: "Local bug report saved", detail: `${saved.file}\n${saved.files.length} files; ${saved.omitted.length} omitted. Known secrets were redacted. Review the ZIP for private details before sending it. Nothing was uploaded.` });
+  } catch (e) { log(`[diagnostics] export failed: ${(e as Error).message}`); await dialog.showMessageBox({ type: "error", message: "Could not save the local bug report", detail: (e as Error).message }); }
 }
 
 // ------------------------------------------------------------------ deep links
@@ -682,4 +697,4 @@ async function boot() {
   });
 }
 
-void boot();
+void boot().catch((e) => { recordCrash(HOME, "main", "startup", e); log(`[startup] ${(e as Error).message}`); app.exit(1); });

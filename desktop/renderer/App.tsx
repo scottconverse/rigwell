@@ -22,6 +22,8 @@ import { Palette, Sidebar } from "./components/Shell.tsx";
 import { app, useApp } from "./lib/app-model.ts";
 import { applyAppearance } from "./lib/appearance.ts";
 import { bridge } from "./lib/rpc.ts";
+import { installRendererCrashCapture } from "./lib/crashes.ts";
+installRendererCrashCapture((value) => bridge().diagnostics.rendererCrash(value));
 
 /** Hash routing: #/ , #/sessions/<id> , #/settings/<page> (spec §14.2: packaged builds load index.html with hash routes). */
 function useRoute() {

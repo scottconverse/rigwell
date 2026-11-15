@@ -69,8 +69,8 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 34. Fallback model list (hosted fallback pool). Delivered on 5f019b6 with all four required CI jobs and unsigned packages green. See docs/fallback-models.md and HANDOFF State.
 35. Profiles (the local stand-in for org members and the "role" field). Delivered on eff3dd8 with all four required CI jobs and unsigned packages green. See docs/local-profiles.md and HANDOFF State.
 36. Feature flags and a Labs page. Delivered on 8ecadcd with all four required CI jobs and unsigned packages green. See docs/labs.md and HANDOFF State.
-37. Mission readiness report. Implemented with explicit command approval, CLI, local evidence and desktop warning. Affected 188 tests/1469 assertions and final 19/496 pass; types, headless build and isolated performance gate pass. Required CI pending. See docs/mission-readiness.md and HANDOFF State.
-38. Local crash reports and Report a bug (§20.22).
+37. Mission readiness report. Delivered on 16cb71d with all four required CI jobs and unsigned packages green. See docs/mission-readiness.md and HANDOFF State.
+38. Local crash reports and Report a bug (§20.22). Implemented, affected 31 tests/248 assertions, final core/headless four/63 and both types/headless build pass. Node 22 fatal capture and independent ZIP CRC/JSON/redaction verified. Required CI pending. See docs/crash-reports.md and HANDOFF State.
 39. Workstream notification categories (§20.23).
 
 ## 9. Release readiness (§20.24)

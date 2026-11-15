@@ -74,6 +74,7 @@ const api = {
     openPath: (p: string): Promise<string> => ipcRenderer.invoke("shell:openPath", p),
   },
   app: { info: (): Promise<any> => ipcRenderer.invoke("app:info"), testSound: (kind: "awaiting" | "completion"): Promise<boolean> => ipcRenderer.invoke("alerts:test", kind) },
+  diagnostics: { rendererCrash: (value: { kind: string; detail: string }): Promise<boolean> => ipcRenderer.invoke("diagnostics:rendererCrash", value) },
   audio: { onPlay: (cb: Cb<{ kind: string; url?: string; volume: number }>) => on("audio:play", cb) },
   nav: { onGo: (cb: Cb<string>) => on("nav:go", cb) },
   deeplink: { claim: (state: string): Promise<void> => ipcRenderer.invoke("deeplink:claim", state), onMcpCallback: (cb: Cb<{ code: string; state: string }>) => on("deeplink:mcp-callback", cb) },

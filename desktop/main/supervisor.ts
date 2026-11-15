@@ -11,6 +11,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { recordCrash } from "../../src/diagnostics/reports.ts";
 
 export type SupervisorState = "stopped" | "starting" | "running" | "stopping";
 
@@ -112,6 +113,7 @@ export class DaemonSupervisor extends EventEmitter {
     const child = spawn(cmd, [...rest, "daemon", "--socket", socketPath, "--ws-port", "0"], {
       env: { ...process.env, ...this.opts.env, RIGWELL_HOME: this.opts.home } as NodeJS.ProcessEnv,
       stdio: ["ignore", "ignore", "pipe"],
+      windowsHide: true,
     });
     this.child = child;
     let stderrTail = "";
@@ -148,6 +150,7 @@ export class DaemonSupervisor extends EventEmitter {
     if (gen !== this.generation && !this.wantRunning) return; // a requested stop
     this._info = undefined;
     this.log(`daemon exited (code ${r.code}, signal ${r.signal})`);
+    if (this.wantRunning && gen === this.generation) recordCrash(this.opts.home, "daemon", "unexpected-exit", JSON.stringify({ pid: child.pid, ...r, stderrTail }));
     try {
       writeFileSync(join(this.logDir, "daemon-critical-error.json"), JSON.stringify({ at: new Date().toISOString(), pid: child.pid, code: r.code, signal: r.signal, stderrTail }, null, 2));
     } catch {}

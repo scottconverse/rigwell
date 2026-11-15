@@ -2,6 +2,7 @@
 // rigwell CLI: `exec` (stdio JSON-RPC or a one-shot prompt) and `daemon` (many sessions over a Unix socket).
 import { join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
+import { installProcessCrashCapture, recordCrash } from "../diagnostics/reports.ts";
 import { rigwellHome } from "../storage/paths.ts";
 import { createConnection, type ConnectionOptions } from "../daemon/connection.ts";
 import { startDaemon, defaultSocketPath } from "../daemon/daemon.ts";
@@ -263,6 +264,7 @@ async function tui(argv: string[]) {
   process.exit(code);
 }
 
+let daemonCommandActive = false;
 async function main() {
   const [cmd, ...argv] = applyProfileOption(process.argv.slice(2));
   if (cmd === "profile") {
@@ -323,6 +325,8 @@ async function main() {
   if (cmd === "import" || cmd === "export") return (await import("../sharing/cli.ts")).sharingMain(cmd, argv);
   if (cmd === "sync") return (await import("../sync/cli.ts")).syncMain(argv);
   if (cmd === "daemon") {
+    daemonCommandActive = true;
+    installProcessCrashCapture(rigwellHome(), "daemon");
     const i = argv.indexOf("--socket");
     const path = i >= 0 ? resolve(argv[i + 1] ?? fail("--socket needs a value")) : defaultSocketPath();
     if (argv.includes("--stdio")) return (await import("../machines/stdio.ts")).bridgeDaemonStdio(path);
@@ -344,6 +348,7 @@ async function main() {
 }
 
 main().catch(async (e) => {
+  if (daemonCommandActive) recordCrash(rigwellHome(), "daemon", "startup", e);
   log(`rigwell: ${(e as Error).message}`);
   await closeAllBrowsers().catch((error) => log(`rigwell: browser cleanup failed: ${(error as Error).message}`));
   process.exit(2);
