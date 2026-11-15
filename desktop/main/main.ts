@@ -542,6 +542,7 @@ function buildMenu() {
     ] },
     { label: "Window", submenu: [{ role: "minimize" as const, accelerator: "CmdOrCtrl+M" }, { role: "close" as const, accelerator: "CmdOrCtrl+W" }] },
     { label: "Help", submenu: [
+      { id: "academy", label: "Academy tutorials", click: send("/academy") },
       { label: "Network check", click: async () => {
         const ok = supervisor.info ? await fetch(`http://${new URL(supervisor.info.wsUrl).host}/`).then((r) => r.status === 401, () => false) : false;
         void dialog.showMessageBox({ message: ok ? "The background service answers on loopback." : "The background service is not answering." });

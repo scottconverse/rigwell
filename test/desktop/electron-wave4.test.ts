@@ -308,6 +308,15 @@ maybe("desktop app: wave 4 features", () => {
     expect(stderr).toContain("[cookies] imported 3 cookies");
   }, 120_000);
 
+  test("Help opens all nine offline Academy tutorials without starting a model request", async () => {
+    const before = fake.requests.length;
+    await app.evaluate(({ Menu }: any) => { const item = Menu.getApplicationMenu()?.getMenuItemById("academy"); if (!item) throw new Error("Academy Help entry missing"); item.click(); });
+    await page.getByRole("heading", { name: "Academy", exact: true }).waitFor();
+    const nav = page.getByRole("navigation", { name: "Academy lessons" }); await nav.getByRole("button", { name: "Models and keys", exact: true }).click();
+    await page.getByRole("article", { name: "Tutorial" }).getByText(/Subscription access and separately billed API access/).waitFor();
+    expect(await nav.getByRole("button").count()).toBe(9); expect(fake.requests.length).toBe(before);
+  });
+
   test("on failure the helpers still work (diagnose does not throw)", async () => {
     expect(await diagnose(page, home)).toContain("daemon stderr tail");
   });
