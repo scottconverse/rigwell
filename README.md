@@ -47,7 +47,7 @@ To build the public site, run `bun run site:build` and `bun run site:preview`, t
 
 ## Project status
 
-Rigwell 0.1.1 is an early release. Windows has an independently verified Scott Converse signature, with installed first-run, signed upgrade and rollback evidence. Linux has packaged-install and signed AppImage update/rollback evidence. macOS arm64 packages are unsigned and not notarized; real Mac hardware acceptance is unavailable. Full model-family and long-session qualification remains incomplete. Account access, connector registrations and remote infrastructure require your own configuration.
+Rigwell 0.4.0 is an early release. The Windows setup installer is signed by Scott Converse, with installed first-run, signed upgrade and rollback evidence. Linux has packaged-install and signed AppImage update/rollback evidence. macOS arm64 packages are unsigned and not notarized; real Mac hardware acceptance is unavailable. Full model-family and long-session qualification remains incomplete. Account access, connector registrations and remote infrastructure require your own configuration.
 
 Current acceptance evidence and remaining work are tracked in [the handoff](docs/handoff/HANDOFF.md). Hosted Stax is [next-version work](docs/next-version.md), outside this release.
 
