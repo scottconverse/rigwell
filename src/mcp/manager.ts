@@ -3,6 +3,7 @@ import { McpClient } from "./client.ts";
 import { ConnectorCatalog } from "./catalog.ts";
 import { hasMcpTokens, McpAuthRequired, signInMcp, signOutMcp } from "./auth.ts";
 import { authManager } from "../auth/oauth.ts";
+import { assertMcpPolicy } from "../storage/policy.ts";
 import { fromAddParams, loadMcpConfig, removeUserServer, saveUserServer } from "./config.ts";
 import type {
   AddMcpServerParams, McpCallResult, McpServerConfig, McpServerStatusInfo, McpStatus, McpStatusSummary, McpToolDef, McpToolInfo,
@@ -91,10 +92,12 @@ export class McpManager {
     this.entries.set(cfg.name, e);
     this.emit(e);
     if (cfg.disabled) return;
+    try { assertMcpPolicy(cfg); } catch (error) { this.set(e, "failed", (error as Error).message); return; }
     await this.connect(e);
   }
 
   private async connect(e: Entry): Promise<void> {
+    try { assertMcpPolicy(e.cfg); } catch (error) { this.set(e, "failed", (error as Error).message); return; }
     const epoch = e.epoch;
     const client = this.o.clientCtor ? this.o.clientCtor(e.cfg, this.o.cwd) : new McpClient(e.cfg, { cwd: this.o.cwd });
     try {
@@ -187,6 +190,7 @@ export class McpManager {
     if (!t) throw new Error(`MCP tool not available: ${name}`);
     const e = this.entries.get(t.server);
     if (!e?.client || e.status !== "connected") throw new Error(`MCP server "${t.server}" is not connected`);
+    assertMcpPolicy(e.cfg);
     try { return await e.client.callTool(t.tool, args, opts); }
     catch (err) {
       if (err instanceof McpAuthRequired) {
@@ -204,6 +208,7 @@ export class McpManager {
 
   async signIn(name: string) {
     const e = this.named(name);
+    assertMcpPolicy(e.cfg);
     if (e.cfg.disabled) throw new Error("This MCP server is disabled");
     const epoch = e.epoch;
     const st = await signInMcp(e.cfg);
@@ -250,6 +255,7 @@ export class McpManager {
   /** add_mcp_server: validate, persist to the user mcp.json, start it. */
   async addServer(p: AddMcpServerParams): Promise<{ success: boolean }> {
     const cfg = fromAddParams(p);
+    assertMcpPolicy(cfg);
     saveUserServer(cfg);
     await this.start([cfg]);
     return { success: true };

@@ -7,6 +7,7 @@ import { parseSkillFile } from "../skills/skills.ts";
 import { isValidatorSkill, needsAttention, type Feature, type HandoffRecord, type MissionState, type MissionStore } from "./store.ts";
 import { skeleton, type WorkerOutcome, type WorkerSpawner } from "./worker.ts";
 import type { WakeLock } from "./wakelock.ts";
+import { effectivePolicy } from "../storage/policy.ts";
 
 export interface MissionSettings {
   machine?: string;
@@ -111,8 +112,11 @@ export class MissionRunner {
   /** Returns a refusal message, or null when the run may start. */
   runGates(): string | null {
     const s = this.store;
+    const policy = effectivePolicy().missions;
+    if (policy?.enabled === false || policy?.maxConcurrentRuns === 0) return "Missions are disabled by policy.";
     if (!s.exists()) return "No mission folder exists yet: call ProposeMission first.";
     const features = s.features();
+    if (policy?.maxFeatures !== undefined && features.filter((f) => f.status !== "cancelled").length > policy.maxFeatures) return "Mission feature count exceeds policy maxFeatures.";
     if (!features.length) return "features.json has no features. Write the plan files before StartMissionRun.";
     if (!existsSync(s.path("validation-contract.md"))) return "validation-contract.md is missing from the mission folder.";
     if (!existsSync(s.path("validation-state.json"))) return "validation-state.json is missing from the mission folder.";
@@ -240,7 +244,7 @@ export class MissionRunner {
     }
   }
 
-  private limit(f: Feature) { return this.d.limits.retryLimit + (this.store.readState()?.featureRetryBudgetBonus?.[f.id] ?? 0); }
+  private limit(f: Feature) { return Math.min(this.d.limits.retryLimit + (this.store.readState()?.featureRetryBudgetBonus?.[f.id] ?? 0), effectivePolicy().missions?.maxWorkerAttempts ?? Infinity); }
 
   private setState(state: MissionState, pauseReason?: string) {
     const st = this.store.setState(state, pauseReason);
@@ -266,6 +270,8 @@ export class MissionRunner {
     let first = true;
     for (;;) {
       if (this.pauseRequest) return this.finishPaused(this.pauseRequest);
+      const policy = effectivePolicy().missions;
+      if (policy?.enabled === false || policy?.maxConcurrentRuns === 0 || (policy?.maxFeatures !== undefined && s.features().filter((f) => f.status !== "cancelled").length > policy.maxFeatures)) return this.finishPaused(this.pause("policy_limit_reached"));
       let features = s.features();
       if (features.every(doneStatus)) {
         this.setState("completed");

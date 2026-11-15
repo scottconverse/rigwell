@@ -4,6 +4,7 @@ import type { RigwellSettings } from "./settings.ts";
 import { KEYCHAIN_PREFIX, lookupCredential } from "./credentials.ts";
 import { parseOAuthProviders, type OAuthProviderConfig } from "../auth/config.ts";
 import { isAbsolute } from "node:path";
+import { modelAllowed } from "./org.ts";
 
 export interface ModelProblem {
   index: number;
@@ -191,7 +192,7 @@ export function validateCustomModels(
 
 /** Valid custom models only. Use `validateCustomModels` to also get the problems. */
 export function resolveModels(settings: RigwellSettings, env?: Record<string, string | undefined>): ModelConfig[] {
-  return validateCustomModels(settings, env).models;
+  return validateCustomModels(settings, env).models.filter((m) => modelAllowed(settings.modelPolicy, [m.id, m.model], false));
 }
 
 /** Exact id first, then the old `custom:<model>` form (first match). */

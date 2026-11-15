@@ -110,8 +110,8 @@ export async function runHooks(
   config: HooksConfig, event: HookEventName, base: HookBaseInput,
   extra: Record<string, unknown>, opts: RunHooksOptions = {},
 ): Promise<RunHooksResult> {
-  if (config.hooksDisabled) return { results: [], ran: false };
-  const groups = selectGroups(event, config.events[event], { value: opts.matchValue, toolName: opts.toolName, toolInput: opts.toolInput });
+  const configured = config.events[event]?.filter((g) => !config.hooksDisabled || g.required);
+  const groups = selectGroups(event, configured, { value: opts.matchValue, toolName: opts.toolName, toolInput: opts.toolInput });
   if (!groups.length) return { results: [], ran: false };
   const stdin = JSON.stringify({ ...base, hook_event_name: event, ...extra });
   const parallelGroupId = randomUUID();

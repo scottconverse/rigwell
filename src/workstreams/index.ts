@@ -2,6 +2,7 @@ import type { Session } from "../agent/session.ts";
 import { abortable } from "../core/abort.ts";
 import { zeroUsage, type AutonomyLevel, type ReasoningEffort, type Tool, type ToolContext, type ToolOutput, type TokenUsage } from "../core/types.ts";
 import { loadSettings } from "../storage/settings.ts";
+import { effectivePolicy } from "../storage/policy.ts";
 import { repoTopLevel } from "../worktree/git.ts";
 import { MemberSession, type MemberView } from "./member.ts";
 import { WorkstreamListeners } from "./listeners.ts";
@@ -24,10 +25,19 @@ const text = (input: Record<string, unknown>, key: string) => {
 };
 export function workstreamSettings(cwd: string): WorkstreamSettings {
   const raw = (loadSettings({ cwd }).settings.workstreams ?? {}) as Partial<WorkstreamSettings>;
-  return { enabled: raw.enabled !== false, maxConcurrentAgents: Number.isSafeInteger(raw.maxConcurrentAgents) && raw.maxConcurrentAgents! >= 1 ? raw.maxConcurrentAgents! : 4,
-    allowNestedSpawn: raw.allowNestedSpawn === true, autoRejectMemberPrompts: raw.autoRejectMemberPrompts === true,
+  const policy = effectivePolicy().workstreams;
+  return { enabled: raw.enabled !== false && policy?.enabled !== false && policy?.maxConcurrentAgents !== 0, maxConcurrentAgents: Math.min(Number.isSafeInteger(raw.maxConcurrentAgents) && raw.maxConcurrentAgents! >= 1 ? raw.maxConcurrentAgents! : 4, policy?.maxConcurrentAgents ?? Infinity),
+    allowNestedSpawn: raw.allowNestedSpawn === true && policy?.allowNestedSpawn !== false, autoRejectMemberPrompts: raw.autoRejectMemberPrompts === true,
     ...(raw.defaultMemberModel ? { defaultMemberModel: raw.defaultMemberModel } : {}),
     ...(raw.defaultMemberReasoningEffort ? { defaultMemberReasoningEffort: raw.defaultMemberReasoningEffort } : {}) };
+}
+
+function enforceWorkstreamPolicy(store: WorkstreamStore, resuming = false) {
+  const p = effectivePolicy().workstreams, w = store.read();
+  if (p?.enabled === false || p?.maxConcurrentAgents === 0 || (p?.maxMembers !== undefined && store.roster().filter((a) => a.status !== "archived").length > p.maxMembers)) throw new Error("Workstream is blocked by policy limits");
+  if (resuming && p?.maxActive !== undefined && listWorkstreamStores().filter((s) => s.id !== store.id && s.read().state === "active").length >= p.maxActive) throw new Error("Workstream active count reached policy maxActive");
+  const settings = { ...w.settings, maxConcurrentAgents: Math.min(w.settings.maxConcurrentAgents, p?.maxConcurrentAgents ?? Infinity), allowNestedSpawn: w.settings.allowNestedSpawn && p?.allowNestedSpawn !== false };
+  if (JSON.stringify(settings) !== JSON.stringify(w.settings)) store.update({ settings });
 }
 
 export function createWorkstreamService(opts: { log?: (text: string) => void; recover?: boolean; onNotification?: (notification: Record<string, unknown>, cwd: string) => void; connectMachine?: import("../daemon/connection.ts").ConnectionOptions["connectMachine"] } = {}) {
@@ -108,6 +118,7 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
   }
   async function resume(id: string, input: Record<string, unknown> = {}) {
     const store = new WorkstreamStore(id);
+    enforceWorkstreamPolicy(store, true);
     if (store.read().state !== "paused") throw new Error("Workstream is not paused");
     if (Object.hasOwn(input, "budget")) store.update({ budget: budgetFrom(input.budget) });
     const prices = pricesFor(store);
@@ -282,6 +293,8 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
     const edited = typeof answer.editedSpecContent === "string" && answer.editedSpecContent.trim() ? answer.editedSpecContent : undefined;
     if (answer.selectedOption === "proceed_edit" && !edited) return { accepted: false };
     if (leadStore(lead.id)) return { accepted: false, reason: "This lead already has an active workstream" };
+    const policy = effectivePolicy().workstreams;
+    if (policy?.enabled === false || policy?.maxConcurrentAgents === 0 || (policy?.maxActive !== undefined && listWorkstreamStores().filter((s) => s.read().state === "active").length >= policy.maxActive)) throw new Error("Workstream admission is blocked by policy");
     const id = crypto.randomUUID(), store = new WorkstreamStore(id), now = Date.now();
     store.create({ id, title, goal, plan: edited ?? plan, leadSessionId: lead.id, cwd: lead.cwd, state: "active", createdAt: now, updatedAt: now, settings, ...(budget ? { budget } : {}) });
     notify(store, "workstream_updated", { workstream: store.read() });
@@ -323,6 +336,7 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
       maxToolIds: row.tools,
       allowedModelIds: () => store.read().budget?.maxCostUsd !== undefined ? Object.keys(pricesFor(store)) : undefined,
       beforeTurn: async (signal) => {
+        enforceWorkstreamPolicy(store);
         updateStatus(store, agentId, "starting");
         checkBudget(store);
         const release = await admission.acquire(store, agentId, signal);
@@ -348,8 +362,12 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
   }
   async function spawn(lead: Pick<Session, "id" | "cwd" | "settings">, input: Record<string, unknown>) {
     const store = controlStore(lead.id, "SpawnAgent");
+    enforceWorkstreamPolicy(store);
+    const policy = effectivePolicy().workstreams;
+    if (policy?.maxMembers !== undefined && store.roster().filter((a) => a.status !== "archived").length >= policy.maxMembers) throw new Error("Workstream member count reached policy maxMembers");
     const parent = store.roster().find((a) => a.sessionId === lead.id);
     if (parent && parent.depth >= 2) throw new Error("Workstream nesting depth cannot exceed 2");
+    if (parent && policy?.allowNestedSpawn === false) throw new Error("Nested spawning is blocked by policy");
     const w = store.read(); if (w.state !== "active") throw new Error("Workstream is not active");
     const name = text(input, "name"), role = text(input, "role"), prompt = text(input, "prompt");
     if (store.roster().some((a) => a.name.toLowerCase() === name.toLowerCase() && a.status !== "archived" && a.status !== "failed")) throw new Error("An active member already has that name");

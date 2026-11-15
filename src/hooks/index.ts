@@ -55,7 +55,7 @@ export class HookRunner {
 
   get config(): HooksConfig { return this.o.config; }
   /** True when at least one hook is configured (lets the loop skip all hook plumbing). */
-  hasHooks(): boolean { return !this.o.config.hooksDisabled && Object.keys(this.o.config.events).length > 0; }
+  hasHooks(): boolean { return Object.values(this.o.config.events).some((groups) => groups?.some((g) => !this.o.config.hooksDisabled || g.required)); }
   resetStop() { this.stopActive = false; }
 
   private base() {

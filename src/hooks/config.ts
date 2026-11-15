@@ -28,6 +28,8 @@ export interface HookGroup {
   level?: string;
   /** Set only by the approved plugin loader, not by hook JSON. */
   pluginRoot?: string;
+  /** Local/system policy hook; lower-level hooksDisabled does not suppress it. */
+  required?: boolean;
 }
 export interface HooksConfig {
   hooksDisabled: boolean;
@@ -108,6 +110,12 @@ export function loadHooksConfig(opts: LoadHooksOptions): HooksConfig {
   const org = loadOrgSettings(opts.env ?? process.env);
   if (org) {
     warnings.push(...org.warnings);
+    if (org.settings.requiredHooks) {
+      for (const [event, raw] of Object.entries(org.settings.requiredHooks as Record<string, unknown>)) {
+        const groups = normalizeGroups(raw, "org"); for (const g of groups) g.required = true;
+        if (groups.length) (cfg.events[event as HookEventName] ??= []).push(...groups);
+      }
+    }
     const h = org.settings.hooks;
     if (h && typeof h === "object" && !Array.isArray(h)) {
       const r = pick({ ...(h as Record<string, unknown>), ...pickFlags(org.settings) });

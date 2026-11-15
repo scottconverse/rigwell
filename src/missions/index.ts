@@ -22,6 +22,7 @@ import { orchestratorTools, workerTools } from "./tools.ts";
 import { spawnWorkerSession, type WorkerSpawner } from "./worker.ts";
 import { WakeLock, systemLockSpawner, type LockSpawner } from "./wakelock.ts";
 import { RemoteSessionStore } from "../machines/sessions.ts";
+import { effectivePolicy } from "../storage/policy.ts";
 
 export * from "./store.ts";
 export { MissionRunner, DEFAULT_LIMITS } from "./runner.ts";
@@ -122,7 +123,11 @@ export function createMissionService(opts: MissionServiceOptions = {}) {
           return t;
         },
         onProgress: (snap) => sink?.(snap),
-        register: (h) => handles.set(h.sessionId, h),
+        register: (h) => {
+          const cap = effectivePolicy().missions?.maxConcurrentRuns;
+          if (handles.has(h.sessionId) || (cap !== undefined && handles.size >= cap)) throw new Error("Mission concurrency is blocked by policy or this mission is already running");
+          handles.set(h.sessionId, h);
+        },
         unregister: (h) => { if (handles.get(h.sessionId) === h) handles.delete(h.sessionId); },
       });
       return runner;

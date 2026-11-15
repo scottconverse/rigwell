@@ -1,5 +1,5 @@
 // Layered settings loader (spec §12.2).
-// Precedence, highest -> lowest: org (no-op slot) > runtime (--settings) > folder (nearer wins)
+// Precedence, highest -> lowest: local/system policy and managed settings > runtime (--settings) > folder (nearer wins)
 // > project > user > builtin. Within a level `settings.local.json` wins over `settings.json`.
 // Merge: plain objects deep-merge; arrays and scalars REPLACE (command lists included: the
 // higher level's list is the whole list; no concatenation).
@@ -218,7 +218,7 @@ export function loadSettings(opts: {
       const r = applyOrg(settings as Record<string, unknown>, org.settings, DEFAULT_COMMAND_LISTS, mergeSettings);
       settings = r.settings as RigwellSettings;
       managedKeys = r.managedKeys;
-      used.push({ level: "org", path: org.path });
+      for (const file of org.paths ?? [org.path]) used.push({ level: "org", path: file });
     }
   }
   const sources = [...used.reverse(), { level: "builtin" as const, path: "" }];

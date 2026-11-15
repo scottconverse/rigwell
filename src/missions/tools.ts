@@ -5,6 +5,7 @@ import { writeFileSync } from "node:fs";
 import type { Tool, ToolOutput } from "../core/types.ts";
 import { MissionStore, hasUndoneWork, checkHandoff, needsAttention, type Handoff, type HandoffRecord } from "./store.ts";
 import type { MissionRunner, MissionSettings, RunInput } from "./runner.ts";
+import { effectivePolicy } from "../storage/policy.ts";
 
 const ok = (content: string, data?: unknown): ToolOutput => ({ content, ...(data !== undefined ? { data } : {}) });
 const fail = (content: string): ToolOutput => ({ content, isError: true });
@@ -30,6 +31,7 @@ export function orchestratorTools(env: OrchestratorEnv): Tool[] {
     description: `Submit the mission plan to the user for approval. The proposal is markdown and should cover: ${PROPOSAL_SECTIONS}. On approval the mission folder is created. Returns accepted, missionDir, isEdited and any guidance the user added.`,
     inputSchema: { type: "object", properties: { title: { type: "string" }, proposal: { type: "string", description: "Markdown proposal." }, workingDirectory: { type: "string", description: "Repository folder workers run in (default: the session folder)." } }, required: ["title", "proposal"] },
     async run(input) {
+      if (effectivePolicy().missions?.enabled === false) return fail("Missions are disabled by policy.");
       const title = typeof input.title === "string" ? input.title.trim() : "";
       const proposal = typeof input.proposal === "string" ? input.proposal : "";
       if (!title || !proposal.trim()) return fail("title and proposal are required.");

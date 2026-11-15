@@ -129,6 +129,20 @@ const endCall = (featureId: string, input: Record<string, unknown> = {}): FakeTu
 });
 
 describe("mission end to end (fake local model server)", () => {
+  test("local policy refuses oversized plans before spawning a worker", async () => {
+    let workers = 0;
+    const r = await rig((r) => {
+      const orch = orchestratorTurn(() => r, [feature("f1"), feature("f2")], (result) => ({ text: JSON.stringify(result) }));
+      return (b) => { if (toolNames(b).includes("EndFeatureRun")) { workers++; return endCall("f1"); } return orch(b); };
+    });
+    try {
+      writeFileSync(join(r.home, "policy.json"), JSON.stringify({ schemaVersion: 1, missions: { maxFeatures: 1 } }));
+      await r.turn("Plan the fixture mission.");
+      expect(workers).toBe(0); expect(JSON.stringify(r.conn.session!.uiMessages())).toContain("policy maxFeatures");
+      expect(readFileSync(join(r.dir, "progress_log.jsonl"), "utf8")).not.toContain('"worker_started"');
+    } finally { await r.conn.shutdown(); }
+  }, 15000);
+
   test("3 features, 1 milestone: both validators inserted and the mission completes", async () => {
     const wstate = { attempt: 0 };
     const order: string[] = [];

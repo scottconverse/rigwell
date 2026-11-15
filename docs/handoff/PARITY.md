@@ -60,11 +60,11 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 28. Project wiki and the four wiki skills (§20.15). Delivered on 647cc35: all four required CI jobs/packages green; see docs/wiki.md and HANDOFF State.
 29. Academy tutorials (§20.17). Delivered on 61ab39b with all four required CI jobs and unsigned packages green; see docs/academy.md and HANDOFF State.
 30. Analytics page (§20.18). Delivered on f6aa8a4 with all four required CI jobs and unsigned packages green; see docs/analytics.md and HANDOFF State.
-31. Evaluations page: history, side-by-side, judge graders, CSV/JSONL and Google Stax import (§20.19). Code and fake-service/headless acceptance prepared; required CI pending. Stax explicit mapped CSV conversion is built, but real export compatibility remains unverified pending the owner file. See docs/evaluations.md and HANDOFF State.
+31. Evaluations page: history, side-by-side, judge graders, CSV/JSONL and Google Stax import (§20.19). Delivered on c32fba6 with all four required CI jobs and unsigned packages green. Stax explicit mapped CSV conversion is built, but real export compatibility remains unverified pending the owner file. See docs/evaluations.md and HANDOFF State.
 
 ## 8. Organization-style controls, locally (§20.20)
 
-32. Policy file (org model and mission policies).
+32. Policy file (org model and mission policies). Prepared with fake-provider/protocol/worker/MCP acceptance; affected 260 tests/1561 assertions and final policy/org 17/82 pass. Required CI pending. See docs/policy.md and HANDOFF State.
 33. Spend limits (plan usage limits and overage checks).
 34. Fallback model list (hosted fallback pool).
 35. Profiles (the local stand-in for org members and the "role" field).
