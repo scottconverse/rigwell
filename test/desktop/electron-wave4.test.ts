@@ -223,6 +223,8 @@ maybe("desktop app: wave 4 features", () => {
   }, 150_000);
 
   test("tray: menu items, show or hide, active session count and the attention badge", async () => {
+    // The preceding setup text is streamed before its turn finishes. Check the idle baseline only after that state arrives.
+    await why("setup turn idle", async () => { for (let i = 0; i < 100; i++) { if ((await hook<any>("tray")).icon === "idle") return; await sleep(100); } throw new Error("setup turn never went idle"); });
     const t0 = await hook<any>("tray");
     expect(t0.created).toBe(true);
     expect(t0.items.map((i: any) => i.label).filter(Boolean)).toEqual(["Hide Rigwell", "Active sessions: 0", "Nothing needs your attention", "Quit Rigwell"]);
