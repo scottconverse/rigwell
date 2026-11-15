@@ -55,6 +55,7 @@ win:
   target: [nsis]
   artifactName: rigwell-setup-${version}-${arch}.${ext}
 nsis:
+  include: packaging/protocol.nsh
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
