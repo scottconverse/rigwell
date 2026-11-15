@@ -22,6 +22,7 @@ export function Sidebar({ sessions, current, daemon, route, go, openPalette }: {
     <nav className="sidebar" aria-label="Sidebar">
       <div className="side-top drag">
         <button className="side-btn primary" onClick={() => go("/")}>New Session</button>
+        <button className={`side-btn ${route?.startsWith("/inbox") ? "on" : ""}`} onClick={() => go("/inbox")}>Inbox</button>
         <button className={`side-btn ${route?.startsWith("/missions") ? "on" : ""}`} onClick={() => go("/missions")}>Mission Control</button>
         <button className={`side-btn ${route?.startsWith("/workstreams") ? "on" : ""}`} onClick={() => go("/workstreams")}>Workstreams</button>
         <button className={`side-btn ${route?.startsWith("/review") ? "on" : ""}`} onClick={() => go("/review")}>Review</button>

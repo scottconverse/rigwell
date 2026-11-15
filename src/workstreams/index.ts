@@ -30,7 +30,7 @@ export function workstreamSettings(cwd: string): WorkstreamSettings {
     ...(raw.defaultMemberReasoningEffort ? { defaultMemberReasoningEffort: raw.defaultMemberReasoningEffort } : {}) };
 }
 
-export function createWorkstreamService(opts: { log?: (text: string) => void; recover?: boolean; connectMachine?: import("../daemon/connection.ts").ConnectionOptions["connectMachine"] } = {}) {
+export function createWorkstreamService(opts: { log?: (text: string) => void; recover?: boolean; onNotification?: (notification: Record<string, unknown>, cwd: string) => void; connectMachine?: import("../daemon/connection.ts").ConnectionOptions["connectMachine"] } = {}) {
   const members = new Map<string, MemberSession>();
   const memberStores = new Map<string, WorkstreamStore>(); // session id -> owning workstream
   const clients = new Set<WorkstreamConn>();
@@ -48,6 +48,7 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
   let stopped = false;
   const admission = new MemberAdmission((store, id) => updateStatus(store, id, "working"));
   const notify = (store: WorkstreamStore, type: string, extra: Record<string, unknown> = {}) => {
+    opts.onNotification?.({ type, workstreamId: store.id, ...extra }, store.read().cwd);
     const leadSessionId = store.read().leadSessionId;
     for (const c of clients) {
       const watch = watches.get(c);

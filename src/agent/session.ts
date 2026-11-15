@@ -830,6 +830,7 @@ export class Session {
     return new Promise<T>((resolve) => {
       if (!send) return resolve(fallback);
       this.prompts.set(requestId, { requestId, kind, params, fallback, resolve: (a) => { this.prompts.delete(requestId); resolve(a as T); } });
+      this.notify({ type: "user_prompt_requested", kind, requestId, summary: kind === "ask_user" ? String((params.questions as AskQuestion[] | undefined)?.[0]?.question ?? "The agent has a question").slice(0, 500) : "Open the source to review the complete permission request." });
       send().then(
         (a) => this.prompts.get(requestId)?.resolve(a),
         (e) => { if ((e as { code?: number })?.code !== DISCONNECTED) this.prompts.get(requestId)?.resolve(fallback); },

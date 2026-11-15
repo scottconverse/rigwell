@@ -19,13 +19,16 @@ import { PhoneStore } from "../phone/store.ts";
 import { SlackHub } from "../automations/triggers/slack.ts";
 import { DelegationService, type DelegationDeps } from "../delegation/service.ts";
 import { DelegationStore } from "../delegation/store.ts";
+import { InboxService, type InboxDeps } from "../inbox/service.ts";
 
 export const defaultSocketPath = () => join(rigwellHome(), "daemon.sock");
 
-export async function startDaemon(opts: { socketPath: string; onShutdown?: () => void; advertise?: boolean; backgroundServices?: boolean; log?: (m: string) => void; retryBaseDelayMs?: number; automations?: false | ServiceOptions; delegation?: false | DelegationDeps; ws?: false | { port?: number; token?: string }; sidepane?: false | SidePaneOptions }) {
+export async function startDaemon(opts: { socketPath: string; onShutdown?: () => void; advertise?: boolean; backgroundServices?: boolean; log?: (m: string) => void; retryBaseDelayMs?: number; inbox?: InboxDeps; automations?: false | ServiceOptions; delegation?: false | DelegationDeps; ws?: false | { port?: number; token?: string }; sidepane?: false | SidePaneOptions }) {
   mkdirSync(dirname(opts.socketPath), { recursive: true });
   if (existsSync(opts.socketPath)) unlinkSync(opts.socketPath);
   const conns = new Set<ReturnType<typeof createConnection>>();
+  const inbox = new InboxService(undefined, opts.inbox, () => { for (const c of conns) c.peer.notify(METHOD_PREFIX + "inbox_changed", {}); }, opts.log);
+  inbox.start();
   const dec = new TextDecoder();
   type Data = { conn: ReturnType<typeof createConnection>; out: Uint8Array[] };
   const enc = new TextEncoder();
@@ -53,6 +56,7 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
       onAutoPaused: (a) => { for (const c of conns) c.peer.notify(METHOD_PREFIX + "automation.auto_paused", a); },
       ...opts.automations,
       triggers: { ...opts.automations?.triggers, slackHub },
+      onRunCompleted: (a, run, text, event) => { inbox.automation(a, run); opts.automations && opts.automations.onRunCompleted?.(a, run, text, event); },
     });
   })();
   auto?.start();
@@ -69,7 +73,7 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
     ...opts.sidepane,
   });
   const missions = createMissionService({ log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs });
-  const workstreams = createWorkstreamService({ log: opts.log, recover: opts.backgroundServices });
+  const workstreams = createWorkstreamService({ log: opts.log, recover: opts.backgroundServices, onNotification: (n, cwd) => inbox.workstream(n, cwd) });
   await workstreams.ready;
   const workstreamClients = new Map<ReturnType<typeof createConnection>, () => void>();
   const ctxs = new Map<ReturnType<typeof createConnection>, ConnCtx>();
@@ -97,15 +101,22 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
       session: () => conn.session,
       notify: (n) => conn.peer.notify(METHOD_PREFIX + "session_notification", { ...(conn.session ? { sessionId: conn.session.id } : {}), notification: n }),
     };
+    const request = async (method: string, params: Record<string, unknown>) => {
+      const own = !params.agentId && (method === "request_permission" || method === "ask_user");
+      if (own) inbox.session(conn.session, { type: "user_prompt_requested", kind: method === "ask_user" ? "ask_user" : "permission", requestId: params.requestId });
+      try { return await conn.peer.request(METHOD_PREFIX + method, params); }
+      finally { if (own) inbox.session(conn.session, { type: method === "ask_user" ? "ask_user_resolved" : "permission_resolved", requestId: params.requestId }); }
+    };
     const mission = missions.attach({
-      session: () => conn.session, notify: ctx.notify,
-      request: (m, p) => conn.peer.request(METHOD_PREFIX + m, p),
+      session: () => conn.session, notify: (n) => { inbox.mission(conn.session, n); ctx.notify(n); },
+      request,
     });
-    const stream = workstreams.attach({ session: () => conn.session, notify: ctx.notify, request: (m, p) => conn.peer.request(METHOD_PREFIX + m, p) });
+    const stream = workstreams.attach({ session: () => conn.session, notify: ctx.notify, request });
     conn = createConnection(write, {
       canPrompt: true, log: opts.log, retryBaseDelayMs: opts.retryBaseDelayMs,
       machineControl,
       onNotification: (s, n) => {
+        inbox.session(s, n);
         if (s) workstreams.observe(s, n);
         if (s && ["create_message", "session_title_updated", "agent_turn_completed"].includes(String(n.type)) && (s.settingsSnapshot().tags as { name: string }[] | undefined)?.some((t) => t.name === "delegation-slack" || t.name === "delegation-teams")) {
           for (const c of conns) c.peer.notify(METHOD_PREFIX + "session_list_changed", { sessionId: s.id });
@@ -117,7 +128,7 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
         return owner && session ? { session, alive: () => conns.has(owner) && !owner.closed && owner.session === session, subscribe: (notify) => session.subscribeNotifications(notify) } : undefined;
       },
       sharedRemoteSession: workstreams.sharedRemoteSession,
-      extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx), ...mission.methods, ...stream.methods, ...phone.methods, ...delegation?.methods },
+      extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx), ...mission.methods, ...stream.methods, ...phone.methods, ...delegation?.methods, ...inbox.methods },
       notifyUserMessages: true,
       wrapTools: (tools) => stream.wrapTools(mission.wrapTools(tools)),
       extraTools: sidepane || autoTools.length ? () => [...(sidepane ? sidepane.tools() : []), ...autoTools] : undefined,
@@ -194,11 +205,13 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
     workstreams,
     phone,
     delegation,
+    inbox,
     get sessionCount() { return [...conns].filter((c) => c.session).length; },
     stop() {
       if (stopped) return stopped;
       for (const handle of missions.handles.values()) handle.pause("daemon_shutdown");
       const pending = [...conns].map((c) => c.shutdown());
+      pending.push(inbox.stop());
       if (delegation) pending.push(delegation.stop());
       pending.push(workstreams.stop());
       auto?.stop();

@@ -51,6 +51,10 @@ test("Workstream member questions survive the lead turn and desktop answers inva
     expect(fake.requests).toHaveLength(requestsBefore);
     slack.action("finish-lead", leadToken, thread);
     await until(() => slack.posts.some((p) => p.text.startsWith("Finished") && p.text.includes("Lead done")));
+    const inbox = daemon.inbox.store.list().items;
+    const memberQuestion = inbox.find((i) => i.category === "question" && i.detail === "Member first?");
+    expect(memberQuestion?.resolved).toBe(false); expect(memberQuestion?.route).toStartWith("/workstreams/");
+    expect(new Set(inbox.map((i) => i.category))).toEqual(new Set(["permission", "question", "turn", "workstream"]));
     slack.action("member-first", firstToken, thread);
     await until(() => slack.posts.some((p) => p.text.includes("Member second?")));
     const results = () => fake.requests.flatMap((r) => r.messages.flatMap((m: any) => Array.isArray(m.content) ? m.content.filter((c: any) => c.type === "tool_result") : []));

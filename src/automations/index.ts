@@ -36,6 +36,7 @@ export interface ServiceOptions {
   onAutoPaused?: (a: { id: string; name: string; reason: "missed_runs" | "consecutive_failures" }) => void;
   retryBaseDelayMs?: number;
   log?: (m: string) => void;
+  onRunCompleted?: AutomationManager["onRunCompleted"];
 }
 
 type Params = Record<string, unknown>;
@@ -51,7 +52,7 @@ export function createAutomationService(opts: ServiceOptions = {}) {
   const mgr = new AutomationManager({ runner, clock: opts.clock, limits: opts.limits, projectDirs: opts.projectDirs, log: opts.log,
     onAutoPaused: (a, reason) => opts.onAutoPaused?.({ id: a.id, name: a.fm.name, reason }) });
   const triggers = new AutomationTriggers(mgr, opts.triggers, opts.log);
-  mgr.onRunCompleted = (a, run, text, event) => triggers.completed(a, run, text, event);
+  mgr.onRunCompleted = (a, run, text, event) => { try { triggers.completed(a, run, text, event); } finally { opts.onRunCompleted?.(a, run, text, event); } };
   const emitCron = (c: CronRecord) => { try { opts.onCronChanged?.(c); } catch { /* a listener never breaks the store */ } return c; };
   const crons = new CronStore(opts.clock);
   const cronRunner = opts.cronHost ? new CronRunner(crons, opts.cronHost, opts.clock, (c) => emitCron(c)) : undefined;

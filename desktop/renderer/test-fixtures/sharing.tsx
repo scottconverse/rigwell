@@ -4,6 +4,7 @@ import { SharedSessions } from "../components/SharedSessions.tsx";
 import { Sync } from "../components/Sync.tsx";
 import { PhoneAccessPage } from "../components/PhoneAccess.tsx";
 import { DelegationPage } from "../components/Delegation.tsx";
+import { Inbox, EmailAlerts } from "../components/Inbox.tsx";
 import { Automations, AutomationDetail } from "../components/Automations.tsx";
 import { SessionScreen } from "../components/SessionScreen.tsx";
 import { app, useApp } from "../lib/app-model.ts";
@@ -36,7 +37,9 @@ function DelegationFixture() {
 function Fixture() {
   if (window.location.pathname === "/phone") return <PhoneAccessPage />;
   if (window.location.pathname === "/delegation") return <DelegationFixture />;
-  const [route, go] = useState(window.location.pathname === "/sync" ? "/sync" : window.location.pathname === "/automations" ? "/automations" : "/imports");
+  const [route, go] = useState(window.location.pathname === "/inbox" ? "/inbox" : window.location.pathname === "/sync" ? "/sync" : window.location.pathname === "/automations" ? "/automations" : "/imports");
+  if (route === "/inbox") return <Inbox go={go} />;
+  if (route === "/settings/email-alerts") return <EmailAlerts />;
   if (route === "/automations") return <Automations go={go} />;
   if (route.startsWith("/automations/")) return <AutomationDetail id={route.split("/")[2]!} go={go} />;
   if (route === "/sync") return <Sync go={go} />;
