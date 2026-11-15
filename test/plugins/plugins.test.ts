@@ -2,8 +2,9 @@ import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { PluginService } from "../../src/plugins/service.ts";
-import { activePlugins, installedPath, pluginRoot, readPluginState } from "../../src/plugins/store.ts";
+import { activePlugins, installedPath, pluginRoot, readPluginState, unlinked } from "../../src/plugins/store.ts";
 import { SkillRegistry } from "../../src/skills/skills.ts";
 import { loadAgents } from "../../src/subagents/agents.ts";
 import { loadHooksConfig } from "../../src/hooks/config.ts";
@@ -16,6 +17,23 @@ import { tmpEnv } from "../storage/helpers.ts";
 import { pluginFixture } from "./fixture.ts";
 import { CLI } from "../e2e/helpers.ts";
 import { isPrivate } from "../../src/platform/private.ts";
+
+test("system temporary paths are usable but custom directory aliases and dangling links are rejected", () => {
+  const env = tmpEnv();
+  try {
+    expect(() => unlinked(tmpdir())).not.toThrow();
+    expect(() => unlinked(join(env.rigwellHome, "plugins", "not-created"))).not.toThrow();
+    if (process.platform === "darwin") {
+      expect(() => unlinked("/var/tmp/rigwell-not-created")).not.toThrow();
+      expect(() => unlinked("/tmp/rigwell-not-created")).not.toThrow();
+    }
+    const target = join(env.root, "target"); mkdirSync(target);
+    const alias = join(env.root, "var"); symlinkSync(target, alias, process.platform === "win32" ? "junction" : "dir");
+    expect(() => unlinked(join(alias, "not-created"))).toThrow("links");
+    const dangling = join(env.root, "dangling"); symlinkSync(join(env.root, "absent"), dangling, "file");
+    expect(() => unlinked(dangling)).toThrow("links");
+  } finally { env.cleanup(); }
+});
 
 test("approved snapshots integrate all six contributions, retain precedence, run owned hooks/MCP and disable/uninstall cleanly", async () => {
   const env = tmpEnv(), svc = new PluginService(), source = pluginFixture(join(env.root, "source")), project = join(env.root, "project"); mkdirSync(project);

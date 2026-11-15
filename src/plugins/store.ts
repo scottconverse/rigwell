@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, readdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { rigwellHome } from "../storage/paths.ts";
 import { makePrivate } from "../platform/private.ts";
@@ -17,7 +17,13 @@ export const validName = (s: unknown): s is string => typeof s === "string" && /
 export const validCommit = (s: unknown): s is string => typeof s === "string" && /^[a-f0-9]{40}$/.test(s);
 export function unlinked(path: string) {
   let current = resolve(path);
-  for (;;) { if (existsSync(current) && lstatSync(current).isSymbolicLink()) throw new Error("Plugin paths cannot contain links"); const parent = resolve(current, ".."); if (parent === current) break; current = parent; }
+  for (;;) {
+    let linked = false;
+    try { linked = lstatSync(current).isSymbolicLink(); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
+    // macOS system temp paths use these fixed aliases; plugin-controlled links remain forbidden.
+    if (linked && !(process.platform === "darwin" && ["/var", "/tmp"].includes(current) && resolve(current, "..", readlinkSync(current)) === `/private${current}`)) throw new Error("Plugin paths cannot contain links");
+    const parent = resolve(current, ".."); if (parent === current) break; current = parent;
+  }
 }
 export function inside(root: string, path: string) {
   const target = resolve(root, path), rel = relative(resolve(root), target);
