@@ -5,9 +5,20 @@ name: platforms
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      signed_candidate_run:
+        description: Existing sign-only run containing the candidate installer
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
 
 jobs:
   test:
+    if: github.event_name != 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -100,5 +111,49 @@ jobs:
             desktop/release/*.blockmap
             desktop/release/*.yml
             desktop/release/installed-acceptance.json
+          if-no-files-found: error
+          retention-days: 7
+
+  signed-install:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/phase-1-core-loop'
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            /*
+            !/evidence/
+          sparse-checkout-cone-mode: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - run: npm ci --ignore-scripts
+        working-directory: desktop
+      - uses: actions/download-artifact@v4
+        with:
+          repository: scottconverse/civiccast
+          name: signed-native-installer
+          run-id: 43689064653
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/signed-baseline
+      - uses: actions/download-artifact@v4
+        with:
+          repository: scottconverse/civiccast
+          name: signed-native-installer
+          run-id: ${{ inputs.signed_candidate_run }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/signed-candidate
+      - name: Verify signed install, upgrade and local rollback
+        shell: pwsh
+        run: bun desktop/packaging/accept-windows-update.ts "$env:RUNNER_TEMP/signed-baseline" "$env:RUNNER_TEMP/signed-candidate" signed-update-acceptance.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-windows-acceptance-${{ github.sha }}
+          path: signed-update-acceptance.json
           if-no-files-found: error
           retention-days: 7

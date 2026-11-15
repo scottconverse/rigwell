@@ -91,3 +91,13 @@ checks pass. Clean-runner installed first run passed for all three platforms on
 is being checked separately; its receipt explicitly distinguishes loopback
 package-pipeline verification from native update-dialog interaction.
 The owner has no macOS Developer ID certificate; notarization is not claimed.
+
+For signed Windows package acceptance, dispatch the existing platform workflow
+on the working branch with `signed_candidate_run` identifying the completed
+sign-only run. The isolated Windows runner downloads the preserved signed
+baseline and candidate, verifies their receipts and native signatures, then
+checks installation, signed loopback upgrade, version readback, refusal of a
+remote downgrade and explicit local installer rollback. Its receipt states
+that native updater-dialog interaction is not exercised. No signing private
+key or personal access token is added to the Rigwell workflow. This path is
+prepared and must have an actual passing run before being claimed verified.
