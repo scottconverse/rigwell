@@ -49,12 +49,14 @@ try {
   if (!page) throw new Error("Installed app did not create its first-run page");
   await page.getByRole("region", { name: "Connect a model" }).waitFor({ timeout: 30_000 });
   await page.getByRole("button", { name: "Configure a model", exact: true }).waitFor();
+  const info = await page.evaluate(() => (window as any).rigwell.app.info());
+  if (process.argv[4] && info.version !== process.argv[4]) throw new Error(`Installed version ${info.version}, expected ${process.argv[4]}`);
   observed = readDaemonInfo(home);
   if (!observed?.ws || !await probeDaemon(observed.ws.url)) throw new Error("Bundled daemon did not answer");
   if (!daemonCommandLine(observed.pid).toLowerCase().includes(bundledBun.toLowerCase())) throw new Error("Daemon is not running the installed bundled runtime");
   const configuration = JSON.parse(readFileSync(join(home, "settings.json"), "utf8"));
   if (configuration.customModels?.length || configuration.models?.length) throw new Error("First run imported unexpected model profiles");
-  const receipt = { status: "PASS", platform: process.platform, executable, resources, firstRun: "Connect a model", daemonReady: true, bundledRuntimePresent: true, emptyProfile: true, elapsedMs: Date.now() - started };
+  const receipt = { status: "PASS", platform: process.platform, version: info.version, executable, resources, firstRun: "Connect a model", daemonReady: true, bundledRuntimePresent: true, emptyProfile: true, elapsedMs: Date.now() - started };
   writeFileSync(output, JSON.stringify(receipt, null, 2) + "\n"); console.log(JSON.stringify(receipt));
 } finally {
   console.log("[installed acceptance] disconnecting CDP");

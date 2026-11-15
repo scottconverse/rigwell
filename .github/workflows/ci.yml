@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -93,6 +94,15 @@ jobs:
           package=$(dpkg-deb -f desktop/release/*.deb Package)
           executable=$(dpkg -L "$package" | rg '/rigwell$')
           xvfb-run -a bun desktop/packaging/accept-install.ts "$executable" desktop/release/installed-acceptance.json
+      - name: Retrieve the verified previous Linux package
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-Linux-5fc56876772f83e3bb01212a00dbf911e8481008
+          run-id: 43692783551
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/rigwell-baseline
+      - name: Verify real packaged upgrade and rollback
+        run: xvfb-run -a bun desktop/packaging/accept-linux-update.ts "$RUNNER_TEMP/rigwell-baseline/rigwell-0.1.0-x86_64.AppImage" desktop/release/rigwell-*.AppImage desktop/release/packaged-update-acceptance.json
       - name: Preserve Linux installers and installed acceptance
         uses: actions/upload-artifact@v4
         with:
@@ -102,5 +112,6 @@ jobs:
             desktop/release/*.deb
             desktop/release/*.yml
             desktop/release/installed-acceptance.json
+            desktop/release/packaged-update-acceptance.json
           if-no-files-found: error
           retention-days: 7

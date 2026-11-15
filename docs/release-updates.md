@@ -86,5 +86,8 @@ unpublished draft. This baseline does not contain subsequent updater changes.
 
 The embedded Linux public key and strict tarball install path are implemented;
 independent system tar listing/extraction and fake signed-feed upgrade/rollback
-checks pass. Real packaged update/rollback and clean-machine first run remain pending.
+checks pass. Clean-runner installed first run passed for all three platforms on
+`5fc5687` (runs `43692783551` and `43692783541`). Real packaged update/rollback
+is being checked separately; its receipt explicitly distinguishes loopback
+package-pipeline verification from native update-dialog interaction.
 The owner has no macOS Developer ID certificate; notarization is not claimed.

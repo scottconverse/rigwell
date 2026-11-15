@@ -79,7 +79,8 @@ daemon, and checks the first-run model setup page. No model is called and no
 personal settings or credentials are imported. Packages and JSON receipts are
 retained as workflow artifacts for seven days.
 
-These checks are prepared; their successful execution must be recorded in the
-handoff before treating installed acceptance as complete. They do not establish
+These checks passed on commit `5fc5687` in runs `43692783551` and
+`43692783541`, including normal terminal teardown on all three platforms.
+New candidates repeat the checks. They do not establish
 signed public delivery, a real Mac hardware pass or a successful packaged
 upgrade/rollback. Do not label a temporary profile on Halo a clean machine.
