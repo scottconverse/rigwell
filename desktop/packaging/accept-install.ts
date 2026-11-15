@@ -12,6 +12,17 @@ if (process.env.CI !== "true") throw new Error("Installed acceptance runs only o
 const executable = resolve(process.argv[2] || ""), output = resolve(process.argv[3] || "installed-acceptance.json");
 const expectedVersion = process.argv.slice(4).find(arg => !arg.startsWith("--"));
 if (!existsSync(executable)) throw new Error("Provide the installed executable");
+const checkWindowsProtocol = process.argv.includes("--require-windows-protocol");
+if (checkWindowsProtocol && process.platform !== "win32") throw new Error("Windows protocol acceptance requires Windows");
+const powershell = join(process.env.SystemRoot || "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
+if (checkWindowsProtocol) {
+  // Read before first launch: app.setAsDefaultProtocolClient must not mask an
+  // installer that failed to register its own URL handler.
+  const checked = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; $k=[Microsoft.Win32.Registry]::ClassesRoot.OpenSubKey('rigwell'); if(!$k){throw 'Missing installed protocol'}; $c=$k.OpenSubKey('shell\\open\\command'); if(!$c){throw 'Missing protocol command'}; @{protocol=$k.GetValue('URL Protocol',$null);command=$c.GetValue('')}|ConvertTo-Json -Compress"], { encoding: "utf8", windowsHide: true, timeout: 10_000 });
+  if (checked.status !== 0) throw new Error(`Installed protocol registration: ${checked.stderr}`);
+  const registration = JSON.parse(checked.stdout);
+  if (registration.protocol === null || typeof registration.command !== "string" || !registration.command.toLowerCase().startsWith(`"${executable.toLowerCase()}"`) || !registration.command.includes("%1")) throw new Error("Installed protocol command does not identify this installed executable and URL argument");
+}
 const resources = process.platform === "darwin" ? resolve(dirname(executable), "../Resources") : join(dirname(executable), "resources");
 const bundledBun = join(resources, "bun", process.platform === "win32" ? "bun.exe" : "bun");
 if (!existsSync(bundledBun) || !existsSync(join(resources, "app.asar"))) throw new Error("Installed package is missing bundled resources");
@@ -64,7 +75,15 @@ try {
   if (!daemonCommandLine(observed.pid).toLowerCase().includes(bundledBun.toLowerCase())) throw new Error("Daemon is not running the installed bundled runtime");
   const configuration = JSON.parse(readFileSync(join(home, "settings.json"), "utf8"));
   if (configuration.customModels?.length || configuration.models?.length) throw new Error("First run imported unexpected model profiles");
-  const receipt = { status: "PASS", platform: process.platform, version: info.version, executable, resources, firstRun: "Connect a model", daemonReady: true, bundledRuntimePresent: true, emptyProfile: true, ...(evalTaskCount !== undefined ? { evalTaskCount } : {}), elapsedMs: Date.now() - started };
+  if (checkWindowsProtocol) {
+    // Use the actual Windows URL association, rather than emitting an Electron
+    // event or directly executing the registered command ourselves.
+    const launched = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; Start-Process -FilePath 'rigwell://workstreams' -WindowStyle Hidden"], { env, encoding: "utf8", windowsHide: true, timeout: 15_000 });
+    if (launched.status !== 0) throw new Error(`Windows protocol launch: ${launched.stderr}`);
+    await page.waitForFunction(() => location.hash === "#/workstreams", undefined, { timeout: 15_000 });
+    await page.getByRole("heading", { name: "Workstreams", exact: true }).waitFor({ timeout: 15_000 });
+  }
+  const receipt = { status: "PASS", platform: process.platform, version: info.version, executable, resources, firstRun: "Connect a model", daemonReady: true, bundledRuntimePresent: true, emptyProfile: true, ...(evalTaskCount !== undefined ? { evalTaskCount } : {}), ...(checkWindowsProtocol ? { installedProtocolRegistration: true, windowsShellDeepLink: "rigwell://workstreams", observedRoute: "/workstreams" } : {}), elapsedMs: Date.now() - started };
   writeFileSync(output, JSON.stringify(receipt, null, 2) + "\n"); console.log(JSON.stringify(receipt));
 } finally {
   console.log("[installed acceptance] disconnecting CDP");

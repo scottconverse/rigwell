@@ -43,7 +43,7 @@ function install(file: string, expectedVersion: string, stage: string) {
   const installed = spawnSync(join(system, "System32/WindowsPowerShell/v1.0/powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", code], { input: JSON.stringify({ file, destination }), encoding: "utf8", windowsHide: true, timeout: 120_000 });
   assert.equal(installed.status, 0, `Install ${stage}: ${installed.stderr}`);
   const receiptPath = join(root, stage + ".json");
-  const run = spawnSync(process.execPath, [join(import.meta.dir, "accept-install.ts"), join(destination, "rigwell.exe"), receiptPath, expectedVersion, ...(expectedVersion === version ? ["--require-eval-tasks"] : [])], { encoding: "utf8", windowsHide: true, timeout: 120_000, maxBuffer: 1024 * 1024 });
+  const run = spawnSync(process.execPath, [join(import.meta.dir, "accept-install.ts"), join(destination, "rigwell.exe"), receiptPath, expectedVersion, ...(expectedVersion === version ? ["--require-eval-tasks", "--require-windows-protocol"] : [])], { encoding: "utf8", windowsHide: true, timeout: 120_000, maxBuffer: 1024 * 1024 });
   assert.equal(run.status, 0, `Launch ${stage}: ${run.stdout}\n${run.stderr}`);
   receipts.push({ stage, ...JSON.parse(readFileSync(receiptPath, "utf8")) });
   console.log(`[signed packaged update] ${stage} ${expectedVersion} PASS`);

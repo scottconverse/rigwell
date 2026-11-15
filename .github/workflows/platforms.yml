@@ -88,7 +88,7 @@ jobs:
           $destination = Join-Path $env:RUNNER_TEMP 'rigwell-installed'
           $process = Start-Process -FilePath $installer[0].FullName -ArgumentList '/S',"/D=$destination" -Wait -PassThru -WindowStyle Hidden
           if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
-          bun desktop/packaging/accept-install.ts (Join-Path $destination 'rigwell.exe') desktop/release/installed-acceptance.json --require-eval-tasks
+          bun desktop/packaging/accept-install.ts (Join-Path $destination 'rigwell.exe') desktop/release/installed-acceptance.json --require-eval-tasks --require-windows-protocol
           if ($LASTEXITCODE -ne 0) { throw 'Installed first run failed' }
       - name: Install DMG package on the clean macOS runner
         if: runner.os == 'macOS'

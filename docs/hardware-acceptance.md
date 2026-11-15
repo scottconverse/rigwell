@@ -26,3 +26,5 @@ API reference: [CREDENTIALW](https://learn.microsoft.com/en-us/windows/win32/api
 ## Remaining release acceptance
 
 Real macOS hardware is unavailable; the owner requested continued work without it. macOS CI tests and unsigned packaging are verified separately. Real macOS Keychain, clipboard, terminal, notifications, tray and deep links remain pending. Installed Windows protocol registration, signed installation, update/rollback and clean-machine behavior belong to the subsequent release items and are not claimed here.
+
+Release follow-up: signed Windows installation, version upgrade and rollback passed in run 43731720393 on corrected runtime 59dc19d; empty-profile installed checks and all 43 bundled tasks passed. Decision 505 adds a runner-only check for registry registration before first launch and actual Windows-shell URL delivery. It is prepared, not yet claimed passed. This supplements the earlier native event-handler probe without taking over Halo.
