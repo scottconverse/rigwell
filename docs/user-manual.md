@@ -376,7 +376,7 @@ Use **Report a bug** to create a local diagnostic archive. It is not uploaded au
 
 This is an early release. Windows signing and packaged install/update/rollback are verified. macOS artifacts remain unsigned and real Mac hardware acceptance is not claimed. Full long-session and model-family qualification is still being measured. Bedrock's documented adapter and fake coverage are available, but no owner-account live test was possible. Real connector registrations, remote hosts, phone networks and email delivery depend on the user's setup.
 
-The current evaluation subsystem is smaller than Stax. The owner waived testing a real Stax export; that is not proof of compatibility. A hosted Stax option and later open-source reuse assessment belong to the [next-version list](next-version.md), not this release.
+The current evaluation subsystem is smaller than Stax. Compatibility with real Stax exports has not been verified. A hosted Stax option and later open-source reuse assessment belong to the [next-version list](next-version.md), not this release.
 
 ## Glossary
 

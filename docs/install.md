@@ -79,17 +79,23 @@ daemon, and checks the first-run model setup page. No model is called and no
 personal settings or credentials are imported. Packages and JSON receipts are
 retained as workflow artifacts for seven days.
 
-The 0.1.1 runtime is built from `59dc19d`. Runs `43729671308` and
-`43729671256` passed all four required jobs and installed first-run checks,
-including listing all 43 bundled evaluation tasks. Signed Windows acceptance
-`43735540144` passed actual baseline installation, signed upgrade, Windows-shell
-deep-link delivery and explicit local rollback. Linux release acceptance
-`43732261845` passed packaged upgrade and rollback with a verified signed update.
+The 0.4.0 packages are built from source `28cac5b`. Runs `43742095558`
+and `43742095548` passed all four required Linux, macOS and Windows jobs,
+including real installed first run and all 43 bundled evaluation tasks. The
+Windows installer registers its URL handler before first launch; an actual
+Windows-shell deep link reached Workstreams. Linux release run `43742725196`
+passed packaged installation, upgrade and rollback.
 
-The Windows release installer has SHA-256
-`8676350a5f6be555b7aefc94a9d0a70f77ba8a8ff5d701be154fc959b6380408`.
-Its Authenticode signature and timestamp were independently verified on Windows.
-Documentation and acceptance-helper successors do not change the packaged
-runtime. These results do not establish a real Mac hardware pass or interaction
-with the native Windows updater dialog. Do not label a temporary profile on
-Halo a clean machine. Public asset checksums accompany the release.
+The signed Windows setup installer has SHA-256
+`19d3a80b6e46065cb612d9ba69d0ab15a8cf23699a541d2130c31e9a78a6730c`.
+Signing run `43743441653` passed; its returned bytes, signing receipt,
+Scott Converse publisher and Microsoft timestamp were independently verified
+on Windows. The application executable and uninstaller are not individually
+signed in this branch's packaging path. Signed install/update/rollback uses
+release acceptance run `43743716936`; consult the release's acceptance metadata
+for its final result. Native updater-dialog interaction is not claimed.
+
+The published release includes final-byte checksums and acceptance metadata.
+Documentation-only successors do not change these packaged inputs. These
+runner results do not establish a real Mac hardware pass. Do not label a
+temporary profile on Halo a clean machine.
