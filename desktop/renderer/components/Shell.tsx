@@ -31,6 +31,7 @@ export function Sidebar({ sessions, current, daemon, route, go, openPalette }: {
         <button className={`side-btn ${route?.startsWith("/imports") ? "on" : ""}`} onClick={() => go("/imports")}>Import session</button>
         <button className={`side-btn ${route?.startsWith("/sync") ? "on" : ""}`} onClick={() => go("/sync")}>Sync</button>
         <button className={`side-btn ${route?.startsWith("/plugins") ? "on" : ""}`} onClick={() => go("/plugins")}>Plugins</button>
+        <button className={`side-btn ${route?.startsWith("/wiki") ? "on" : ""}`} onClick={() => go("/wiki")}>Wiki</button>
         <button className="side-btn" onClick={openPalette}>Search <kbd>Ctrl+K</kbd></button>
       </div>
       <div className="side-filters">
@@ -83,7 +84,7 @@ export function Palette({ sessions, go, close, actions }: { sessions: SessionRow
   const [sel, setSel] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => input.current?.focus(), []);
-  const pages = [{ id: "sync", label: "Sync between machines", run: () => go("/sync") }, { id: "imports", label: "Import shared session", run: () => go("/imports") }, { id: "machines", label: "Go to Machines", run: () => go("/machines") }, { id: "home", label: "Home", run: () => go("/") }, { id: "missions", label: "Go to Mission Control", run: () => go("/missions") }, { id: "workstreams", label: "Go to Workstreams", run: () => go("/workstreams") }, { id: "review", label: "Go to Review", run: () => go("/review") }, { id: "automations", label: "Go to Automations", run: () => go("/automations") }];
+  const pages = [{ id: "wiki", label: "Go to Wiki", run: () => go("/wiki") }, { id: "sync", label: "Sync between machines", run: () => go("/sync") }, { id: "imports", label: "Import shared session", run: () => go("/imports") }, { id: "machines", label: "Go to Machines", run: () => go("/machines") }, { id: "home", label: "Home", run: () => go("/") }, { id: "missions", label: "Go to Mission Control", run: () => go("/missions") }, { id: "workstreams", label: "Go to Workstreams", run: () => go("/workstreams") }, { id: "review", label: "Go to Review", run: () => go("/review") }, { id: "automations", label: "Go to Automations", run: () => go("/automations") }];
   const settingsPages = ["general", "appearance", "notifications", "session-defaults", "missions", "custom-models", "worktrees", "connectors", "session-management", "usage", "support"].map((p) => ({ id: p, label: `Settings: ${p.split("-").map((w, i) => (i ? w : w[0].toUpperCase() + w.slice(1))).join(" ")}`, run: () => go(`/settings/${p}`) }));
   const items = useMemo(() => {
     const ql = q.toLowerCase();

@@ -56,7 +56,7 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 
 ## 7. Knowledge, insight and extensibility
 
-27. Plugins and marketplace indexes (§20.14).
+27. Plugins and marketplace indexes (§20.14). Delivered on 41cc384: all four required CI jobs/packages green; see docs/plugins.md and HANDOFF State.
 28. Project wiki and the four wiki skills (§20.15).
 29. Academy tutorials (§20.17).
 30. Analytics page (§20.18).

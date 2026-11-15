@@ -28,7 +28,7 @@ function tokens(node: Node, omitted?: number): string {
   const children = node.children;
   return children.length ? children.filter((child): child is Node => !!child).map((child) => tokens(child, omitted)).join("|") : `${node.type}:${JSON.stringify(node.text)}`;
 }
-async function symbols(path: string, text: string) {
+export async function sourceSymbols(path: string, text: string) {
   const language = languages[extname(path).slice(1).toLowerCase()];
   if (!language) return { symbols: [] as Symbol[], warning: "No bundled tree-sitter grammar for this file" };
   if (Buffer.byteLength(text) > 2 * 1024 * 1024) return { symbols: [] as Symbol[], warning: "Semantic parsing is limited to files up to 2 MiB" };
@@ -60,7 +60,7 @@ async function symbols(path: string, text: string) {
 export async function semanticDiff(files: ReviewSource[]) {
   const before: Symbol[] = [], after: Symbol[] = [], warnings: { path: string; message: string }[] = [];
   for (const file of files) {
-    const old = await symbols(file.oldPath ?? file.path, file.before), next = await symbols(file.path, file.after);
+    const old = await sourceSymbols(file.oldPath ?? file.path, file.before), next = await sourceSymbols(file.path, file.after);
     before.push(...old.symbols); after.push(...next.symbols);
     const warning = next.warning ?? old.warning; if (warning) warnings.push({ path: file.path, message: warning });
   }
