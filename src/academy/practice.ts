@@ -21,11 +21,15 @@ function pathIn(root: string, file: string) {
   for (const part of rel.split(/[\\/]/)) { p = join(p, part); try { if (lstatSync(p).isSymbolicLink()) throw new Error("Practice paths cannot contain links"); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; } }
   return target;
 }
-function base() { return realpathSync(tmpdir()); }
+function canonical(path: string) {
+  const resolved = realpathSync.native(path);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+function base() { return realpathSync.native(tmpdir()); }
 function owned(id: string) {
   if (!/^[a-zA-Z0-9]{6}$/.test(id)) throw new Error("Invalid practice id");
   const root = join(base(), PREFIX + id), st = lstatSync(root);
-  if (!st.isDirectory() || st.isSymbolicLink() || realpathSync(root) !== root) throw new Error("Practice is not an owned temporary directory");
+  if (!st.isDirectory() || st.isSymbolicLink() || canonical(root) !== (process.platform === "win32" ? root.toLowerCase() : root)) throw new Error("Practice is not an owned temporary directory");
   const file = pathIn(root, MARKER); if (lstatSync(file).size > 4096) throw new Error("Invalid practice marker");
   const record = JSON.parse(readFileSync(file, "utf8")) as Practice;
   if (record.version !== 1 || record.id !== id || typeof record.createdAt !== "string") throw new Error("Invalid practice marker");
@@ -101,8 +105,11 @@ export function checkPractice(id: string) {
         message = "Server configuration is valid. No process or MCP connection was started."; break;
       }
       case "worktrees": {
-        const target = pathIn(root, ".practice-worktrees/lesson"), rows = git(root, "worktree", "list", "--porcelain").replaceAll("\\", "/");
-        if (!rows.split("\n\n").some((row) => row.includes(`worktree ${target.replaceAll("\\", "/")}\n`) && row.includes("branch refs/heads/academy-practice"))) throw new Error("Create the practice worktree first.");
+        const target = pathIn(root, ".practice-worktrees/lesson"), rows = git(root, "worktree", "list", "--porcelain", "-z");
+        if (!existsSync(target) || !rows.split("\0\0").some((row) => {
+          const fields = row.split("\0"), registered = fields.find((field) => field.startsWith("worktree "))?.slice(9);
+          return registered && fields.includes("branch refs/heads/academy-practice") && canonical(registered) === canonical(target);
+        })) throw new Error("Create the practice worktree first.");
         if (content.replace(/^#.*$/gm, "").trim().length < 40) throw new Error("Record a concrete observation about branch and folder isolation (at least 40 characters).");
         message = "Git confirms the separate practice worktree/branch and your observation is saved. No push occurred."; break;
       }

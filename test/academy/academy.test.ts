@@ -44,6 +44,40 @@ test("sample Git ignores inherited routing and refuses a linked external Git dir
   } finally { if (original === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = original; if (id) removePractice(id, true); env.cleanup(); }
 });
 
+test("worktree checks accept canonical temporary paths and Windows short-name aliases", () => {
+  const env = tmpEnv(), original = { TEMP: process.env.TEMP, TMPDIR: process.env.TMPDIR }; let id: string | undefined;
+  try {
+    const long = join(env.root, "Academy temporary directory"); mkdirSync(long); let temporary = long;
+    if (process.platform === "win32") {
+      const script = join(env.root, "short-path.ps1");
+      writeFileSync(script, `param([string]$Target)
+Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class AcademyShortPath {
+ [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+ public static extern uint GetShortPathName(string path, StringBuilder result, uint size);
+}
+'@
+$buffer = New-Object Text.StringBuilder 32768
+if ([AcademyShortPath]::GetShortPathName($Target, $buffer, 32768) -eq 0) { throw 'GetShortPathName failed' }
+$buffer.ToString()
+`);
+      temporary = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", script, long], { encoding: "utf8", windowsHide: true }).trim();
+    }
+    process.env.TEMP = temporary; process.env.TMPDIR = temporary;
+    const practice = startPractice("worktrees"); id = practice.id;
+    expect(checkPractice(id).passed).toBe(false);
+    createPracticeWorktree(id); savePractice(id, LESSONS.find((lesson) => lesson.id === "worktrees")!.example);
+    expect(checkPractice(id).passed).toBe(true); expect(readPractice(id).passed).toBe(true);
+  } finally {
+    if (id) removePractice(id, true);
+    for (const key of ["TEMP", "TMPDIR"] as const) { if (original[key] === undefined) delete process.env[key]; else process.env[key] = original[key]; }
+    env.cleanup();
+  }
+});
+
 test("real learn CLI reads tutorials, creates/resumes/checks a sample and confirms cleanup", async () => {
   const env = tmpEnv(); let id: string | undefined;
   try {
