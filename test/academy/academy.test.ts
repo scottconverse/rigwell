@@ -79,13 +79,65 @@ $buffer.ToString()
   }
 });
 
-test("real learn CLI reads tutorials, creates/resumes/checks a sample and confirms cleanup", async () => {
+// Keep independently useful CLI contracts independently bounded. Combining nine
+// process starts and Git initialization under one default test deadline obscures
+// which command failed on a cold Windows runner.
+async function runLearn(args: string[], input?: string) {
+  const started = performance.now();
+  const p = Bun.spawn([process.execPath, CLI, "learn", ...args], {
+    stdin: input === undefined ? "ignore" : new Blob([input]), stdout: "pipe", stderr: "pipe",
+  });
+  try {
+    const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+    return { out, err, code };
+  } finally {
+    console.error(`[academy CLI] ${args[0]} ${Math.round(performance.now() - started)}ms`);
+    if (p.exitCode === null) { p.kill(); await p.exited; }
+  }
+}
+
+test("real learn CLI lists lessons and reads subscription setup", async () => {
+  const env = tmpEnv();
+  try {
+    const list = await runLearn(["list"]), lesson = await runLearn(["models-and-keys"]);
+    expect(list.code).toBe(0); expect(list.out).toContain("workstreams: Workstreams");
+    expect(lesson.code).toBe(0); expect(lesson.out).toContain("Subscription access");
+  } finally { env.cleanup(); }
+});
+
+test("real learn CLI creates a sample that a new CLI process can resume", async () => {
   const env = tmpEnv(); let id: string | undefined;
   try {
-    const run = async (args: string[], input?: string) => { const p = Bun.spawn([process.execPath, CLI, "learn", ...args], { stdin: input === undefined ? "ignore" : new Blob([input]), stdout: "pipe", stderr: "pipe" }); const out = await new Response(p.stdout).text(), err = await new Response(p.stderr).text(); return { out, err, code: await p.exited }; };
-    expect((await run(["list"])).out).toContain("workstreams: Workstreams"); expect((await run(["models-and-keys"])).out).toContain("Subscription access");
-    const created = await run(["practice", "automations"]); expect(created.code).toBe(0); id = JSON.parse(created.out).id;
-    expect((await run(["check", id!])).code).toBe(1); expect((await run(["save", id!], LESSONS.find((l) => l.id === "automations")!.example)).code).toBe(0); expect(JSON.parse((await run(["check", id!])).out).passed).toBe(true);
-    expect((await run(["remove", id!])).code).toBe(2); expect((await run(["read", id!])).code).toBe(0); expect((await run(["remove", id!, "--yes"])).code).toBe(0); id = undefined;
+    const created = await runLearn(["practice", "automations"]);
+    expect(created.code).toBe(0); id = JSON.parse(created.out).id;
+    expect(readPractice(id!).lesson.id).toBe("automations");
+    const resumed = await runLearn(["read", id!]);
+    expect(resumed.code).toBe(0); expect(JSON.parse(resumed.out).id).toBe(id!);
+  } finally { if (id) removePractice(id, true); env.cleanup(); }
+});
+
+test("real learn CLI saves stdin and reports failed then passing practice checks", async () => {
+  const env = tmpEnv(); let id: string | undefined;
+  try {
+    const practice = startPractice("automations"); id = practice.id;
+    const failed = await runLearn(["check", id]);
+    expect(failed.code).toBe(1); expect(JSON.parse(failed.out).passed).toBe(false);
+    const example = LESSONS.find((l) => l.id === "automations")!.example;
+    expect((await runLearn(["save", id], example)).code).toBe(0);
+    expect(readPractice(id).content).toBe(example);
+    const passed = await runLearn(["check", id]);
+    expect(passed.code).toBe(0); expect(JSON.parse(passed.out).passed).toBe(true);
+  } finally { if (id) removePractice(id, true); env.cleanup(); }
+});
+
+test("real learn CLI refuses removal without confirmation and removes only after yes", async () => {
+  const env = tmpEnv(); let id: string | undefined;
+  try {
+    const practice = startPractice("automations"); id = practice.id;
+    const refused = await runLearn(["remove", id]);
+    expect(refused.code).toBe(2); expect(refused.err).toContain("--yes");
+    expect(readPractice(id).id).toBe(id);
+    expect((await runLearn(["remove", id, "--yes"])).code).toBe(0);
+    expect(existsSync(practice.root)).toBe(false); id = undefined;
   } finally { if (id) removePractice(id, true); env.cleanup(); }
 });
