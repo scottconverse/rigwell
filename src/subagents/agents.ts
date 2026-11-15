@@ -6,6 +6,7 @@ import path from "node:path";
 import { normalizeName, parseFrontmatter, toStringList } from "../config/frontmatter.ts";
 import { projectRoot } from "../config/levels.ts";
 import { rigwellHome } from "../storage/paths.ts";
+import { pluginComponents } from "../plugins/store.ts";
 import type { ReasoningEffort } from "../core/types.ts";
 
 export interface CustomAgent {
@@ -75,7 +76,7 @@ export interface LoadedAgents { agents: CustomAgent[]; shadowed: CustomAgent[] }
 /** Project agents first, then personal; first found per normalized name wins (the rest are listed as `shadowed`). */
 export function loadAgents(o: LoadAgentsOptions): LoadedAgents {
   const root = projectRoot(o.cwd, o.homeDir);
-  const found = [...(root && o.projectTrusted !== false ? scan(path.join(root, ".rigwell", "agents"), "project") : []), ...scan(path.join(rigwellHome(), "agents"), "personal")];
+  const found = [...(root && o.projectTrusted !== false ? scan(path.join(root, ".rigwell", "agents"), "project") : []), ...scan(path.join(rigwellHome(), "agents"), "personal"), ...pluginComponents("agents").flatMap((p) => scan(p.path, "personal"))];
   const seen = new Set<string>();
   const agents: CustomAgent[] = [], shadowed: CustomAgent[] = [];
   for (const a of found) {

@@ -1,6 +1,7 @@
 // The daemon: one process, many sessions. Each socket connection hosts one session (spec §2, §3.1.4).
 import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { PluginService } from "../plugins/service.ts";
 import { createConnection } from "./connection.ts";
 import { rigwellHome } from "../storage/paths.ts";
 import { automationTools, createAutomationService, type ServiceOptions } from "../automations/index.ts";
@@ -27,6 +28,7 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
   mkdirSync(dirname(opts.socketPath), { recursive: true });
   if (existsSync(opts.socketPath)) unlinkSync(opts.socketPath);
   const conns = new Set<ReturnType<typeof createConnection>>();
+  const plugins = new PluginService();
   const inbox = new InboxService(undefined, opts.inbox, () => { for (const c of conns) c.peer.notify(METHOD_PREFIX + "inbox_changed", {}); }, opts.log);
   inbox.start();
   const dec = new TextDecoder();
@@ -128,7 +130,7 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
         return owner && session ? { session, alive: () => conns.has(owner) && !owner.closed && owner.session === session, subscribe: (notify) => session.subscribeNotifications(notify) } : undefined;
       },
       sharedRemoteSession: workstreams.sharedRemoteSession,
-      extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx), ...mission.methods, ...stream.methods, ...phone.methods, ...delegation?.methods, ...inbox.methods },
+      extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx), ...mission.methods, ...stream.methods, ...phone.methods, ...delegation?.methods, ...inbox.methods, ...plugins.methods },
       notifyUserMessages: true,
       wrapTools: (tools) => stream.wrapTools(mission.wrapTools(tools)),
       extraTools: sidepane || autoTools.length ? () => [...(sidepane ? sidepane.tools() : []), ...autoTools] : undefined,
@@ -206,12 +208,14 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
     phone,
     delegation,
     inbox,
+    plugins,
     get sessionCount() { return [...conns].filter((c) => c.session).length; },
     stop() {
       if (stopped) return stopped;
       for (const handle of missions.handles.values()) handle.pause("daemon_shutdown");
       const pending = [...conns].map((c) => c.shutdown());
       pending.push(inbox.stop());
+      pending.push(plugins.close());
       if (delegation) pending.push(delegation.stop());
       pending.push(workstreams.stop());
       auto?.stop();

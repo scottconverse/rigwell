@@ -5,6 +5,7 @@ import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { configDirs, readJsonObject } from "../config/levels.ts";
 import { rigwellHome } from "../storage/paths.ts";
+import { pluginComponents, jsonFile } from "../plugins/store.ts";
 import type { AddMcpServerParams, McpServerConfig, McpServerInitConfig, McpSource } from "./types.ts";
 
 const strMap = (v: unknown): Record<string, string> | undefined => {
@@ -56,6 +57,14 @@ export function loadMcpConfig(opts: { cwd: string; homeDir?: string; /** false: 
       if (byName.has(name)) continue;
       const c = normalizeServer(name, raw, level);
       if (c) byName.set(name, c); else warnings.push(`${file}: server "${name}" is invalid, ignored`);
+    }
+  }
+  for (const p of pluginComponents("mcp")) {
+    const raw = jsonFile(p.path), map = raw.mcpServers ?? raw;
+    for (const [name, value] of Object.entries(map)) {
+      const id = `${p.record.name}-${name}`;
+      if (byName.has(id)) continue;
+      const c = normalizeServer(id, value, "user"); if (c) { if (c.type === "stdio") c.env = { ...c.env, RIGWELL_PLUGIN_ROOT: p.root }; byName.set(id, c); }
     }
   }
   return { servers: [...byName.values()], warnings, configError };

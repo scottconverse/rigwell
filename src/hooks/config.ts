@@ -5,6 +5,7 @@
 import path from "node:path";
 import { configDirs, readJsonObject } from "../config/levels.ts";
 import { loadOrgSettings } from "../storage/org.ts";
+import { pluginComponents, jsonFile } from "../plugins/store.ts";
 
 export const HOOK_EVENTS = [
   "PreToolUse", "PostToolUse", "Notification", "UserPromptSubmit", "Stop",
@@ -25,6 +26,8 @@ export interface HookGroup {
   hooks: HookCommand[];
   /** Settings level the group came from (informational). */
   level?: string;
+  /** Set only by the approved plugin loader, not by hook JSON. */
+  pluginRoot?: string;
 }
 export interface HooksConfig {
   hooksDisabled: boolean;
@@ -93,9 +96,10 @@ export function loadHooksConfig(opts: LoadHooksOptions): HooksConfig {
     if (!setDisabled && r.hooksDisabled !== undefined) { cfg.hooksDisabled = r.hooksDisabled; setDisabled = true; }
     if (!setShow && r.showHookOutput !== undefined) { cfg.showHookOutput = r.showHookOutput; setShow = true; }
   };
-  const add = (r: RawHooks, level: string) => {
+  const add = (r: RawHooks, level: string, pluginRoot?: string) => {
     for (const [ev, raw] of Object.entries(r.events)) {
       const groups = normalizeGroups(raw, level);
+      if (pluginRoot) for (const group of groups) group.pluginRoot = pluginRoot;
       if (!groups.length) continue;
       (cfg.events[ev as HookEventName] ??= []).push(...groups);
     }
@@ -147,6 +151,7 @@ export function loadHooksConfig(opts: LoadHooksOptions): HooksConfig {
     take(merged);
     add(merged, level);
   }
+  for (const p of pluginComponents("hooks")) { const raw = jsonFile(p.path); add(pick(raw.hooks ?? raw), `plugin:${p.record.name}`, p.root); }
   return cfg;
 }
 

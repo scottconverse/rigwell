@@ -127,7 +127,7 @@ export async function runHooks(
       hookMatcher: g.matcher, hookToolCallId: opts.toolCallId, hookParentId: opts.parentId,
       hookOrder: order, isParallelExecution: parallel, parallelGroupId,
     });
-    const results = await Promise.all(g.hooks.map((h) => runOne(h, base.cwd, stdin, env, opts.signal)));
+    const results = await Promise.all(g.hooks.map((h) => runOne(h, base.cwd, stdin, g.pluginRoot ? { ...env, RIGWELL_PLUGIN_ROOT: g.pluginRoot } : env, opts.signal)));
     const failed = results.some((r) => r.timedOut || (r.exitCode !== 0 && r.exitCode !== 1 && r.exitCode !== 2 && r.exitCode !== 3));
     opts.notify?.({
       type: "hook_execution_completed", hookId, hookStatus: failed ? "error" : "completed",

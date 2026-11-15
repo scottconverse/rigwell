@@ -23,6 +23,7 @@ const USAGE = `Usage:
   rigwell sync status|configure <file.json>|off|now|view <kind/id>|restore <kind/id> [--cwd <folder>]
   rigwell machine add <name> <user@host> | bootstrap <name>
   rigwell machine list | update <name> | restart <name> | stop <name> | remove <name> | update-all
+  rigwell plugin list|install|update|disable|enable|uninstall|index-add|index-remove|install-index
 
 Sign in with an account plan (OAuth, see docs/auth.md): rigwell auth login <name> [--device] | logout <name> | status
 Credentials: rigwell credential set <name> (value on stdin) | delete <name>; use apiKey "keychain:<name>" in customModels.
@@ -276,6 +277,7 @@ async function main() {
   }
   if (cmd === "auth") process.exit(await (await import("../auth/cli.ts")).authMain(argv));
   if (cmd === "machine") return (await import("../machines/cli.ts")).machineMain(argv);
+  if (cmd === "plugin") return (await import("../plugins/cli.ts")).pluginMain(argv);
   if (cmd === "sessions") {
     const [sub, ...rest] = argv;
     if (sub !== "search") fail("usage: rigwell sessions search <query> [--semantic] [--limit <n>] [--cwd <dir>] [--json]");

@@ -30,6 +30,7 @@ export function Sidebar({ sessions, current, daemon, route, go, openPalette }: {
         <button className={`side-btn ${route?.startsWith("/machines") ? "on" : ""}`} onClick={() => go("/machines")}>Machines</button>
         <button className={`side-btn ${route?.startsWith("/imports") ? "on" : ""}`} onClick={() => go("/imports")}>Import session</button>
         <button className={`side-btn ${route?.startsWith("/sync") ? "on" : ""}`} onClick={() => go("/sync")}>Sync</button>
+        <button className={`side-btn ${route?.startsWith("/plugins") ? "on" : ""}`} onClick={() => go("/plugins")}>Plugins</button>
         <button className="side-btn" onClick={openPalette}>Search <kbd>Ctrl+K</kbd></button>
       </div>
       <div className="side-filters">

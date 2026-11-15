@@ -8,6 +8,7 @@ import { findGitRoot, projectRoot } from "../config/levels.ts";
 import { normalizeName, parseFrontmatter, toStringList } from "../config/frontmatter.ts";
 import { rigwellHome, userHomeDir } from "../storage/paths.ts";
 import { loadSettings } from "../storage/settings.ts";
+import { pluginComponents } from "../plugins/store.ts";
 
 /** Bucket order, first wins (spec §5.8; only the buckets this build has). */
 export type SkillBucket = "project-dir" | "user-dir" | "dynamic" | "builtin";
@@ -138,6 +139,7 @@ export class SkillRegistry {
     if (root && o.projectTrusted !== false) for (const d of SKILL_ROOT_DIRS) found.push(...scanSkillsDir(path.join(root, d, "skills"), "project-dir"));
     const userDirs = [rigwellHome(), path.join(o.homeDir ?? userHomeDir(), ".agents"), path.join(o.homeDir ?? userHomeDir(), ".agent")];
     for (const d of userDirs) found.push(...scanSkillsDir(path.join(d, "skills"), "user-dir"));
+    for (const p of pluginComponents("skills")) found.push(...scanSkillsDir(p.path, "user-dir"));
     if (o.includeBuiltins !== false) {
       for (const b of o.builtins ?? BUILTIN_SKILLS) {
         found.push({ ...parseSkillFile("builtin:" + b.name, `---\nname: ${b.name}\ndescription: ${JSON.stringify(b.description)}\n---\n${b.body}`, "builtin") });
