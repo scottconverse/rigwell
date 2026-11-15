@@ -13,6 +13,7 @@ import type {
 import type { ModelRequest, ToolContext, ToolExecutionMode, ToolOutput } from "../core/types.ts";
 import { SnapshotRecorder } from "../snapshots/index.ts";
 import { ModelError, zeroUsage } from "../core/types.ts";
+import { assertSpend, readSpendStatus, spendWarnings } from "../spend/spend.ts";
 import { JobManager, type Job } from "../jobs/manager.ts";
 import { ToolCallError } from "../script/bindings.ts";
 import { ScriptService, type ScriptLimits } from "../script/service.ts";
@@ -962,9 +963,10 @@ export class Session {
     let release: (() => void) | undefined;
     let admitted = false;
     try {
+      const spend = assertSpend(this.activeModelId() === AUTO_MODEL_ID ? undefined : this.activeModelId());
       release = await this.deps.beforeTurn?.(admission.signal);
       if (!admission.signal.aborted) await this.claimSyncOwnership();
-      if (!admission.signal.aborted) { admitted = true; await this.runAdmittedTurn(text, turnId, visibility, entry); }
+      if (!admission.signal.aborted) { admitted = true; await this.warnSpend(spend, this.activeModelId()); await this.runAdmittedTurn(text, turnId, visibility, entry); }
     } catch (e) {
       if (admitted) throw e;
       const reason = admission.signal.aborted ? "cancelled" : "error";
@@ -1244,7 +1246,17 @@ export class Session {
     this.tokenUsage = addUsage(this.tokenUsage, usage);
     await this.deps.persistence.appendAnalyticsMetric?.({ kind: "usage", model, usage, purpose });
     await this.deps.onUsage?.(model, usage);
+    try { await this.warnSpend(readSpendStatus(), model); } catch (e) { this.deps.log?.(`[spend] Cannot refresh spending coverage: ${(e as Error).message}`); }
   }
+
+  private spendWarned = new Set<string>();
+  private async warnSpend(status: ReturnType<typeof readSpendStatus>, model: string) {
+    for (const warning of spendWarnings(status, model)) {
+      const key = `${status.day}:${warning.key}`;
+      if (!this.spendWarned.has(key)) { this.spendWarned.add(key); await this.userNote(warning.text); }
+    }
+  }
+  private spendAdapter(model: ModelConfig): ModelAdapter { assertSpend(model.id); return this.deps.createAdapter(model); }
 
   private async chooseModels(signal: AbortSignal): Promise<{ primary: ModelConfig; fallbacks: ModelConfig[] }> {
     const id = this.activeModelId();
@@ -1253,7 +1265,7 @@ export class Session {
       const choice = await route(this.deps.router, this.messages, {
         resolveModel: this.deps.resolveModel,
         stream: async function* (m, r) {
-          for await (const event of self.deps.streamWithRetry(self.deps.createAdapter(m), r, { strategy: "no_retry" })) {
+          for await (const event of self.deps.streamWithRetry(self.spendAdapter(m), r, { strategy: "no_retry" })) {
             if (event.type === "message_done") await self.accountUsage(m.id, event.usage, "router");
             yield event;
           }
@@ -1300,7 +1312,7 @@ export class Session {
     let streamText = "";
     let checked = 0;
     let done: any;
-    for await (const ev of this.deps.streamWithRetry(this.deps.createAdapter(model), req, {
+    for await (const ev of this.deps.streamWithRetry(this.spendAdapter(model), req, {
       strategy: "non_interactive", baseDelayMs: this.deps.retryBaseDelayMs, passEmpty: true,
       onRetry: (attempt: number, why: string) => {
         // A retried stream starts over: what the failed attempt streamed is discarded (spec 4.2).
@@ -1455,7 +1467,7 @@ export class Session {
         limits: { idleTimeoutMs: g.streamIdleTimeoutMs, hardLimitMs: g.hardResponseLimitMs },
       });
       this.deps.log?.(`[compaction] ${o.reason}: summarizing ${real.length} messages (${built.transcriptChars} chars) with ${model.id}; summarizer limit ${built.limit} tokens, max_tokens ${built.req.maxOutputTokens}`);
-      const stream = this.deps.streamWithRetry(this.deps.createAdapter(model), { ...built.req, signal: o.signal,
+      const stream = this.deps.streamWithRetry(this.spendAdapter(model), { ...built.req, signal: o.signal,
         ...(model.executionBackend ? { nativeExecution: { cwd: this.cwd, readOnly: true, skipPermissions: false, synthesis: true } } : {}),
       }, {
         strategy: "non_interactive", baseDelayMs: this.deps.retryBaseDelayMs,
@@ -1574,7 +1586,7 @@ export class Session {
       if (!req.messages.length) {
         req.messages = [{ id: "warmup", role: "user", content: [{ type: "text", text: "<system-reminder>Cache warm-up. Reply with one word.</system-reminder>" }] }];
       }
-      for await (const ev of this.deps.streamWithRetry(this.deps.createAdapter(model), req, { strategy: "non_interactive", baseDelayMs: this.deps.retryBaseDelayMs })) {
+      for await (const ev of this.deps.streamWithRetry(this.spendAdapter(model), req, { strategy: "non_interactive", baseDelayMs: this.deps.retryBaseDelayMs })) {
         if (ev.type === "message_done") {
           await this.accountUsage(model.id, ev.usage, "warmup");
           this.deps.log?.(`[cache] warmup: read ${ev.usage.cacheReadTokens}, created ${ev.usage.cacheCreationTokens}, uncached ${ev.usage.inputTokens}`);
@@ -2107,7 +2119,7 @@ export class Session {
         system: ["Write a title for a coding session from the user's first message. Answer with the title only: at most six words, no quotes, no trailing period."],
         messages: [{ id: "title-request", role: "user" as const, content: [{ type: "text" as const, text: firstMessage.slice(0, 2000) }] }],
       };
-      const { text, usage } = await collectSummary(this.deps.streamWithRetry(this.deps.createAdapter(model), req, { strategy: "no_retry" }));
+      const { text, usage } = await collectSummary(this.deps.streamWithRetry(this.spendAdapter(model), req, { strategy: "no_retry" }));
       if (usage) { await this.accountUsage(model.id, usage, "title"); this.notifyUsage(); }
       const clean = text.split("\n")[0]!.replace(/^["'`#*\s]+|["'`.*\s]+$/g, "").slice(0, 80);
       if (!clean || this.title.manual) return;

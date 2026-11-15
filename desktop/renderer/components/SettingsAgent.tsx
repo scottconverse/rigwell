@@ -9,6 +9,7 @@ import { addUsage, fmt, percentUsed, total, zero, type TokenUsage } from "../lib
 import { ManagedNote, OrgCeiling } from "./SettingsAccess.tsx";
 import { AddServerForm, Dialog, McpLoginPanel, ServerList, TextDialog, useMcp } from "./Dialogs.tsx";
 import { WorktreePr } from "./WorktreePr.tsx";
+import { SpendLimits } from "./SpendLimits.tsx";
 
 const Row = ({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => (
   <div className="row"><div className="row-label"><div>{label}</div>{hint && <div className="muted small">{hint}</div>}</div><div className="row-ctl">{children}</div></div>
@@ -438,7 +439,8 @@ export function UsagePage() {
   return (
     <>
       <h2>Usage</h2>
-      <p className="muted">Token totals from your recent sessions on this computer. Plan limits belong to hosted accounts and are not shown.</p>
+      <p className="muted">Token totals from your recent sessions on this computer. Local estimated spend caps are configured below.</p>
+      <SpendLimits />
       <div className="stats" data-testid="usage-totals">
         <div><div className="stat-n">{fmt(total(sum))}</div><div className="muted small">total tokens</div></div>
         <div><div className="stat-n">{fmt(sum.inputTokens)}</div><div className="muted small">input</div></div>

@@ -28,7 +28,7 @@ function finish(row: Counts) {
   const tokens = row.inputTokens + row.outputTokens + row.cacheReadTokens + row.cacheCreationTokens, input = row.inputTokens + row.cacheReadTokens + row.cacheCreationTokens, settled = row.successes + row.failures;
   return { ...row, tokens, costUsd: row.unpricedTokens ? null : row.pricedCostUsd, cacheHitRate: input ? row.cacheReadTokens / input : null, failureRate: settled ? row.failures / settled : null, meanTurnMs: row.turns ? row.durationMs / row.turns : null };
 }
-function configuredPrices(): Record<string, Price> {
+export function configuredPrices(): Record<string, Price> {
   const raw = (loadSettings({ cwd: rigwellHome(), trusted: false }).settings.analytics as any)?.prices ?? {}, prices: Record<string, Price> = Object.create(null);
   for (const [id, p] of Object.entries(raw) as [string, any][]) if (p && [p.inputPerMtok, p.outputPerMtok, p.cachedInputPerMtok, p.cacheWritePerMtok ?? p.inputPerMtok].every((v) => typeof v === "number" && Number.isFinite(v) && v >= 0)) prices[id] = p;
   return prices;
