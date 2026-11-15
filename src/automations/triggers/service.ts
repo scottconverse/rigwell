@@ -104,7 +104,7 @@ export class AutomationTriggers {
       // Claim before network I/O. An uncertain delivery is visible, never automatically posted twice.
       withLedger(a, (l) => l.set(row.id, "reply_unknown"));
       try {
-        if (event.reply?.service === "github" && ["github", "ci"].includes(a.fm.trigger!)) await this.github.reply(config as GithubTrigger, event, text, this.abort.signal);
+        if (["github", "github_commit"].includes(event.reply?.service ?? "") && ["github", "ci"].includes(a.fm.trigger!)) await this.github.reply(config as GithubTrigger, event, text, this.abort.signal);
         else if (event.reply?.service === "slack" && a.fm.trigger === "slack") { const socket = this.slack.get(this.socketKey(config as SlackTrigger)); if (!socket) throw new Error("Slack connection unavailable for reply"); await socket.reply(event, text); }
         else throw new Error("Trigger configuration no longer matches the reply destination");
         withLedger(a, (l) => l.set(row.id, "posted"));
@@ -117,7 +117,7 @@ export class AutomationTriggers {
     if (!secret || !signature || !timingSafeEqual(Buffer.from(signature, "hex"), createHmac("sha256", secret).update(raw).digest())) return { httpStatus: 401, body: { error: "unauthorized" } };
     if (a.fm.paused) return { httpStatus: 409, body: { error: "automation is paused" } };
     try {
-      const events = this.github.webhook(a.fm.eventTrigger as GithubTrigger, headers.event ?? "", JSON.parse(raw));
+      const events = this.github.webhook(a.fm.eventTrigger as GithubTrigger, headers.event ?? "", JSON.parse(raw), this.manager.clock.now());
       if (typeof headers.delivery !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(headers.delivery)) return { httpStatus: 400, body: { error: "GitHub delivery ID required" } };
       for (const event of events) this.enqueue(a, { ...event, id: `github:delivery:${headers.delivery}` });
       return { httpStatus: 202, body: { status: events.length ? "accepted" : "filtered" } };

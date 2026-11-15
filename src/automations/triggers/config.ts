@@ -1,4 +1,4 @@
-export const GITHUB_EVENTS = ["issue_opened", "issue_labeled", "pr_opened", "pr_updated", "mention", "review_requested", "check_failed", "workflow_failed"] as const;
+export const GITHUB_EVENTS = ["issue_opened", "issue_labeled", "pr_opened", "pr_updated", "mention", "review_requested", "check_failed", "workflow_failed", "branch_pushed"] as const;
 export type GithubEventKind = typeof GITHUB_EVENTS[number];
 export type ExternalKind = "github" | "ci" | "slack" | "chained";
 export interface GithubTrigger { repos: string[]; events: GithubEventKind[]; branch?: string; handle?: string; label?: string; pollMinutes?: number; transport?: "poll" | "webhook"; tokenCredential?: string }
@@ -21,7 +21,8 @@ export function validateEventTrigger(kind: ExternalKind, value: unknown): EventT
     if (c.events.includes("channel") && !c.channels?.length) throw new Error("Channel triggers need explicit channel IDs");
     if (c.pattern !== undefined && (typeof c.pattern !== "string" || c.pattern.length > 200)) throw new Error("Slack pattern must be at most 200 characters");
   } else {
-    if (!strings(c.repos) || c.repos.some((s: string) => !/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(s)) || !strings(c.events, 8) || c.events.some((s: string) => !GITHUB_EVENTS.includes(s as GithubEventKind))) throw new Error("Choose repository owner/name pairs and GitHub events");
+    if (!strings(c.repos) || c.repos.some((s: string) => !/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(s)) || !strings(c.events, GITHUB_EVENTS.length) || c.events.some((s: string) => !GITHUB_EVENTS.includes(s as GithubEventKind))) throw new Error("Choose repository owner/name pairs and GitHub events");
+    if (c.events.includes("branch_pushed") && (c.transport !== "webhook" || typeof c.branch !== "string" || !c.branch.trim())) throw new Error("Branch pushes require an exact branch and webhook transport");
     if (kind === "ci" && c.events.some((s: string) => !["check_failed", "workflow_failed"].includes(s))) throw new Error("CI triggers accept failed checks/workflows only");
     if (c.events.some((s: string) => ["check_failed", "workflow_failed"].includes(s)) && (typeof c.branch !== "string" || !c.branch.trim())) throw new Error("Choose the branch to watch for CI failures");
     for (const key of ["branch", "handle", "label"]) if (c[key] !== undefined && (typeof c[key] !== "string" || !c[key].trim() || c[key].length > 200 || /[\x00-\x1f]/.test(c[key]))) throw new Error(`Invalid ${key}`);

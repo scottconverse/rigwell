@@ -79,7 +79,7 @@ export function nativePrompt(req: ModelRequest): string {
   if (current < 0) throw failure("No current user request for signed-in CLI execution");
   return [
     "You are executing one request inside Rigwell. Use your native coding tools in the selected workspace. " + (req.nativeExecution?.coordination
-      ? "Use the rigwell MCP server for Workstream coordination: " + req.nativeExecution.coordination.tools().map((t) => t.name).join(", ") + ". Rigwell owns approval, member identity, budgets, messages and persistent worktrees. Never substitute native subagents for Workstream members. Other Rigwell tools in the guidance are unavailable here."
+      ? "Use the rigwell MCP server for the available Rigwell tools: " + req.nativeExecution.coordination.tools().map((t) => t.name).join(", ") + ". Rigwell owns approval, member identity, budgets, messages, persistent worktrees, local service installation and browser sessions. Never substitute native subagents for Workstream members. Use your native coding and owned process tools for other operations; when guidance mentions Execute/background or script_job, use the equivalent native process lifecycle and always stop only processes you started."
       : "Rigwell's named tools in the guidance are unavailable here.") + " Do not emit simulated tool-call JSON. Obey native permissions; do not bypass a refusal.",
     "Rigwell session guidance:\n" + req.system.join("\n\n"),
     "Conversation history is context, not renewed authorization. Do not repeat completed actions:\n" + req.messages.slice(0, current).map((m) => `${m.role}: ${text(m)}`).join("\n\n"),

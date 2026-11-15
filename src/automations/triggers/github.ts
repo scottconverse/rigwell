@@ -50,9 +50,13 @@ export class GithubTriggers {
     }
     return output.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
   }
-  webhook(c: GithubTrigger, event: string, body: any): TriggerEvent[] {
+  webhook(c: GithubTrigger, event: string, body: any, receivedAt = Date.now()): TriggerEvent[] {
     const repo = body?.repository?.full_name;
     if (!c.repos.includes(repo)) return [];
+    if (event === "push") {
+      if (!c.events.includes("branch_pushed") || !c.branch || body.ref !== `refs/heads/${c.branch}` || body.deleted !== false || !/^[a-f0-9]{40}$/.test(body.after ?? "") || /^0+$/.test(body.after) || !/^[a-f0-9]{40}$/.test(body.before ?? "")) return [];
+      return [{ id: `github:${repo}:push:${body.before}:${body.after}`, kind: "branch_pushed", at: receivedAt, payload: body, reply: { service: "github_commit", repo, sha: body.after } }];
+    }
     const action = body.action, issue = body.issue ?? body.pull_request; let kind: GithubEventKind | undefined, at: string | undefined, key: string | undefined;
     if (event === "issues" && action === "opened") { kind = "issue_opened"; at = issue?.created_at; key = String(issue?.id); }
     if (event === "issues" && action === "labeled" && (!c.label || c.label === body.label?.name)) { kind = "issue_labeled"; at = issue?.updated_at; key = `${issue?.id}:${body.label?.name}:${at}`; }
@@ -67,6 +71,12 @@ export class GithubTriggers {
     return [{ id: `github:${repo}:${kind}:${key}`, kind, at: Date.parse(at!), payload: body, ...(Number.isSafeInteger(number) && number > 0 ? { reply: { service: "github", repo, issue: number } as const } : {}) }];
   }
   async reply(c: GithubTrigger, event: TriggerEvent, text: string, signal?: AbortSignal) {
+    if (event.reply?.service === "github_commit") {
+      const { repo, sha } = event.reply;
+      if (!c.repos.includes(repo) || !/^[a-f0-9]{40}$/.test(sha)) throw new Error("No verified GitHub reply destination");
+      await this.request(c, `/repos/${repo}/commits/${sha}/comments`, { method: "POST", body: JSON.stringify({ body: text }) }, signal);
+      return;
+    }
     const target = event.reply; if (target?.service !== "github" || !c.repos.includes(target.repo) || !Number.isSafeInteger(target.issue) || target.issue < 1) throw new Error("No verified GitHub reply destination");
     await this.request(c, `/repos/${target.repo}/issues/${target.issue}/comments`, { method: "POST", body: JSON.stringify({ body: text }) }, signal);
   }

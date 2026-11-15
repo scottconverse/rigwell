@@ -9,6 +9,7 @@ import { rigwellHome } from "../storage/paths.ts";
 import { loopIntervalToCron, type CronRecord } from "./crons.ts";
 import { hasProjectAutomations } from "./projects.ts";
 import { instantiateTemplate, listTemplates } from "./templates.ts";
+import { localService } from "./local-services.ts";
 import { machineTimeZone, nextRun, parseSchedule, normalizeSchedule, validTimeZone } from "./schedule.ts";
 import type { createAutomationService } from "./index.ts";
 
@@ -260,5 +261,21 @@ export function automationTools(svc: Service): Tool[] {
     },
   };
 
-  return [create, list, read, edit, del, run, loop, templates, preview];
+  const install: Tool = {
+    name: "InstallLocalService", category: "other",
+    description: "Install a local code-review, triage or QA service as a project automation. Always requires approval showing these settings, including any result posting. Does not run immediately. Push sources require a signed GitHub webhook; PR/issues can poll. QA runs only the configured local dev command against a matching source HEAD. Use the install-code-review, install-triage or install-qa skill first.",
+    inputSchema: { type: "object", properties: {
+      service: { type: "string", enum: ["code-review", "triage", "qa"] }, repo: { type: "string", description: "GitHub owner/name" },
+      workingDirectory: FIELDS.workingDirectory, model: FIELDS.model, postResult: FIELDS.postResult,
+      source: { type: "string", enum: ["pull-request", "push"] }, branch: { type: "string", description: "Exact branch, required for push" },
+      transport: { type: "string", enum: ["poll", "webhook"] }, tokenCredential: { type: "string", description: "Optional stored GitHub credential name" },
+      devCommand: { type: "string", description: "QA only: single user-approved command to start the local server" },
+      url: { type: "string", description: "QA only: loopback HTTP(S) URL" }, flows: { type: "string", description: "QA only: changed flows to test" },
+    }, required: ["service", "repo"], additionalProperties: false },
+    async run(input, ctx) { return guard(() => {
+      const built = localService(input, ctx.cwd);
+      return ok(svc.view(m.create(built.fm, built.instructions, built.project)));
+    })(); },
+  };
+  return [create, list, read, edit, del, run, loop, templates, preview, install];
 }

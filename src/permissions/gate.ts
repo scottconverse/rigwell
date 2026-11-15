@@ -103,6 +103,7 @@ export function decide(tool: string, input: Record<string, unknown>, ctx: Permis
       if (input.action === "list") return { decision: "allow" };
     // falls through
     case "CreateAutomation":
+    case "InstallLocalService":
     case "EditAutomation":
     case "DeleteAutomation":
     case "RunAutomation":

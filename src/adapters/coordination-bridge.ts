@@ -4,6 +4,9 @@ import type { ModelRequest } from "../core/types.ts";
 export const COORDINATION_TOOLS = new Set([
   "ProposeWorkstream", "SpawnAgent", "ListAgents", "SendMessage", "CreateListener",
   "WaitForEvents", "InterruptAgent", "RenameAgent", "ArchiveAgent", "AskUser",
+  "Skill", "InstallLocalService",
+  "browser_open", "browser_snapshot", "browser_click", "browser_type", "browser_press",
+  "browser_scroll", "browser_screenshot", "browser_wait", "browser_evaluate", "browser_close",
 ]);
 
 /** A request-scoped capability, bound to the owning Session, never a daemon RPC proxy. */

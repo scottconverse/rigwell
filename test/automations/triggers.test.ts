@@ -27,7 +27,7 @@ test("GitHub polling dispatches all event kinds through real fake-provider sessi
   let service = createAutomationService(options);
   try {
     writeJson(join(env.rigwellHome, "settings.json"), { customModels: [{ provider: "anthropic", model: "fake", displayName: "Fixture", apiKey: "fake-key", baseUrl: fake.url }] });
-    const config = { repos: ["o/r"], events: [...GITHUB_EVENTS], branch: "working", handle: "fixture", label: "ready" };
+    const config = { repos: ["o/r"], events: GITHUB_EVENTS.filter((e) => e !== "branch_pushed"), branch: "working", handle: "fixture", label: "ready" };
     const a = service.manager.create({ name: "GitHub fixture", trigger: "github", eventTrigger: config }, "Summarize the trigger data.");
     expect(parseHeartbeat(serializeHeartbeat(a.fm, a.body)).fm.eventTrigger).toEqual(config);
     await service.triggers.tick(); await service.manager.idle(); expect(fake.requests).toHaveLength(1);

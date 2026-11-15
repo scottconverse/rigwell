@@ -7,6 +7,8 @@ import { validateCustomModels } from "../../src/storage/models.ts";
 import { model, request, userMsg, collect, done } from "./helpers.ts";
 import { makeStubSession } from "../agent/helpers.ts";
 import { streamWithRetry } from "../../src/adapters/retry.ts";
+import { createAutomationService, automationTools } from "../../src/automations/index.ts";
+import { tmpEnv } from "../storage/helpers.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "rigwell-native-"));
 const fixture = join(dir, "client.js");
@@ -25,12 +27,12 @@ if(process.env.FAKE_BRIDGE){
   url=config.mcpServers.rigwell.url;token=config.mcpServers.rigwell.headers.Authorization.slice(7);
  }
  const call=async(method,params={})=>(await(await fetch(url,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})})).json());
- const tool=process.env.FAKE_ASK?'AskUser':'ListAgents';
+ const tool=process.env.FAKE_TOOL||(process.env.FAKE_ASK?'AskUser':'ListAgents');
  const listed=await call('tools/list');if(!listed.result.tools.some(t=>t.name===tool))process.exit(12);
  if(args[0]==='exec'&&!args.includes('mcp_servers.rigwell.tools.'+tool+'.approval_mode="approve"'))process.exit(14);
- const result=await call('tools/call',{name:tool,arguments:process.env.FAKE_ASK?{questions:[{topic:'Fixture',question:'Which fixture?',options:['one','two']}]}:{}});
+ const result=await call('tools/call',{name:tool,arguments:process.env.FAKE_INPUT?JSON.parse(process.env.FAKE_INPUT):process.env.FAKE_ASK?{questions:[{topic:'Fixture',question:'Which fixture?',options:['one','two']}]}:{}});
  if(process.env.FAKE_EXPECT_DENIED){if(!result.result.isError)process.exit(15)}
- else if(!result.result.content[0].text.includes('fixture-roster'))process.exit(13);
+ else if(!result.result.content[0].text.includes(process.env.FAKE_EXPECT_TEXT||'fixture-roster'))process.exit(13);
 }
 if(process.env.ANTHROPIC_API_KEY||process.env.OPENAI_API_KEY)process.exit(9);
 if(process.env.FAKE_BAD){console.log('not-json');process.exit(0)}
@@ -104,6 +106,29 @@ test("native member questions reach the user through Rigwell AskUser", async () 
     expect(s.notes.some((n) => n.type === "tool_result" && n.content.includes("fixture-roster"))).toBe(true);
   } finally { await s.session.end(); rmSync(s.cwd, { recursive: true, force: true }); }
 });
+for (const backend of ["claude-cli", "codex-cli"] as const) test(`${backend} service installation and browser evaluation retain actual Session approval gates`, async () => {
+  const env = tmpEnv(), svc = createAutomationService({ runner: async () => ({ ok: true, text: "unused" }) });
+  try {
+    for (const approve of [false, true]) {
+      let approvals = 0;
+      const s = makeStubSession(() => { throw new Error("native client only"); }, {
+        resolveModel: () => req(backend).model,
+        createAdapter: () => adapter({ FAKE_BRIDGE: "1", FAKE_TOOL: "InstallLocalService", FAKE_INPUT: JSON.stringify({ service: "triage", repo: "fixture/project", workingDirectory: env.root, postResult: true }), ...(approve ? { FAKE_EXPECT_TEXT: "Local triage" } : { FAKE_EXPECT_DENIED: "1" }) }), streamWithRetry,
+        toolsFor: () => automationTools(svc), autoRejectPermissionRequests: !approve,
+      }, { async requestPermission(params) { approvals++; expect(JSON.stringify(params)).toContain('"postResult":true'); return { selectedOption: "proceed_once" }; } });
+      try { s.session.addUserMessage("Install local triage"); await s.session.settled(); expect(approvals).toBe(approve ? 1 : 0); expect(svc.manager.list()).toHaveLength(approve ? 1 : 0); expect(s.notes.some((n) => n.type === "error")).toBe(false); }
+      finally { await s.session.end(); rmSync(s.cwd, { recursive: true, force: true }); }
+    }
+    let evaluated = false;
+    const s = makeStubSession(() => { throw new Error("native client only"); }, {
+      resolveModel: () => req(backend).model, createAdapter: () => adapter({ FAKE_BRIDGE: "1", FAKE_TOOL: "browser_evaluate", FAKE_INPUT: '{"expression":"document.title"}', FAKE_EXPECT_DENIED: "1" }), streamWithRetry,
+      toolsFor: () => [{ name: "browser_evaluate", description: "evaluate", inputSchema: { type: "object" }, category: "other", async run() { evaluated = true; return { content: "unused" }; } }],
+    });
+    try { s.session.addUserMessage("Evaluate page"); await s.session.settled(); expect(evaluated).toBe(false); expect(s.notes.some((n) => n.type === "tool_result" && n.isError)).toBe(true); expect(s.notes.some((n) => n.type === "error")).toBe(false); }
+    finally { await s.session.end(); rmSync(s.cwd, { recursive: true, force: true }); }
+  } finally { svc.stop(); await svc.manager.idle(); env.cleanup(); }
+});
+
 test("native auth rejects API-key login before execution", async () => {
   const error = await collect(adapter({ FAKE_API: "1" }).stream(req("claude-cli"))).catch((e) => e);
   expect(error.kind).toBe("auth");
