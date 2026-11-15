@@ -8,7 +8,10 @@
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "site:build": "bun website/build.ts",
+    "site:preview": "bun website/serve.ts",
+    "site:dev": "bun run site:build && bun --watch website/serve.ts"
   },
   "devDependencies": {
     "@types/bun": "1.2.20",

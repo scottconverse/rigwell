@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { probeDaemon, readDaemonInfo } from "../main/supervisor.ts";
+import { verifyProtocolRegistration } from "./protocol-registration.ts";
 
 if (process.env.CI !== "true") throw new Error("Installed acceptance runs only on an isolated CI runner");
 const executable = resolve(process.argv[2] || ""), output = resolve(process.argv[3] || "installed-acceptance.json");
@@ -21,7 +22,7 @@ if (checkWindowsProtocol) {
   const checked = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; $k=[Microsoft.Win32.Registry]::ClassesRoot.OpenSubKey('rigwell'); if(!$k){throw 'Missing installed protocol'}; $c=$k.OpenSubKey('shell\\open\\command'); if(!$c){throw 'Missing protocol command'}; @{protocol=$k.GetValue('URL Protocol',$null);command=$c.GetValue('')}|ConvertTo-Json -Compress"], { encoding: "utf8", windowsHide: true, timeout: 10_000 });
   if (checked.status !== 0) throw new Error(`Installed protocol registration: ${checked.stderr}`);
   const registration = JSON.parse(checked.stdout);
-  if (registration.protocol === null || typeof registration.command !== "string" || !registration.command.toLowerCase().startsWith(`"${executable.toLowerCase()}"`) || !registration.command.includes("%1")) throw new Error("Installed protocol command does not identify this installed executable and URL argument");
+  verifyProtocolRegistration(registration, executable);
 }
 const resources = process.platform === "darwin" ? resolve(dirname(executable), "../Resources") : join(dirname(executable), "resources");
 const bundledBun = join(resources, "bun", process.platform === "win32" ? "bun.exe" : "bun");

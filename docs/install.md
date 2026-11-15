@@ -79,8 +79,17 @@ daemon, and checks the first-run model setup page. No model is called and no
 personal settings or credentials are imported. Packages and JSON receipts are
 retained as workflow artifacts for seven days.
 
-These checks passed on commit `5fc5687` in runs `43692783551` and
-`43692783541`, including normal terminal teardown on all three platforms.
-New candidates repeat the checks. They do not establish
-signed public delivery, a real Mac hardware pass or a successful packaged
-upgrade/rollback. Do not label a temporary profile on Halo a clean machine.
+The 0.1.1 runtime is built from `59dc19d`. Runs `43729671308` and
+`43729671256` passed all four required jobs and installed first-run checks,
+including listing all 43 bundled evaluation tasks. Signed Windows acceptance
+`43735540144` passed actual baseline installation, signed upgrade, Windows-shell
+deep-link delivery and explicit local rollback. Linux release acceptance
+`43732261845` passed packaged upgrade and rollback with a verified signed update.
+
+The Windows release installer has SHA-256
+`8676350a5f6be555b7aefc94a9d0a70f77ba8a8ff5d701be154fc959b6380408`.
+Its Authenticode signature and timestamp were independently verified on Windows.
+Documentation and acceptance-helper successors do not change the packaged
+runtime. These results do not establish a real Mac hardware pass or interaction
+with the native Windows updater dialog. Do not label a temporary profile on
+Halo a clean machine. Public asset checksums accompany the release.
