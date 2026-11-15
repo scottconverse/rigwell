@@ -3,9 +3,10 @@ import { app, useApp, useStore } from "../lib/app-model.ts";
 import { SessionController } from "../lib/session.ts";
 import { bridge } from "../lib/rpc.ts";
 import { readinessText } from "../lib/missions.ts";
+import { MissionReadiness } from "./MissionReadiness.tsx";
 import { Composer } from "./Composer.tsx";
 import { toParams } from "../lib/attachments.ts";
-import { ConfirmDialog, TextDialog } from "./Dialogs.tsx";
+import { ConfirmDialog, Dialog, TextDialog } from "./Dialogs.tsx";
 import { Prompts } from "./Prompts.tsx";
 import { SidePane, type PaneTab } from "./SidePane.tsx";
 import { Transcript } from "./Transcript.tsx";
@@ -58,6 +59,7 @@ function Loaded({ ctl }: { ctl: SessionController }) {
   const [mounted, setMounted] = useState<Set<PaneTab>>(new Set(["browser"])); // the browser stays mounted so the agent can drive it
   const [maximized, setMaximized] = useState(false);
   const [prefill, setPrefill] = useState<string>();
+  const [readinessDraft, setReadinessDraft] = useState<string>();
   const [menu, setMenu] = useState(false);
   const [toast, setToast] = useState("");
   const [dialog, setDialog] = useState<null | "rename" | { readiness: string }>(null);
@@ -158,6 +160,7 @@ function Loaded({ ctl }: { ctl: SessionController }) {
         <Transcript items={state.items} working={state.working} />
         <Prompts prompts={state.prompts} onAnswer={(rid, r) => ctl.answer(rid, r)} />
         <Composer
+          prefill={readinessDraft} onPrefillUsed={() => setReadinessDraft(undefined)}
           settings={state.settings} models={state.models.length ? state.models : a.models} busy={state.working !== "idle"} disabled={state.phase !== "ready"}
           disabledShortcuts={off} autoFocus placeholder="Message the agent" session={ctl} cwd={state.cwd} autoAvailable={!!a.userSettings.autoRouter} onMission={() => void enterMission()}
           onChange={(p) => void ctl.updateSettings({ ...p })} onSend={(t, atts) => void ctl.send(t, atts ? toParams(atts) : {})} onStop={() => ctl.interrupt()}
@@ -165,7 +168,7 @@ function Loaded({ ctl }: { ctl: SessionController }) {
         />
         {toast && <div className="toast" role="status">{toast}</div>}
         {dialog === "rename" && <TextDialog title="Rename session" label="Title" initial={state.title} action="Rename" onCancel={() => setDialog(null)} onSubmit={(v) => { setDialog(null); void act(() => ctl.rename(v), "Renamed"); }} />}
-        {dialog && typeof dialog === "object" && <ConfirmDialog title="This folder is not ready for a mission" body={`${dialog.readiness}\n\nYou can continue anyway.`} action="Continue anyway" onCancel={() => setDialog(null)} onConfirm={() => void enterMission(true)} />}
+        {dialog && typeof dialog === "object" && <Dialog title="This folder is not ready for a mission" onClose={() => setDialog(null)}><p className="muted pre">{dialog.readiness}</p><MissionReadiness request={(method) => ctl.request(method)} prepare={() => { setReadinessDraft("Use the readiness-report skill to identify build/test commands and required tools, then ask for approval before running these checks."); setDialog(null); }} /><div className="dialog-actions"><button onClick={() => setDialog(null)}>Cancel</button><button className="primary" onClick={() => void enterMission(true)}>Continue anyway</button></div></Dialog>}
       </div>
       <div className={paneOpen ? "pane-slot open" : "pane-slot"} hidden={!paneOpen}>
         <SidePane

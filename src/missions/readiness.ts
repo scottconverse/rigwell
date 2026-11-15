@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { rigwellHome } from "../storage/paths.ts";
+import { readReadinessReport, readinessRepoIdentity } from "./readiness-report.ts";
 
 export type Readiness = "ok" | "no_git" | "no_remote" | "no_report" | "low_score";
 export interface ReadinessResult { status: Readiness; folder: string; detail?: string }
@@ -38,10 +39,10 @@ export function checkReadiness(cwd: string, git: Git = realGit): ReadinessResult
     const url = git(["remote", "get-url", "origin"], folder);
     if (!url) return { status: "no_remote", folder };
     const top = git(["rev-parse", "--show-toplevel"], folder) ?? folder;
-    const file = join(top, ".rigwell", "readiness-report.json");
-    if (!existsSync(file)) return { status: "no_report", folder };
-    const rep = JSON.parse(readFileSync(file, "utf8"));
-    if (rep?.repoUrl !== undefined && rep.repoUrl !== url) return { status: "no_report", folder, detail: "report is for another repository" };
+    const rep = readReadinessReport(top).report;
+    if (!rep) return { status: "no_report", folder };
+    if (rep.repoIdentity !== undefined ? rep.repoIdentity !== readinessRepoIdentity(url) : rep?.repoUrl !== undefined && rep.repoUrl !== url) return { status: "no_report", folder, detail: "report is for another repository" };
+    if (rep.schemaVersion === 1 && rep.head !== git(["rev-parse", "HEAD"], folder)) return { status: "no_report", folder, detail: "report predates the current commit" };
     return Number(rep?.level) >= 4 ? { status: "ok", folder } : { status: "low_score", folder, detail: `level ${rep?.level}` };
   } catch {
     return { status: "ok", folder, detail: "check failed" }; // errors count as OK

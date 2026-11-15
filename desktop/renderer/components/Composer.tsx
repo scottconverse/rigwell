@@ -49,6 +49,8 @@ export function Composer(props: {
   pinnedModels?: string[];
   /** Mode chip: Mission was chosen. */
   onMission?(): void;
+  prefill?: string;
+  onPrefillUsed?(): void;
 }) {
   const [text, setText] = useState("");
   const [help, setHelp] = useState(false);
@@ -75,6 +77,11 @@ export function Composer(props: {
     onUpdate: ({ editor: ed }) => setText(ed.getText({ blockSeparator: "\n" })),
     autofocus: false,
   });
+  useEffect(() => {
+    if (!editor || !props.prefill) return;
+    editor.chain().focus("end").insertContent({ type: "text", text: `${editor.isEmpty ? "" : "\n"}${props.prefill}` }).run();
+    props.onPrefillUsed?.();
+  }, [editor, props.prefill]);
   useEffect(() => {
     if (!props.autoFocus || !editor) return;
     const initialFocus = document.activeElement;

@@ -85,5 +85,5 @@ export type ReadinessReply = { entered: boolean; readiness?: { status: string; [
 export function readinessText(r: ReadinessReply["readiness"]): string {
   if (!r) return "The folder is not ready for a mission.";
   const items: string[] = Array.isArray((r as any).problems) ? (r as any).problems : Array.isArray((r as any).issues) ? (r as any).issues : [];
-  return items.length ? items.map(String).join("\n") : `Readiness: ${r.status}`;
+  return items.length ? items.map(String).join("\n") : `Readiness: ${r.status}${r.detail ? ` (${r.detail})` : ""}`;
 }

@@ -15,7 +15,8 @@ import { FallbackModels } from "../components/FallbackModels.tsx";
 import { LocalProfiles } from "../components/LocalProfiles.tsx";
 import { Labs } from "../components/Labs.tsx";
 import { Automations, AutomationDetail } from "../components/Automations.tsx";
-import { SessionScreen } from "../components/SessionScreen.tsx";
+import { SessionScreen, live } from "../components/SessionScreen.tsx";
+import { SessionController } from "../lib/session.ts";
 import { app, useApp } from "../lib/app-model.ts";
 import { Sidebar } from "../components/Shell.tsx";
 const sockets = new Map<number, WebSocket>(); let seq = 0;
@@ -45,6 +46,7 @@ function DelegationFixture() {
   return <><Sidebar sessions={a.sessions} daemon="running" go={(r) => { window.location.hash = r; }} openPalette={() => {}} />{route.startsWith("/sessions/") ? <SessionScreen sessionId={route.split("/")[2]!} /> : <DelegationPage />}</>;
 }
 function Fixture() {
+  if (window.location.pathname === "/readiness") return <ReadinessFixture />;
   if (window.location.pathname === "/phone") return <PhoneAccessPage />;
   if (window.location.pathname === "/delegation") return <DelegationFixture />;
   if (window.location.pathname === "/plugins") return <Plugins />;
@@ -63,5 +65,10 @@ function Fixture() {
   if (route.startsWith("/automations/")) return <AutomationDetail id={route.split("/")[2]!} go={go} />;
   if (route === "/sync") return <Sync go={go} />;
   return route.startsWith("/sessions/") ? <SessionScreen sessionId={route.split("/")[2]!} /> : <SharedSessions id={route.split("/")[2]} go={go} />;
+}
+function ReadinessFixture() {
+  const [id, setId] = useState("");
+  useEffect(() => { void SessionController.create({ cwd: (window as any).fixtureFolder }).then((ctl) => { const sid = ctl.getSnapshot().sessionId!; live.set(sid, ctl); (app as any).set({ sessions: [{ id: sid, title: "Readiness fixture", cwd: (window as any).fixtureFolder }] }); setId(sid); }); }, []);
+  return id ? <SessionScreen sessionId={id} /> : <p>Preparing fixture session</p>;
 }
 createRoot(document.getElementById("root")!).render(<Fixture />);

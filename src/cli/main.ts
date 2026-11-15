@@ -28,6 +28,7 @@ const USAGE = `Usage:
   rigwell plugin list|install|update|disable|enable|uninstall|index-add|index-remove|install-index
   rigwell wiki build|update|list|search|read|video [--cwd <folder>]
   rigwell learn [list|<lesson>|practice <lesson>|check <id>]
+  rigwell readiness-report [--cwd <folder>] [--build "command"] [--test "command"] [--tool executable] [--run]
   rigwell profile list|create <id> [name]|edit <id> <name> [role]
   rigwell --profile <id> <command>   use separate settings, credentials and sessions
 
@@ -294,6 +295,7 @@ async function main() {
   if (cmd === "plugin") return (await import("../plugins/cli.ts")).pluginMain(argv);
   if (cmd === "wiki") return (await import("../wiki/cli.ts")).wikiMain(argv);
   if (cmd === "learn") return (await import("../academy/cli.ts")).learnMain(argv);
+  if (cmd === "readiness-report") return (await import("../missions/readiness-cli.ts")).readinessMain(argv);
   if (cmd === "sessions") {
     const [sub, ...rest] = argv;
     if (sub !== "search") fail("usage: rigwell sessions search <query> [--semantic] [--limit <n>] [--cwd <dir>] [--json]");

@@ -6,6 +6,7 @@ import type { Tool, ToolOutput } from "../core/types.ts";
 import { MissionStore, hasUndoneWork, checkHandoff, needsAttention, type Handoff, type HandoffRecord } from "./store.ts";
 import type { MissionRunner, MissionSettings, RunInput } from "./runner.ts";
 import { effectivePolicy } from "../storage/policy.ts";
+import { checkReadiness } from "./readiness.ts";
 
 const ok = (content: string, data?: unknown): ToolOutput => ({ content, ...(data !== undefined ? { data } : {}) });
 const fail = (content: string): ToolOutput => ({ content, isError: true });
@@ -60,7 +61,8 @@ export function orchestratorTools(env: OrchestratorEnv): Tool[] {
       const s = env.store();
       if (!s.exists()) return fail("No mission folder exists yet: call ProposeMission first.");
       const running = env.runningMissions();
-      const a = await env.confirm({ type: "start_mission_run", runningMissionCount: running.length, runningMissionSessionIds: running });
+      const readiness = checkReadiness(s.readState()?.workingDirectory || env.cwd);
+      const a = await env.confirm({ type: "start_mission_run", runningMissionCount: running.length, runningMissionSessionIds: running, readiness });
       if (!a.accepted) return ok(JSON.stringify({ started: false, message: "The user did not approve starting the run." }), { started: false });
       const runner = env.runner();
       const r = await runner.run(input as RunInput, ctx.signal);

@@ -68,8 +68,8 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 33. Spend limits (plan usage limits and overage checks). Delivered on 2f326ef with all four required CI jobs and unsigned packages green. See docs/spend-limits.md and HANDOFF State.
 34. Fallback model list (hosted fallback pool). Delivered on 5f019b6 with all four required CI jobs and unsigned packages green. See docs/fallback-models.md and HANDOFF State.
 35. Profiles (the local stand-in for org members and the "role" field). Delivered on eff3dd8 with all four required CI jobs and unsigned packages green. See docs/local-profiles.md and HANDOFF State.
-36. Feature flags and a Labs page. Implemented, local affected 163 tests/971 assertions and final four/43 pass; root/desktop types and headless build pass. Required CI pending. See docs/labs.md and HANDOFF State.
-37. Mission readiness report.
+36. Feature flags and a Labs page. Delivered on 8ecadcd with all four required CI jobs and unsigned packages green. See docs/labs.md and HANDOFF State.
+37. Mission readiness report. Implemented with explicit command approval, CLI, local evidence and desktop warning. Affected 188 tests/1469 assertions and final 19/496 pass; types, headless build and isolated performance gate pass. Required CI pending. See docs/mission-readiness.md and HANDOFF State.
 38. Local crash reports and Report a bug (§20.22).
 39. Workstream notification categories (§20.23).
 
