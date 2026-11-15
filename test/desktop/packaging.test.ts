@@ -3,7 +3,7 @@
 // has been built or no X server exists. Set RIGWELL_BUILD_PACKAGE=1 to build one first.
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -52,7 +52,7 @@ function readFileOrEmpty(p: string) { try { return require("node:fs").readFileSy
 
 maybe("Linux package", () => {
   let xvfb: ChildProcess | undefined, app: ChildProcess | undefined, home = "", display = "";
-  beforeAll(() => { home = mkdtempSync(join(tmpdir(), "rigwell-pkg-")); });
+  beforeAll(() => { home = mkdtempSync(join(tmpdir(), "rigwell-pkg-")); writeFileSync(join(home, "desktop-settings.json"), JSON.stringify({ desktopAutoUpdateEnabled: false })); });
   afterAll(async () => {
     try { const d = readDaemonInfo(home); if (d) process.kill(d.pid, "SIGTERM"); } catch {}
     app?.kill("SIGTERM"); await sleep(1500); app?.kill("SIGKILL"); xvfb?.kill();

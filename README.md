@@ -4,8 +4,12 @@ Rigwell is a model-independent coding agent that runs on your own machine: a bac
 UI, a desktop app, Missions, local automations, git worktrees and a side pane with files, terminal, browser
 and side chat.
 
-This repo holds the build spec and the Phase 1 code (core loop): the daemon, `rigwell exec`, an
-Anthropic and an OpenAI Responses adapter, six direct tools, permissions, and session storage.
+This repo holds the build spec and the local implementation, including persistent Workstreams,
+Missions, provider and subscription-client adapters, the TUI and desktop app. Current acceptance
+and remaining external inputs are recorded in `docs/handoff/HANDOFF.md`.
+
+For packaged desktop installation, see [the install guide](docs/install.md).
+For source development, use the setup below and [desktop development notes](docs/desktop.md).
 
 ## Files
 

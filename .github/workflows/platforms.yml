@@ -63,3 +63,42 @@ jobs:
       - name: List built artifacts
         shell: bash
         run: ls -la desktop/release || true
+      - name: Install NSIS package on the clean Windows runner
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = @(Get-ChildItem desktop/release -Filter '*.exe')
+          if ($installer.Count -ne 1) { throw 'Expected exactly one installer' }
+          $destination = Join-Path $env:RUNNER_TEMP 'rigwell-installed'
+          $process = Start-Process -FilePath $installer[0].FullName -ArgumentList '/S',"/D=$destination" -Wait -PassThru -WindowStyle Hidden
+          if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
+          bun desktop/packaging/accept-install.ts (Join-Path $destination 'rigwell.exe') desktop/release/installed-acceptance.json
+          if ($LASTEXITCODE -ne 0) { throw 'Installed first run failed' }
+      - name: Install DMG package on the clean macOS runner
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mount="$RUNNER_TEMP/rigwell-dmg"
+          destination="$RUNNER_TEMP/rigwell-installed"
+          mkdir -p "$mount" "$destination"
+          hdiutil attach desktop/release/*.dmg -nobrowse -readonly -mountpoint "$mount"
+          trap 'hdiutil detach "$mount" || true' EXIT
+          cp -R "$mount/Rigwell.app" "$destination/Rigwell.app"
+          hdiutil detach "$mount"
+          trap - EXIT
+          bun desktop/packaging/accept-install.ts "$destination/Rigwell.app/Contents/MacOS/rigwell" desktop/release/installed-acceptance.json
+      - name: Preserve packages and installed acceptance
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ runner.os }}-${{ github.sha }}
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.dmg
+            desktop/release/*.zip
+            desktop/release/*.blockmap
+            desktop/release/*.yml
+            desktop/release/installed-acceptance.json
+          if-no-files-found: error
+          retention-days: 7

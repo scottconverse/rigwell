@@ -79,3 +79,28 @@ jobs:
           xvfb-run -a bun test test/desktop 2>&1 | tee /tmp/desktop.log
       - name: Fail if tests skipped for a missing tool
         run: "! grep -E 'skipped: (playwright|chromium|electron binary|no X server)' /tmp/desktop.log"
+      - name: Build Linux installers
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: bun run package:linux
+      - name: Verify Linux package resources and startup
+        run: xvfb-run -a bun test test/desktop/packaging.test.ts
+      - name: Install Debian package on the clean runner
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y ./desktop/release/*.deb
+          package=$(dpkg-deb -f desktop/release/*.deb Package)
+          executable=$(dpkg -L "$package" | rg '/rigwell$')
+          xvfb-run -a bun desktop/packaging/accept-install.ts "$executable" desktop/release/installed-acceptance.json
+      - name: Preserve Linux installers and installed acceptance
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-Linux-${{ github.sha }}
+          path: |
+            desktop/release/*.AppImage
+            desktop/release/*.deb
+            desktop/release/*.yml
+            desktop/release/installed-acceptance.json
+          if-no-files-found: error
+          retention-days: 7
