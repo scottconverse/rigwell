@@ -7,6 +7,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      signed_baseline_run:
+        description: Retained sign-only run containing the 0.1.0 baseline installer
+        required: true
+        type: string
       signed_candidate_run:
         description: Existing sign-only run containing the candidate installer
         required: true
@@ -138,7 +142,7 @@ jobs:
         with:
           repository: scottconverse/civiccast
           name: signed-native-installer
-          run-id: 43689064653
+          run-id: ${{ inputs.signed_baseline_run }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/signed-baseline
       - uses: actions/download-artifact@v4

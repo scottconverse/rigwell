@@ -93,11 +93,19 @@ package-pipeline verification from native update-dialog interaction.
 The owner has no macOS Developer ID certificate; notarization is not claimed.
 
 For signed Windows package acceptance, dispatch the existing platform workflow
-on the working branch with `signed_candidate_run` identifying the completed
-sign-only run. The isolated Windows runner downloads the preserved signed
+on the working branch with `signed_baseline_run` and `signed_candidate_run`
+identifying the retained completed sign-only runs. The isolated Windows runner downloads the preserved signed
 baseline and candidate, verifies their receipts and native signatures, then
 checks installation, signed loopback upgrade, version readback, refusal of a
 remote downgrade and explicit local installer rollback. Its receipt states
 that native updater-dialog interaction is not exercised. No signing private
 key or personal access token is added to the Rigwell workflow. This path is
 prepared and must have an actual passing run before being claimed verified.
+
+Linux package upgrade acceptance runs through an explicit dispatch of `ci.yml`
+with `baseline_run` naming a retained CI run containing the 0.1.0 package.
+Ordinary pushes still check current installers and installed task discovery,
+without depending on a historical artifact that will expire. Select available
+baseline runs when performing a release check; workflow artifact retention is
+not permanent release storage. Do not silently substitute a different baseline
+or treat an unavailable artifact as a passing check.

@@ -4,6 +4,12 @@ on:
   push:
     branches: [main, "phase-*"]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      baseline_run:
+        description: Retained CI run containing the 0.1.0 Linux baseline package
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -95,13 +101,16 @@ jobs:
           executable=$(dpkg -L "$package" | rg '/rigwell$')
           xvfb-run -a bun desktop/packaging/accept-install.ts "$executable" desktop/release/installed-acceptance.json --require-eval-tasks
       - name: Retrieve the verified previous Linux package
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/download-artifact@v4
         with:
-          name: desktop-Linux-5fc56876772f83e3bb01212a00dbf911e8481008
-          run-id: 43692783551
+          pattern: desktop-Linux-*
+          merge-multiple: true
+          run-id: ${{ inputs.baseline_run }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/rigwell-baseline
       - name: Verify real packaged upgrade and rollback
+        if: github.event_name == 'workflow_dispatch'
         run: xvfb-run -a bun desktop/packaging/accept-linux-update.ts "$RUNNER_TEMP/rigwell-baseline/rigwell-0.1.0-x86_64.AppImage" desktop/release/rigwell-*.AppImage desktop/release/packaged-update-acceptance.json
       - name: Preserve Linux installers and installed acceptance
         uses: actions/upload-artifact@v4
