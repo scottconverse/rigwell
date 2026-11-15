@@ -11,3 +11,7 @@ The desktop includes noVNC 1.7.0, copyright the noVNC authors, under MPL-2.0.
 The unmodified browser library source, author list and bundled dependency licenses
 are included in desktop/dist/third-party/novnc (also inside the packaged app).
 Upstream source: https://github.com/novnc/noVNC/tree/v1.7.0
+
+The website includes Mermaid 12.2.0 under MIT and its prebundled dependencies.
+The website build preserves inline notices and provides original installed
+package license/notice texts in third-party-notices.txt, linked from its footer.

@@ -24,3 +24,5 @@ The `website` GitHub Actions workflow builds and deploys GitHub Pages from `phas
 Edit `index.html` and `styles.css` for the landing page. Edit `docs/*.md` for user documentation. `build.ts` publishes top-level Markdown guides, excluding the internal decisions and Stax comparison, and links other repository material to GitHub. `DESIGN.md` records the source-backed positioning and existing product palette.
 
 The Workstreams screenshot is the actual renderer using isolated demonstration data. Its provenance is in `public/assets/workstreams-provenance.json`. Do not replace it with fabricated product UI. Recheck the built site at mobile, tablet and desktop widths, navigation, link targets, diagram rendering, keyboard focus and console errors after relevant changes.
+
+The build preserves upstream inline comments and generates `third-party-notices.txt` from directly bundled packages and Mermaid's installed declared runtime dependency tree. The footer links to the original license/notice texts. This attribution inventory is not a binary software bill of materials.

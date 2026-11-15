@@ -91,9 +91,9 @@ The signed Windows setup installer has SHA-256
 Signing run `43743441653` passed; its returned bytes, signing receipt,
 Scott Converse publisher and Microsoft timestamp were independently verified
 on Windows. The application executable and uninstaller are not individually
-signed in this branch's packaging path. Signed install/update/rollback uses
-release acceptance run `43743716936`; consult the release's acceptance metadata
-for its final result. Native updater-dialog interaction is not claimed.
+signed in this branch's packaging path. Signed release acceptance run `43743716936` passed actual baseline installation,
+0.4.0 upgrade, registered deep-link delivery and explicit local rollback.
+Remote downgrade was refused. Native updater-dialog interaction is not claimed.
 
 The published release includes final-byte checksums and acceptance metadata.
 Documentation-only successors do not change these packaged inputs. These
