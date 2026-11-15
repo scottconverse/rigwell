@@ -7,19 +7,20 @@ import { checkPractice, createPracticeWorktree, listPractice, readPractice, remo
 import { tmpEnv } from "../storage/helpers.ts";
 import { CLI } from "../e2e/helpers.ts";
 
-test("all nine offline lessons grade their actual sample files, retain progress and leave account settings untouched", () => {
-  const env = tmpEnv(), ids: string[] = [];
+test("the offline catalog retains all nine approved lessons", () => {
+  expect(LESSONS.map((l) => l.id)).toEqual(["getting-started", "models-and-keys", "skills", "hooks", "mcp", "worktrees", "missions", "workstreams", "automations"]);
+});
+
+for (const lesson of LESSONS) test(`offline ${lesson.id} grades actual sample files, retains progress and leaves account settings untouched`, () => {
+  const env = tmpEnv(); let id: string | undefined;
   try {
-    expect(LESSONS.map((l) => l.id)).toEqual(["getting-started", "models-and-keys", "skills", "hooks", "mcp", "worktrees", "missions", "workstreams", "automations"]);
-    for (const lesson of LESSONS) {
-      const p = startPractice(lesson.id); ids.push(p.id); expect(p.root).not.toContain(env.rigwellHome); expect(existsSync(join(p.root, ".git"))).toBe(true); expect(checkPractice(p.id).passed).toBe(false);
+      const p = startPractice(lesson.id); id = p.id; expect(p.root).not.toContain(env.rigwellHome); expect(existsSync(join(p.root, ".git"))).toBe(true); expect(checkPractice(p.id).passed).toBe(false);
       savePractice(p.id, lesson.example); if (lesson.id === "worktrees") { const worktree = createPracticeWorktree(p.id); expect(existsSync(join(worktree.path, ".git"))).toBe(true); }
       const result = checkPractice(p.id); expect(result.passed).toBe(true); expect(result.message.length).toBeGreaterThan(15); expect(readPractice(p.id).passed).toBe(true);
       expect(listPractice().find((row) => row.id === p.id)?.passed).toBe(true); savePractice(p.id, lesson.starter); expect(readPractice(p.id).passed).toBe(false);
       expect(execFileSync("git", ["remote"], { cwd: p.root, encoding: "utf8", windowsHide: true }).trim()).toBe("");
-    }
     expect(existsSync(join(env.rigwellHome, "settings.json"))).toBe(false); expect(existsSync(join(env.rigwellHome, "automations"))).toBe(false); expect(existsSync(join(env.rigwellHome, "workstreams"))).toBe(false);
-  } finally { for (const id of ids) removePractice(id, true); env.cleanup(); }
+  } finally { if (id) removePractice(id, true); env.cleanup(); }
 });
 
 test("practice rejects links, corrupt ownership, arbitrary ids, unconfirmed removal and credentials without reading a credential store", () => {

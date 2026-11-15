@@ -10,7 +10,15 @@ interface Entry { id: string; state: string; event: string; runId: string | null
 /** A durable deduplication key is retained until the automation is deleted. */
 export function withLedger<T>(a: Automation, action: (ledger: EventLedger) => T): T {
   const file = unlinkedPath(join(a.dir, "memory", "trigger-events.db")), existed = existsSync(file), db = new Database(file);
-  try { db.exec("CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, state TEXT NOT NULL, event TEXT NOT NULL, runId TEXT, result TEXT, error TEXT, startedAt INTEGER); CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)"); if (!existed) makePrivate(file); return action(new EventLedger(db)); }
+  try {
+    if (!existed) makePrivate(file);
+    // One logical transition must commit together (state/run id/admission time).
+    // Autocommitting each UPDATE also forced a disk flush for every field update.
+    return db.transaction(() => {
+      db.exec("CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, state TEXT NOT NULL, event TEXT NOT NULL, runId TEXT, result TEXT, error TEXT, startedAt INTEGER); CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)");
+      return action(new EventLedger(db));
+    })();
+  }
   finally { db.close(); }
 }
 export class EventLedger {
