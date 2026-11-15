@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { dirname, join, resolve } from "node:path";
 import { parseSpendLimits } from "../../src/spend/config.ts";
 import { parseFallbackModels } from "../../src/agent/fallback-config.ts";
+import { parseFeatures } from "../../src/features/config.ts";
 
 export const MASK_PREFIX = "****";
 type Json = Record<string, any>;
@@ -89,6 +90,7 @@ export function updateUserSettings(home: string, patch: unknown): Json {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new Error("patch must be an object");
   if (Object.hasOwn(patch, "spendLimits")) parseSpendLimits((patch as Json).spendLimits);
   if (Object.hasOwn(patch, "fallbackModels")) parseFallbackModels((patch as Json).fallbackModels);
+  if (Object.hasOwn(patch, "features")) parseFeatures((patch as Json).features);
   const cur = readRawSettings(home);
   for (const [k, v] of Object.entries(patch as Json)) {
     if (BLOCKED.has(k)) continue;

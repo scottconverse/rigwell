@@ -7,6 +7,7 @@ import { Session, SessionBusyError, type SessionHost, type SessionSettings } fro
 import { applyCompaction } from "../agent/compaction.ts";
 import { AUTO_MODEL_ID, type RouterConfig } from "../agent/router.ts";
 import { parseFallbackModels } from "../agent/fallback-config.ts";
+import { featureEnabled } from "../features/features.ts";
 import { autonomyAllowed, clampAutonomy, modelAllowed } from "../storage/org.ts";
 import { handoffBrief, isHandoffId, loadHandoff } from "../agent/handoff.ts";
 import { hasProjectConfig, isFolderTrusted, loadSettings, trustFolder } from "../storage/settings.ts";
@@ -281,7 +282,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
         config: hooksConfig, sessionId: a.sessionId, transcriptPath: a.transcriptPath, cwd, permissionMode: a.permissionMode, notify: a.notify, env: sessionEnv?.env,
       }),
       mcp: { servers: fromInitConfigs(p.mcpServers as McpServerInitConfig[] | undefined) },
-      allowSubagentsInScripts: restored?.allowSubagentsInScripts ?? (p.allowSubagentsInScripts === true || env.s.allowSubagentsInScripts === true),
+      allowSubagentsInScripts: featureEnabled("script_subagents", restored?.allowSubagentsInScripts ?? (p.allowSubagentsInScripts === true || env.s.allowSubagentsInScripts === true)),
       specSaveDir: typeof env.s.specSaveDir === "string" ? env.s.specSaveDir : undefined,
       subagents: {
         limits: limitsFor(env.s), depth: 0, rootSessionId: id,

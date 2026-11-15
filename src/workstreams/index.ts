@@ -3,6 +3,7 @@ import { abortable } from "../core/abort.ts";
 import { zeroUsage, type AutonomyLevel, type ReasoningEffort, type Tool, type ToolContext, type ToolOutput, type TokenUsage } from "../core/types.ts";
 import { loadSettings } from "../storage/settings.ts";
 import { effectivePolicy } from "../storage/policy.ts";
+import { featureEnabled } from "../features/features.ts";
 import { repoTopLevel } from "../worktree/git.ts";
 import { MemberSession, type MemberView } from "./member.ts";
 import { WorkstreamListeners } from "./listeners.ts";
@@ -27,10 +28,12 @@ export function workstreamSettings(cwd: string): WorkstreamSettings {
   const raw = (loadSettings({ cwd }).settings.workstreams ?? {}) as Partial<WorkstreamSettings>;
   const policy = effectivePolicy().workstreams;
   return { enabled: raw.enabled !== false && policy?.enabled !== false && policy?.maxConcurrentAgents !== 0, maxConcurrentAgents: Math.min(Number.isSafeInteger(raw.maxConcurrentAgents) && raw.maxConcurrentAgents! >= 1 ? raw.maxConcurrentAgents! : 4, policy?.maxConcurrentAgents ?? Infinity),
-    allowNestedSpawn: raw.allowNestedSpawn === true && policy?.allowNestedSpawn !== false, autoRejectMemberPrompts: raw.autoRejectMemberPrompts === true,
+    allowNestedSpawn: featureEnabled("nested_workstreams", raw.allowNestedSpawn === true) && policy?.allowNestedSpawn !== false, autoRejectMemberPrompts: raw.autoRejectMemberPrompts === true,
     ...(raw.defaultMemberModel ? { defaultMemberModel: raw.defaultMemberModel } : {}),
     ...(raw.defaultMemberReasoningEffort ? { defaultMemberReasoningEffort: raw.defaultMemberReasoningEffort } : {}) };
 }
+
+const nestedAllowed = (store: WorkstreamStore) => store.read().settings.allowNestedSpawn && featureEnabled("nested_workstreams", true);
 
 function enforceWorkstreamPolicy(store: WorkstreamStore, resuming = false) {
   const p = effectivePolicy().workstreams, w = store.read();
@@ -84,7 +87,7 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
     if (!store) throw new Error("Only the lead of an approved workstream can control members");
     if (memberStores.has(sessionId)) {
       const member = store.roster().find((a) => a.sessionId === sessionId);
-      if (!store.read().settings.allowNestedSpawn || !member?.tools?.includes(tool)) throw new Error("Only the lead can control members unless nested controls are explicitly allowed");
+      if (!nestedAllowed(store) || !member?.tools?.includes(tool)) throw new Error("Only the lead can control members unless nested controls are explicitly allowed");
     }
     return store;
   }
@@ -429,14 +432,14 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
     if (conn && !memberStores.has(sessionId)) extra.unshift(
       tool("ProposeWorkstream", "Ask the user to approve a local Workstream. No member starts before approval.", { title: { type: "string" }, goal: { type: "string" }, plan: { type: "string" }, budget: { type: "object", properties: { maxTokens: { type: "number" }, maxCostUsd: { type: "number" }, maxWallMinutes: { type: "number" } } }, agents: { type: "array", items: { type: "object" } } }, ["title", "goal", "plan"], (input, ctx) => propose(conn, input, ctx.signal)),
     );
-    if (!member || (store?.read().settings.allowNestedSpawn && member.tools?.includes("SpawnAgent") && member.depth < 2)) extra.splice(!member && conn ? 1 : 0, 0,
+    if (!member || (store && nestedAllowed(store) && member.tools?.includes("SpawnAgent") && member.depth < 2)) extra.splice(!member && conn ? 1 : 0, 0,
       tool("SpawnAgent", "Start a persistent member in its own worktree. Autonomy and tools cannot exceed the parent. Nesting requires explicit approval and ends at depth 2.", { name: { type: "string" }, role: { type: "string" }, prompt: { type: "string" }, model: { type: "string" }, reasoningEffort: { type: "string" }, cwd: { type: "string" }, machine: { type: "string" }, tools: { type: "array", items: { type: "string" } }, worktree: { anyOf: [{ type: "boolean" }, { type: "object", properties: { branch: { type: "string" } } }] }, autonomyLevel: { type: "string", enum: autonomy } }, ["name", "role", "prompt"], (input) => spawn((member ? members.get(member.agentId)?.view : conn?.session())!, input)),
     );
     for (const [name, run, properties, required] of [
       ["InterruptAgent", (input: Record<string, unknown>) => interrupt(sessionId, input), { agentId: { type: "string" }, reason: { type: "string" } }, ["agentId"]],
       ["RenameAgent", (input: Record<string, unknown>) => rename(sessionId, input), { agentId: { type: "string" }, name: { type: "string" } }, ["agentId", "name"]],
       ["ArchiveAgent", (input: Record<string, unknown>) => archive(sessionId, input), { agentId: { type: "string" }, cleanupWorktree: { type: "boolean" } }, ["agentId"]],
-    ] as const) if (!member || (store?.read().settings.allowNestedSpawn && member.tools?.includes(name))) extra.push(tool(name, `${name} controls a persistent Workstream member. Cleanup preserves dirty, pinned, reserved, live, unpushed or open-PR worktrees.`, properties, [...required], run));
+    ] as const) if (!member || (store && nestedAllowed(store) && member.tools?.includes(name))) extra.push(tool(name, `${name} controls a persistent Workstream member. Cleanup preserves dirty, pinned, reserved, live, unpushed or open-PR worktrees.`, properties, [...required], run));
     if (conn && !member) extra.push(tool("WaitForEvents", "Wait without polling for fired listeners owned by this lead. Returns unread fired events; default timeout is 30 seconds.", { listenerIds: { type: "array", items: { type: "string" } }, timeoutMs: { type: "number" } }, [], (input, ctx) => {
       const current = actorStore(sessionId); if (!current) throw new Error("No approved Workstream");
       return listeners.wait(current, "lead", input, ctx.signal);
