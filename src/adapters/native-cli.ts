@@ -188,7 +188,7 @@ export class NativeCliAdapter implements ModelAdapter {
         let e: any; try { e = JSON.parse(line); } catch { throw failure("Malformed native client event"); }
         if (e.type === "error" || e.type === "turn.failed") throw failure(cleanError(e.message ?? e.error?.message ?? "Native turn failed"));
         if (backend === "claude-cli") {
-          if (e.type === "assistant") for (const b of e.message?.content ?? []) if (b.type === "tool_use") { queue.push(`[Native tool: ${b.name}]\n`); toolMetric(b.id, b.name, "started"); }
+          if (e.type === "assistant") for (const b of e.message?.content ?? []) if (b.type === "tool_use") { if (!req.nativeExecution?.synthesis) queue.push(`[Native tool: ${b.name}]\n`); toolMetric(b.id, b.name, "started"); }
           if (e.type === "user") for (const b of e.message?.content ?? []) if (b.type === "tool_result") toolMetric(b.tool_use_id, nativeTools.get(b.tool_use_id), b.is_error === true ? "failure" : "success");
           if (e.type === "result") {
             if (e.is_error || e.subtype !== "success") throw failure(cleanError(e.result ?? JSON.stringify(e.errors ?? "Native task failed")));
@@ -208,7 +208,7 @@ export class NativeCliAdapter implements ModelAdapter {
               else if (!nativeTools.has(item.id)) toolMetric(item.id, name, "started");
             }
           }
-          if (e.type === "item.started" && e.item?.type !== "agent_message") queue.push(`[Native activity: ${e.item?.type ?? "working"}]\n`);
+          if (!req.nativeExecution?.synthesis && e.type === "item.started" && e.item?.type !== "agent_message") queue.push(`[Native activity: ${e.item?.type ?? "working"}]\n`);
           if (e.type === "item.completed" && e.item?.type === "agent_message") final = e.item.text ?? "";
           if (e.type === "turn.completed") {
             terminal = true; const u = e.usage ?? {};

@@ -57,6 +57,7 @@ const api = {
   },
   skills: { list: (cwd: string): Promise<any[]> => ipcRenderer.invoke("skills:list", cwd) },
   dialog: {
+    saveEvalExport: (format: "csv" | "jsonl", content: string): Promise<string | null> => ipcRenderer.invoke("dialog:saveEvalExport", format, content),
     saveAnalyticsExport: (content: string): Promise<string | null> => ipcRenderer.invoke("dialog:saveAnalyticsExport", content),
     saveSessionExport: (format: "html" | "markdown", content: string): Promise<string | null> => ipcRenderer.invoke("dialog:saveSessionExport", format, content),
     pickFolder: (): Promise<string | null> => ipcRenderer.invoke("dialog:pickFolder"),

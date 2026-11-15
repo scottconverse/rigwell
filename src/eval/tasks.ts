@@ -24,6 +24,7 @@ export function loadTask(dir: string): TaskDef {
     fixtureDir,
     prompt: readFileSync(join(dir, "prompt.txt"), "utf8").trim(),
     grader: meta.grader,
+    ...(typeof meta.rubric === "string" && meta.rubric.trim() ? { rubric: meta.rubric } : {}),
     budget: meta.budget ?? {},
   };
 }

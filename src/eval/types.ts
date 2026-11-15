@@ -33,6 +33,8 @@ export interface ModelSpec {
 }
 
 export interface EvalConfig {
+  /** Explicit profile for optional task rubrics. No judge runs unless a task has a rubric. */
+  judgeModel?: string;
   models: ModelSpec[];
   /** Explicitly configured external headless CLI; real accounts are used only for hand-run quality checks. */
   comparison?: ExternalHarness;
@@ -73,12 +75,16 @@ export interface TaskDef {
   prompt: string;
   /** Shell command run in the working copy after the session; exit 0 passes. $EVAL_TASK_DIR points at the task folder. */
   grader: string;
+  rubric?: string;
+  expectedOutput?: string;
   budget: TaskBudget;
 }
 
 export interface TokenCounts { input: number; cacheRead: number; cacheCreation: number; output: number }
 
-export type FailKind = "none" | "grader" | "budget" | "timeout" | "session";
+export type FailKind = "none" | "grader" | "budget" | "timeout" | "session" | "judge";
+
+export interface JudgeResult { model: string; score: number | null; reason: string; status: "complete" | "error"; tokens: TokenCounts; costUsd: number | null }
 
 export interface TrialResult {
   task: string;
@@ -97,6 +103,12 @@ export interface TrialResult {
   priced: boolean;
   cacheHitRate: number;
   reasoningEffort?: ReasoningEffort;
+  sessionId?: string;
+  output?: string;
+  transcript?: import("../sharing/format.ts").SharedSession;
+  transcriptUnavailable?: string;
+  checkPassed?: boolean;
+  judge?: JudgeResult;
 }
 
 export interface RunRecord {

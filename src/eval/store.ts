@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { rigwellHome } from "../storage/paths.ts";
 import type { RunRecord } from "./types.ts";
+import { makePrivate } from "../platform/private.ts";
+import { unlinkedPath } from "../sync/target.ts";
 
 export const evalDir = () => join(rigwellHome(), "eval");
 export const runsDir = () => join(evalDir(), "runs");
@@ -17,14 +19,15 @@ export function currentBuildId(checkout = join(import.meta.dir, "../..")): strin
   }
 }
 
-const safe = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_");
+const safe = (s: string) => { const value = s.replace(/[^A-Za-z0-9._-]/g, "_"); if (!value || value === "." || value === "..") throw new Error("Invalid build id"); return value; };
 
 export function saveRun(run: RunRecord): string {
-  const dir = join(runsDir(), safe(run.buildId));
+  const dir = unlinkedPath(join(runsDir(), safe(run.buildId)));
   mkdirSync(dir, { recursive: true });
+  if (!makePrivate(dir, { dir: true })) throw new Error("Could not protect evaluation storage");
   let file = join(dir, `${run.startedAt.replace(/[:.]/g, "-")}.json`);
   for (let i = 1; existsSync(file); i++) file = join(dir, `${run.startedAt.replace(/[:.]/g, "-")}-${i}.json`);
-  writeFileSync(file, JSON.stringify(run, null, 2) + "\n");
+  writeFileSync(file, JSON.stringify(run, null, 2) + "\n", { mode: 0o600, flag: "wx" });
   return file;
 }
 

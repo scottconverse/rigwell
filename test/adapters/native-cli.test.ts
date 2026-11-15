@@ -74,6 +74,11 @@ for (const backend of ["claude-cli", "codex-cli"] as const) test(`${backend} com
   expect(done(events).content[0]).toMatchObject({ type: "text" });
 });
 
+for (const backend of ["claude-cli", "codex-cli"] as const) test(`${backend} synthesis retains only the answer text for structured judges and summaries`, async () => {
+  const r = req(backend); r.nativeExecution = { ...r.nativeExecution!, readOnly: true, synthesis: true };
+  const events = await collect(adapter().stream(r)); expect(done(events).content).toEqual([{ type: "text", text: "done" }]);
+});
+
 for (const backend of ["claude-cli", "codex-cli"] as const) for (const failed of [false, true]) test(`${backend} records structured native tool outcomes on ${failed ? "failed" : "completed"} turns without duplicate bridge accounting`, async () => {
   const metrics: any[] = [];
   const fixture = makeStubSession(() => { throw new Error("must use native client"); }, {

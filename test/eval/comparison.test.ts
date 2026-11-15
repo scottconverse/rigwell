@@ -62,3 +62,10 @@ test("an unverifiable external CLI starts no trials and produces no candidate re
     expect(error.message).toContain("no comparison trials"); expect(existsSync(audit)).toBe(false);
   } finally { env.cleanup(); }
 });
+
+test("rubric comparisons require an explicit judge before checking or launching either harness", async () => {
+  const task = { ...loadTasks(undefined, ["fix-greeting-typo"])[0]!, rubric: "Correct greeting" };
+  const c = config(); c.comparison!.command = ["must-not-launch-this-fixture"];
+  const error = await runComparison({ config: c, tasks: [task], buildId: "rubric-refusal" }).then(() => null, (e) => e);
+  expect(error.message).toContain("judgeModel");
+});

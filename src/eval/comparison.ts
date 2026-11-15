@@ -40,6 +40,7 @@ export async function runComparison(opts: {
 }): Promise<ComparisonRuns> {
   const h = comparisonHarness(opts.config);
   if (!opts.tasks.length || new Set(opts.tasks.map((t) => t.name)).size !== opts.tasks.length) throw new Error("Select distinct shared tasks");
+  if (opts.tasks.some((task) => task.rubric) && !opts.config.judgeModel) throw new Error("Select judgeModel explicitly for rubric tasks");
   const version = await observedVersion(h, opts.env), autonomy = opts.config.autonomy ?? "medium";
   const makeRun = (buildId: string, id: string, version: string): RunRecord => ({ schema: 1, buildId, startedAt: "", finishedAt: "", autonomy, trials: 3, results: [], harness: { id, version } });
   const reference = makeRun("reference-" + h.id + "-" + version, h.id, version);
@@ -50,7 +51,7 @@ export async function runComparison(opts: {
     for (const side of sides) {
       const run = side === "candidate" ? candidate : reference;
       if (!run.startedAt) run.startedAt = new Date().toISOString();
-      const result = await runTrial({ task, model, variant: { name: "baseline" }, trial, autonomy, timeoutMs: opts.config.timeoutMs ?? 600000, env: opts.env, ...(side === "reference" ? { harness: h } : {}) });
+      const result = await runTrial({ task, model, variant: { name: "baseline" }, trial, autonomy, timeoutMs: opts.config.timeoutMs ?? 600000, env: opts.env, judgeModel: opts.config.judgeModel, judgePrice: opts.config.models.find((m) => m.id === opts.config.judgeModel)?.prices, ...(side === "reference" ? { harness: h } : {}) });
       run.results.push(result); run.finishedAt = new Date().toISOString(); opts.onResult?.(side, result);
     }
   }

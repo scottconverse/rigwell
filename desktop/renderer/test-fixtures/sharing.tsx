@@ -9,6 +9,7 @@ import { Plugins } from "../components/Plugins.tsx";
 import { Wiki } from "../components/Wiki.tsx";
 import { Academy } from "../components/Academy.tsx";
 import { Analytics } from "../components/Analytics.tsx";
+import { Evaluations } from "../components/Evaluations.tsx";
 import { Automations, AutomationDetail } from "../components/Automations.tsx";
 import { SessionScreen } from "../components/SessionScreen.tsx";
 import { app, useApp } from "../lib/app-model.ts";
@@ -18,7 +19,7 @@ let deliver: (message: any) => void = () => {}, closed: (message: any) => void =
 const off = () => () => {};
 (window as any).rigwell = {
   view: { async set() {} }, browser: { onNewTab: off, onCloseTab: off, onActivateTab: off, onOpenUrl: off, async cdpUrl() { return null; } },
-  dialog: { async saveAnalyticsExport(content: string) { (window as any).savedAnalytics = content; return "/fixture/analytics.csv"; }, async pickFolder() { return (window as any).fixtureFolder; }, async pickFile() { return (window as any).fixtureSource; }, async saveSessionExport(format: string, content: string) { (window as any).savedExport = { format, content }; return '/fixture/saved.html'; } },
+  dialog: { async saveEvalExport(format: string, content: string) { (window as any).savedEval = { format, content }; return "/fixture/eval." + format; }, async saveAnalyticsExport(content: string) { (window as any).savedAnalytics = content; return "/fixture/analytics.csv"; }, async pickFolder() { return (window as any).fixtureFolder; }, async pickFile() { return (window as any).fixtureSource; }, async saveSessionExport(format: string, content: string) { (window as any).savedExport = { format, content }; return '/fixture/saved.html'; } },
   userSettings: { async get() { return {}; } },
   daemon: {
     onMessage(fn: any) { deliver = fn; }, onClosed(fn: any) { closed = fn; },
@@ -45,6 +46,7 @@ function Fixture() {
   if (window.location.pathname === "/wiki") return <Wiki />;
   if (window.location.pathname === "/academy") return <Academy go={(route) => { (window as any).fixtureRoute = route; }} />;
   if (window.location.pathname === "/analytics") return <Analytics />;
+  if (window.location.pathname === "/eval") return <Evaluations />;
   const [route, go] = useState(window.location.pathname === "/inbox" ? "/inbox" : window.location.pathname === "/sync" ? "/sync" : window.location.pathname === "/automations" ? "/automations" : "/imports");
   if (route === "/inbox") return <Inbox go={go} />;
   if (route === "/settings/email-alerts") return <EmailAlerts />;

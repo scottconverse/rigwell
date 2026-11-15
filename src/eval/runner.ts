@@ -7,6 +7,9 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { shellInvocation } from "../platform/shell.ts";
 import { cacheHitRate, costOf } from "./cost.ts";
 import type { EvalConfig, ExternalHarness, FailKind, ModelSpec, RunRecord, TaskDef, TokenCounts, TrialResult, Variant } from "./types.ts";
+import { parseSharedSession, type SharedSession } from "../sharing/format.ts";
+import { configuredSecretValues, redactSharedText } from "../sharing/redact.ts";
+import { judgeOutput } from "./judge.ts";
 
 export const CLI_PATH = join(import.meta.dir, "../cli/main.ts");
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
@@ -18,6 +21,10 @@ export interface SessionOutcome {
   tokens: TokenCounts;
   killed: "none" | "budget" | "timeout";
   error?: string;
+  sessionId?: string;
+  output?: string;
+  transcript?: SharedSession;
+  transcriptUnavailable?: string;
 }
 
 const zeroTokens = (): TokenCounts => ({ input: 0, cacheRead: 0, cacheCreation: 0, output: 0 });
@@ -46,6 +53,8 @@ export async function driveSession(opts: {
   let turnReason = "";
   let killed: SessionOutcome["killed"] = "none";
   let error: string | undefined;
+  let sessionId: string | undefined, transcript: SharedSession | undefined, transcriptUnavailable: string | undefined;
+  const texts = new Map<string, string>();
   let n = 0;
   const pending = new Map<string, (m: any) => void>();
   let finish!: () => void;
@@ -72,6 +81,9 @@ export async function driveSession(opts: {
     }
     const note = m.params?.notification;
     if (!note) return;
+    if (note.type === "assistant_text_delta" && typeof note.textDelta === "string") {
+      const id = String(note.messageId ?? "answer"); texts.set(id, (texts.get(id) ?? "") + note.textDelta);
+    } else if (note.type === "llm_retry") texts.clear();
     if (note.type === "session_token_usage_changed") {
       const u = note.tokenUsage ?? {};
       // The harness emits this after every model call and once more when the turn closes. The closing one repeats the
@@ -109,6 +121,7 @@ export async function driveSession(opts: {
     ]);
     if (init?.error) error = `initialize_session: ${init.error.message}`;
     else if (init) {
+      sessionId = init.result?.sessionId;
       const added = await Promise.race([request("add_user_message", { text: opts.prompt, messageId: "eval-turn" }), done.then(() => null)]);
       if (added?.error) error = `add_user_message: ${added.error.message}`;
       else await done;
@@ -116,13 +129,21 @@ export async function driveSession(opts: {
   } finally {
     clearTimeout(timer);
     if (!completed && killed === "none" && !error) error = "session ended before the turn completed: " + (await Promise.race([stderrP, Bun.sleep(200).then(() => "")])).slice(-300);
+    if (completed && !opts.harness && sessionId) {
+      try {
+        const exported = await Promise.race([request("export_session", { format: "markdown" }), Bun.sleep(2000).then(() => null)]);
+        if (!exported?.result?.content) throw new Error(exported?.error?.message ?? "Transcript export unavailable");
+        transcript = parseSharedSession(exported.result.content);
+      } catch (e) { transcriptUnavailable = String((e as Error).message).slice(0, 300); }
+    } else transcriptUnavailable = opts.harness ? "The external harness did not expose a stored transcript." : "The turn ended before a completed transcript could be exported.";
     if (completed) await Promise.race([request("close_session", { reason: "other" }), Bun.sleep(2000)]);
     try { (proc.stdin as any).end(); } catch { /* ignore */ }
     const exited = await Promise.race([proc.exited, Bun.sleep(3000).then(() => null)]);
     if (exited === null) try { proc.kill(); } catch { /* ignore */ }
   }
   const requests = usageEvents;
-  return { turnReason: turnReason || (killed !== "none" ? killed : "error"), requests, tokens, killed, error };
+  const output = redactSharedText(transcript?.messages.filter((m) => m.role === "assistant").at(-1)?.text ?? [...texts.values()].at(-1) ?? "", configuredSecretValues(opts.cwd));
+  return { turnReason: turnReason || (killed !== "none" ? killed : "error"), requests, tokens, killed, error, sessionId, output, ...(transcript ? { transcript } : { transcriptUnavailable }) };
 }
 
 /** Runs the grader in the working copy. Exit 0 passes; the last lines of its output are the detail. */
@@ -133,7 +154,7 @@ export function runGrader(task: TaskDef, workDir: string): { passed: boolean; de
   const shell = shellInvocation(command);
   const r = spawnSync(shell.file, shell.args, {
     windowsVerbatimArguments: shell.windowsVerbatimArguments,
-    cwd: workDir, encoding: "utf8", timeout: GRADER_TIMEOUT_MS, env: { ...process.env, EVAL_TASK_DIR: task.dir, EVAL_WORK_DIR: workDir },
+    cwd: workDir, encoding: "utf8", windowsHide: true, timeout: GRADER_TIMEOUT_MS, env: { ...process.env, EVAL_TASK_DIR: task.dir, EVAL_WORK_DIR: workDir },
   });
   const out = `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().split("\n").slice(0, 2).join(" | ").slice(0, 300);
   return { passed: r.status === 0, detail: out || (r.error ? String(r.error.message) : `exit ${r.status}`) };
@@ -142,7 +163,7 @@ export function runGrader(task: TaskDef, workDir: string): { passed: boolean; de
 function prepareWorkDir(task: TaskDef): string {
   const dir = mkdtempSync(join(tmpdir(), `rigwell-eval-${task.name}-`));
   cpSync(task.fixtureDir, dir, { recursive: true });
-  const git = (...a: string[]) => execFileSync("git", ["-c", "user.email=eval@example.com", "-c", "user.name=eval", ...a], { cwd: dir, stdio: "ignore" });
+  const git = (...a: string[]) => execFileSync("git", ["-c", "user.email=eval@example.com", "-c", "user.name=eval", ...a], { cwd: dir, stdio: "ignore", windowsHide: true });
   git("init", "-q");
   git("add", ".");
   git("commit", "-qm", "fixture");
@@ -152,8 +173,11 @@ function prepareWorkDir(task: TaskDef): string {
 export async function runTrial(opts: {
   task: TaskDef; model: ModelSpec; variant: Variant; trial: number; autonomy: string; timeoutMs: number; env?: Record<string, string>;
   harness?: ExternalHarness;
+  judgeModel?: string;
+  judgePrice?: ModelSpec["prices"];
 }): Promise<TrialResult> {
   const { task, model, variant } = opts;
+  if (task.rubric && !opts.judgeModel) throw new Error("This task has a rubric; explicitly select judgeModel before running it");
   const work = prepareWorkDir(task);
   let settingsPath: string | undefined;
   if (variant.settings && Object.keys(variant.settings).length) {
@@ -181,10 +205,17 @@ export async function runTrial(opts: {
     || (task.budget.maxCostUsd !== undefined && model.prices && costOf(outcome.tokens, model.prices) > task.budget.maxCostUsd)) {
     failKind = "budget"; detail = "budget exceeded";
   } else {
-    const g = runGrader(task, work);
+    const g = task.expectedOutput !== undefined ? { passed: (outcome.output ?? "").trim() === task.expectedOutput.trim(), detail: "Exact expected-output comparison" } : task.grader ? runGrader(task, work) : { passed: !!task.rubric, detail: "No command check; rubric only" };
     passed = g.passed;
     detail = g.detail;
     if (!passed) failKind = "grader";
+  }
+  const checkPassed = passed;
+  let judge: TrialResult["judge"];
+  if (task.rubric && opts.judgeModel && !outcome.error && outcome.killed === "none" && failKind !== "budget") {
+    let diff = ""; try { diff = execFileSync("git", ["-c", "core.fsmonitor=false", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD"], { cwd: work, encoding: "utf8", windowsHide: true, maxBuffer: 1024 * 1024, timeout: 10_000 }); } catch { diff = "Diff unavailable or exceeds 1 MiB."; }
+    judge = await judgeOutput({ model: opts.judgeModel, rubric: task.rubric, prompt: task.prompt, output: outcome.output ?? "", diff, cwd: work, price: opts.judgePrice });
+    if (judge.status !== "complete" || judge.score! < .7) { passed = false; if (failKind === "none") failKind = "judge"; }
   }
   rmSync(work, { recursive: true, force: true });
   if (settingsPath) rmSync(join(settingsPath, ".."), { recursive: true, force: true });
@@ -192,6 +223,8 @@ export async function runTrial(opts: {
     task: task.name, model: model.id, family: model.family ?? model.id, variant: variant.name, trial: opts.trial,
     passed, failKind, graderDetail: detail, turnReason: outcome.turnReason, wallMs, requests: outcome.requests,
     tokens: outcome.tokens, costUsd: costOf(outcome.tokens, model.prices), priced: !!model.prices, cacheHitRate: cacheHitRate(outcome.tokens), ...(model.reasoningEffort ? { reasoningEffort: model.reasoningEffort } : {}),
+    ...(outcome.sessionId ? { sessionId: outcome.sessionId } : {}), output: outcome.output ?? "", ...(outcome.transcript ? { transcript: outcome.transcript } : { transcriptUnavailable: outcome.transcriptUnavailable ?? "Transcript unavailable" }),
+    checkPassed, ...(judge ? { judge } : {}),
   };
 }
 
@@ -199,6 +232,7 @@ export async function runEval(opts: {
   config: EvalConfig; tasks: TaskDef[]; buildId: string; env?: Record<string, string>; onResult?: (r: TrialResult) => void;
 }): Promise<RunRecord> {
   const { config } = opts;
+  if (opts.tasks.some((task) => task.rubric) && !config.judgeModel) throw new Error("Select judgeModel explicitly for rubric tasks");
   const variants = config.variants?.length ? config.variants : [{ name: "baseline" }];
   const trials = config.trials ?? 1;
   const autonomy = config.autonomy ?? "medium";
@@ -208,7 +242,7 @@ export async function runEval(opts: {
     for (const variant of variants)
       for (const task of opts.tasks)
         for (let t = 1; t <= trials; t++) {
-          const r = await runTrial({ task, model, variant, trial: t, autonomy, timeoutMs: config.timeoutMs ?? DEFAULT_TIMEOUT_MS, env: opts.env });
+          const r = await runTrial({ task, model, variant, trial: t, autonomy, timeoutMs: config.timeoutMs ?? DEFAULT_TIMEOUT_MS, env: opts.env, judgeModel: config.judgeModel, judgePrice: config.models.find((m) => m.id === config.judgeModel)?.prices });
           results.push(r);
           opts.onResult?.(r);
         }

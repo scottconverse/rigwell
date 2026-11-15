@@ -9,6 +9,7 @@ import { initialWindowOptions, overlayFor } from "./appearance.ts";
 import { DaemonBroker } from "./broker.ts";
 import { saveSessionExport } from "./session-export.ts";
 import { saveAnalyticsExport } from "./analytics-export.ts";
+import { saveEvalExport } from "./eval-export.ts";
 import { daemonCommand as buildDaemonCommand } from "./daemon-cmd.ts";
 import { checkForUpdate, describeCheck, type UpdateCheck } from "./update-feed.ts";
 import { downloadAndVerify, installAppImage, UpdateRefused } from "./update-verify.ts";
@@ -393,6 +394,11 @@ function registerIpc() {
   ipcMain.handle("dialog:saveAnalyticsExport", guard(async (e, content: unknown) => saveAnalyticsExport(content, async () => {
     const win = BrowserWindow.fromWebContents(e.sender);
     const result = await dialog.showSaveDialog(win!, { title: "Export local analytics", defaultPath: "rigwell-analytics.csv", filters: [{ name: "Analytics CSV", extensions: ["csv"] }] });
+    return result.canceled ? null : result.filePath ?? null;
+  })));
+  ipcMain.handle("dialog:saveEvalExport", guard(async (e, format: unknown, content: unknown) => saveEvalExport(format, content, async (extension) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const result = await dialog.showSaveDialog(win!, { title: "Export local evaluation", defaultPath: `rigwell-evaluation.${extension}`, filters: [{ name: "Evaluation results", extensions: [extension] }] });
     return result.canceled ? null : result.filePath ?? null;
   })));
   ipcMain.handle("shell:openExternal", guard((_e, url: string) => {
