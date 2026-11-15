@@ -12,7 +12,7 @@ import { saveAnalyticsExport } from "./analytics-export.ts";
 import { saveEvalExport } from "./eval-export.ts";
 import { daemonCommand as buildDaemonCommand } from "./daemon-cmd.ts";
 import { checkForUpdate, describeCheck, type UpdateCheck } from "./update-feed.ts";
-import { downloadAndVerify, installAppImage, UpdateRefused } from "./update-verify.ts";
+import { downloadAndVerify, installAppImage, rollbackAppImage, UpdateRefused } from "./update-verify.ts";
 import { dictationStatus, DictationError, transcribe as transcribeSpeech } from "./dictation.ts";
 import { readOrgManaged } from "./org-managed.ts";
 import { trayModel, type TrayModel } from "./tray.ts";
@@ -31,6 +31,7 @@ import { localProfileController, profileDesktopData, rememberDefaultProfileData 
 import { applyProfileOption } from "../../src/storage/local-profiles.ts";
 import { appendDiagnosticLog, installProcessCrashCapture, recordCrash } from "../../src/diagnostics/reports.ts";
 import { rendererCrashReceiver, saveBugReport } from "./bug-report.ts";
+import { guardWindowsInstallation } from "./windows-update.ts";
 
 // The bundle lives in <app>/dist next to preload.cjs and renderer/. app.getAppPath() is the folder with package.json
 // (also correct inside an asar), which is more reliable than __dirname because bundlers may inline that.
@@ -533,8 +534,10 @@ async function runUpdateCheck(manual: boolean): Promise<UpdateCheck> {
     try {
       const { autoUpdater } = await import("electron-updater");
       autoUpdater.setFeedURL({ provider: "generic", url: feedUrl() });
+      if (process.platform === "win32") {
+        guardWindowsInstallation(autoUpdater, e => { void dialog.showMessageBox({ type: "error", message: "The update signature was refused", detail: String(e) }); });
+      } else autoUpdater.on("update-downloaded", () => autoUpdater.quitAndInstall());
       autoUpdater.autoDownload = false;
-      autoUpdater.on("update-downloaded", () => autoUpdater.quitAndInstall());
       await autoUpdater.checkForUpdates();
       await autoUpdater.downloadUpdate();
     } catch (e) { void dialog.showMessageBox({ type: "error", message: "The update could not be installed", detail: String(e instanceof Error ? e.message : e) }); }
@@ -555,6 +558,12 @@ function buildMenu() {
       { label: "Settings", accelerator: "CmdOrCtrl+,", click: send("/settings/general") },
       { label: "Copy CLI install command", click: () => { clipboard.writeText("bun install -g rigwell"); } },
       { label: "Check for Updates", click: () => void runUpdateCheck(true) },
+      { label: "Restore previous Linux version", visible: process.platform === "linux" && !!process.env.APPIMAGE, click: async () => {
+        const choice = await dialog.showMessageBox({ message: "Restore the previous installed version?", detail: "The app will restart using its local previous binary. Your profile data stays in place. Restore a profile backup separately if a version changed its data format.", buttons: ["Restore and restart", "Cancel"], defaultId: 1, cancelId: 1 });
+        if (choice.response !== 0 || !process.env.APPIMAGE) return;
+        try { rollbackAppImage(process.env.APPIMAGE); app.relaunch(); app.quit(); }
+        catch (e) { void dialog.showMessageBox({ type: "error", message: "The previous version could not be restored", detail: String((e as Error).message) }); }
+      } },
       mac ? { role: "close" as const } : { role: "quit" as const, label: "Exit" },
     ] },
     { role: "editMenu" as const },
@@ -671,7 +680,7 @@ async function boot() {
   buildMenu();
   updateTray();
   applyKeepAwake();
-  if (settings.desktopAutoUpdateEnabled && feedUrl()) setTimeout(() => void runUpdateCheck(false), 15_000).unref();
+  if (app.isPackaged && settings.desktopAutoUpdateEnabled && feedUrl()) setTimeout(() => void runUpdateCheck(false), 15_000).unref();
   createWindow(process.argv.find((a) => a.startsWith("--route="))?.slice(8) ?? "/");
   try { await supervisor.start(); } catch (e) {
     status("failed", (e as Error).message);

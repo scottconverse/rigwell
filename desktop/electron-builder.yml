@@ -32,7 +32,7 @@ protocols:
     schemes: [rigwell]
 publish:
   provider: generic
-  url: https://updates.invalid/rigwell   # replaced at run time by the updateFeedUrl setting; no hosted feed exists
+  url: https://github.com/scottconverse/rigwell/releases/latest/download
 linux:
   icon: assets/icons
   target: [AppImage, deb]
@@ -49,6 +49,7 @@ mac:
 dmg:
   title: Rigwell ${version}
 win:
+  publisherName: Scott Converse
   icon: assets/icon.ico
   target: [nsis]
   artifactName: rigwell-setup-${version}-${arch}.${ext}
