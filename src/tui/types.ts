@@ -158,6 +158,7 @@ export interface TuiState {
   handoff?: { specHandoffId: string };
   overlay: { title: string; lines: string[]; workstreamId?: string } | null;
   workstreamId?: string;
+  workstreamAttention?: Record<string, string>;
   pending: { steer: string[]; queue: string[] };
   lastEscAt: number;
   lastCtrlCAt: number;

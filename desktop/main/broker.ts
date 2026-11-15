@@ -117,6 +117,7 @@ export class DaemonBroker {
     let changed = false;
     for (const id of c.asked.keys()) if (this.open.delete(id)) changed = true;
     c.asked.clear();
+    if (!this.conns.size) for (const ev of this.tracker.resetWorkstreams()) this.attention(ev);
     if (changed) this.host.onAttention({ kind: "attention_resolved", sessionId: c.sessionId ?? "", summary: "", detail: "", at: Date.now() }, [...this.open.values()]);
   }
 

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { AttentionTracker } from "../../src/sidepane/attention.ts";
-import { notificationFor, badgeCount, soundFor } from "../../desktop/main/alerts.ts";
+import { attentionTag, notificationFor, badgeCount, soundFor } from "../../desktop/main/alerts.ts";
 import { DEFAULT_SETTINGS } from "../../desktop/main/settings.ts";
 import { reduce } from "../../desktop/renderer/lib/transcript.ts";
 import { SessionController } from "../../desktop/renderer/lib/session.ts";
@@ -14,7 +14,12 @@ test("workstream attention is deduplicated across views and routes input, failur
   expect(notificationFor(need!, DEFAULT_SETTINGS, { focused: false })!.route).toBe("/workstreams/ws");
   expect(badgeCount([need!, need!])).toBe(1);
   expect(soundFor(need!, DEFAULT_SETTINGS, { focused: false })).toBeDefined();
-  expect(t.onNotification("lead", { ...status, agent: { ...status.agent, status: "idle" } })[0]!.kind).toBe("attention_resolved");
+  const resolved = t.onNotification("lead", { ...status, agent: { ...status.agent, status: "idle" } })[0]!;
+  expect(resolved.kind).toBe("attention_resolved");
+  expect(attentionTag(resolved)).toBe(notificationFor(need!, DEFAULT_SETTINGS, { focused: false })!.tag);
+  expect(notificationFor(need!, { ...DEFAULT_SETTINGS, notifications: { ...DEFAULT_SETTINGS.notifications, needsInput: false } }, { focused: false })).toBeUndefined();
+  expect(notificationFor(need!, DEFAULT_SETTINGS, { focused: true, viewingSessionId: "lead" })).toBeUndefined();
+  expect(notificationFor({ ...need!, cancelled: true }, DEFAULT_SETTINGS, { focused: false })).toBeUndefined();
   const [failed] = t.onNotification("lead", { ...status, agent: { ...status.agent, status: "failed" } });
   expect(notificationFor(failed!, DEFAULT_SETTINGS, { focused: false })!.title).toBe("Stopped with a problem");
   const budget = { type: "workstream_budget_reached", workstreamId: "ws", reason: "Token limit" };
@@ -22,6 +27,10 @@ test("workstream attention is deduplicated across views and routes input, failur
   expect(t.onNotification("lead", budget)).toEqual([]);
   t.onNotification("lead", { type: "workstream_updated", workstreamId: "ws", workstream: { state: "active" } });
   expect(t.onNotification("lead", budget)).toHaveLength(1);
+  const reset = t.resetWorkstreams();
+  expect(reset).toHaveLength(2); expect(reset.every((ev) => ev.kind === "attention_resolved" && ev.workstreamId === "ws")).toBe(true);
+  expect(t.resetWorkstreams()).toEqual([]);
+  expect(t.onNotification("lead", status)).toHaveLength(1);
 });
 
 test("committed user messages deduplicate optimistic messages and preserve transcript order", () => {

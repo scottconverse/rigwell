@@ -64,9 +64,25 @@ export function askUserSummary(params: Record<string, any>): { summary: string; 
   return { summary: q?.question ? `Question: ${clip(String(q.question), 90)}` : "The agent has a question", detail: (params.questions ?? []).map((x: any) => x.question).join("\n") };
 }
 
-/** Per-connection tracker. Feed it relayed traffic; it returns events to act on. */
+/** Shared pure category transition for desktop tracking and the terminal reducer. */
+export function workstreamAttention(states: Readonly<Record<string, string>>, sessionId: string, n: Record<string, any>, at: number): { states: Record<string, string>; events: AttentionEvent[] } {
+  const next = { ...states }, workstreamId = n.workstreamId;
+  if (typeof workstreamId !== "string") return { states: next, events: [] };
+  if (n.type === "workstream_updated" && ["active", "archived"].includes(n.workstream?.state)) {
+    const key = `workstream-${workstreamId}-budget`;
+    if (next[key]) { delete next[key]; return { states: next, events: [{ kind: "attention_resolved", sessionId, workstreamId, requestId: key, summary: "", detail: "", at }] }; }
+  }
+  const agent = n.agent, key = `workstream-${workstreamId}-${agent?.agentId ?? "budget"}`;
+  const state = n.type === "workstream_agent_status" ? agent?.status : n.type === "workstream_budget_reached" ? "budget" : undefined;
+  if (typeof state !== "string" || next[key] === state) return { states: next, events: [] };
+  next[key] = state;
+  if (!["waiting_input", "failed", "budget"].includes(state)) return { states: next, events: [{ kind: "attention_resolved", sessionId, workstreamId, requestId: key, summary: "", detail: "", at }] };
+  return { states: next, events: [{ kind: "attention_requested", requestKind: "workstream_attention", category: state === "budget" ? "workstream_budget_reached" : state === "failed" ? "workstream_agent_failed" : "workstream_needs_input", sessionId, workstreamId, agentId: agent?.agentId, requestId: key, summary: state === "budget" ? `Workstream budget reached: ${n.reason}` : `${agent.name}: ${state === "failed" ? "stopped with a problem" : "needs your input"}`, detail: String(agent?.lastSummary ?? ""), failed: state === "failed", at }] };
+}
+
+/** Feed relayed traffic; one tracker shared across views deduplicates their events. */
 export class AttentionTracker {
-  private workstreamStates = new Map<string, string>();
+  private workstreamStates: Record<string, string> = {};
   private lastText = new Map<string, { messageId: string; text: string }>();
   private open = new Map<string, AttentionEvent>(); // by requestId
 
@@ -86,18 +102,9 @@ export class AttentionTracker {
   /** A session_notification. */
   onNotification(sessionId: string, n: Record<string, any>): AttentionEvent[] {
     if (typeof n.workstreamId === "string") {
-      if (n.type === "workstream_updated" && ["active", "archived"].includes(n.workstream?.state)) {
-        const key = `workstream-${n.workstreamId}-budget`;
-        if (this.workstreamStates.delete(key)) return [{ kind: "attention_resolved", sessionId, workstreamId: n.workstreamId, requestId: key, summary: "", detail: "", at: Date.now() }];
-      }
-      const agent = n.agent, key = `workstream-${n.workstreamId}-${agent?.agentId ?? "budget"}`;
-      const state = n.type === "workstream_agent_status" ? agent?.status : n.type === "workstream_budget_reached" ? "budget" : undefined;
-      if (!state || this.workstreamStates.get(key) === state) return [];
-      this.workstreamStates.set(key, state);
-      if (!["waiting_input", "failed", "budget"].includes(state)) return [{ kind: "attention_resolved", sessionId, workstreamId: n.workstreamId, requestId: key, summary: "", detail: "", at: Date.now() }];
-      return [{ kind: "attention_requested", requestKind: "workstream_attention", category: state === "budget" ? "workstream_budget_reached" : state === "failed" ? "workstream_agent_failed" : "workstream_needs_input",
-        sessionId, workstreamId: n.workstreamId, agentId: agent?.agentId, requestId: key,
-        summary: state === "budget" ? `Workstream budget reached: ${n.reason}` : `${agent.name}: ${state === "failed" ? "stopped with a problem" : "needs your input"}`, detail: String(agent?.lastSummary ?? ""), failed: state === "failed", at: Date.now() }];
+      const next = workstreamAttention(this.workstreamStates, sessionId, n, Date.now()); this.workstreamStates = next.states;
+      for (const ev of next.events) if (ev.requestId) { if (ev.kind === "attention_requested") this.open.set(ev.requestId, ev); else this.open.delete(ev.requestId); }
+      return next.events;
     }
     switch (n.type) {
       case "assistant_text_delta": {
@@ -138,5 +145,11 @@ export class AttentionTracker {
     if (!open) return undefined;
     this.open.delete(requestId);
     return { kind: "attention_resolved", requestKind: open.requestKind, category: open.category, sessionId, summary: open.summary, detail: "", requestId, at: Date.now() };
+  }
+  resetWorkstreams(): AttentionEvent[] {
+    this.workstreamStates = {};
+    const out: AttentionEvent[] = [];
+    for (const [id, ev] of this.open) if (ev.requestKind === "workstream_attention") { this.open.delete(id); out.push({ ...ev, kind: "attention_resolved", at: Date.now() }); }
+    return out;
   }
 }

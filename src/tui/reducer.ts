@@ -4,6 +4,7 @@ import { expandEntry, parseLoop } from "./customcmd.ts";
 import { plainStyler, transcriptLines, transcriptOpts } from "./transcript.ts";
 import { diffBody } from "./diff.ts";
 import { managedLabel } from "../storage/org.ts";
+import { workstreamAttention } from "../sidepane/attention.ts";
 import { formatContext, type ContextStats } from "./context.ts";
 import { DEFAULT_DISPLAY, OTHER_LABEL, OTHER_VALUE, type DisplaySettings, type Effect, type Item, type Key, type Panel, type Step, type TuiEvent, type TuiState } from "./types.ts";
 
@@ -379,7 +380,13 @@ function notification(s: TuiState, n: { type: string; [k: string]: any }): Step 
     if (s.overlay?.workstreamId === n.workstreamId) effects.push({ type: "view", name: "workstreams", args: n.workstreamId, refresh: true });
     return { state: { ...s, panels: s.panels.filter((p) => !dead.includes(p)) }, effects };
   }
-  if (String(n.type).startsWith("workstream_") && s.overlay?.workstreamId === n.workstreamId && n.workstreamId) return { state: s, effects: [{ type: "view", name: "workstreams", args: n.workstreamId, refresh: true }] };
+  if (String(n.type).startsWith("workstream_") && typeof n.workstreamId === "string") {
+    const next = workstreamAttention(s.workstreamAttention ?? {}, s.sessionId ?? "", n, s.now);
+    const requested = next.events.filter((ev) => ev.kind === "attention_requested");
+    const effects: Effect[] = requested.length ? [{ type: "attention", kind: "awaiting" }] : [];
+    if (s.overlay?.workstreamId === n.workstreamId) effects.push({ type: "view", name: "workstreams", args: n.workstreamId, refresh: true });
+    return { state: { ...s, workstreamAttention: next.states, items: [...s.items, ...requested.map((ev): Item => ({ kind: "info", text: ev.summary, level: ev.failed ? "error" : "info" }))] }, effects };
+  }
   switch (n.type) {
     case "settings_updated": {
       const st = n.settings ?? {};
@@ -844,7 +851,11 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
     case "request": {
       const panel = e.method === "request_permission" ? permissionPanel(e.id, e.params, s.display) : e.method === "ask_user" ? askPanel(e.id, e.params)
         : e.method === "request_trust" ? trustPanel(e.id, e.params) : pickPanel(e.id, e.params);
-      if (typeof e.params.workstreamId === "string") { panel.workstreamId = e.params.workstreamId; panel.agentId = e.params.agentId; panel.title = `${e.params.workstreamTitle} / ${e.params.agentName}: ${panel.title}`; }
+      if (typeof e.params.workstreamId === "string" && typeof e.params.agentId === "string") {
+        panel.workstreamId = e.params.workstreamId; panel.agentId = e.params.agentId; panel.title = `${e.params.workstreamTitle} / ${e.params.agentName}: ${panel.title}`;
+        const next = notification(s, { type: "workstream_agent_status", workstreamId: panel.workstreamId, agent: { agentId: panel.agentId, name: e.params.agentName, status: "waiting_input" } });
+        return { state: { ...next.state, panels: [...s.panels, panel], working: "waiting_for_tool_confirmation" }, effects: next.effects };
+      }
       return { state: { ...s, panels: [...s.panels, panel], working: "waiting_for_tool_confirmation" }, effects: [{ type: "attention", kind: "awaiting" }] };
     }
     case "session_ready": {

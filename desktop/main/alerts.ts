@@ -18,6 +18,7 @@ export interface NotifyAction {
   /** Click opens this route. */
   route: string;
 }
+export const attentionTag = (ev: AttentionEvent) => ev.workstreamId ? ev.requestId ?? `workstream-${ev.workstreamId}-${ev.agentId ?? "budget"}` : `session-${ev.sessionId}`;
 
 export function notificationFor(ev: AttentionEvent, s: DesktopSettings, w: WindowState): NotifyAction | undefined {
   if (ev.kind !== "attention_requested" || ev.cancelled) return undefined;
@@ -29,7 +30,7 @@ export function notificationFor(ev: AttentionEvent, s: DesktopSettings, w: Windo
   // Skip the toast when the user is already looking at that session.
   if (w.focused && w.viewingSessionId === ev.sessionId) return undefined;
   return {
-    tag: ev.workstreamId ? `workstream-${ev.workstreamId}-${ev.agentId ?? "budget"}` : `session-${ev.sessionId}`,
+    tag: attentionTag(ev),
     title: ev.failed ? "Stopped with a problem" : needs ? "Needs your input" : "Finished",
     body: ev.summary,
     route: ev.workstreamId ? `/workstreams/${ev.workstreamId}` : `/sessions/${ev.sessionId}`,

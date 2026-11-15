@@ -4,7 +4,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nati
 import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { badgeCount, notificationFor, soundFor, type SoundAction, type WindowState } from "./alerts.ts";
+import { attentionTag, badgeCount, notificationFor, soundFor, type SoundAction, type WindowState } from "./alerts.ts";
 import { initialWindowOptions, overlayFor } from "./appearance.ts";
 import { DaemonBroker } from "./broker.ts";
 import { saveSessionExport } from "./session-export.ts";
@@ -84,7 +84,7 @@ const toasts = new Map<string, Notification>();
 function onAttention(ev: import("../../src/sidepane/attention.ts").AttentionEvent, open: import("../../src/sidepane/attention.ts").AttentionEvent[]) {
   app.setBadgeCount(badgeCount(open));
   updateTray();
-  if (ev.kind === "attention_resolved") { toasts.get(`session-${ev.sessionId}`)?.close(); return; }
+  if (ev.kind === "attention_resolved") { const tag = attentionTag(ev); toasts.get(tag)?.close(); toasts.delete(tag); return; }
   const w = windowState();
   const n = notificationFor(ev, settings, w);
   if (n && Notification.isSupported()) {
