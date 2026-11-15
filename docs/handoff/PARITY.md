@@ -71,11 +71,11 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 36. Feature flags and a Labs page. Delivered on 8ecadcd with all four required CI jobs and unsigned packages green. See docs/labs.md and HANDOFF State.
 37. Mission readiness report. Delivered on 16cb71d with all four required CI jobs and unsigned packages green. See docs/mission-readiness.md and HANDOFF State.
 38. Local crash reports and Report a bug (§20.22). Delivered on 1676dc3 with all four required CI jobs and unsigned packages green. See docs/crash-reports.md and HANDOFF State.
-39. Workstream notification categories (§20.23). Implemented with affected checks passing; awaiting required CI. See docs/workstream-notifications.md and HANDOFF State.
+39. Workstream notification categories (§20.23). Delivered on 4033800 with all four required CI jobs and unsigned packages green. See docs/workstream-notifications.md and HANDOFF State.
 
 ## 9. Release readiness (§20.24)
 
-40. Real macOS and Windows hardware tests: keychains, clipboards, terminals, notifications, tray, deep links.
+40. Real macOS and Windows hardware tests: Windows native probes and desktop suite pass; Windows credential backend and test-profile correction implemented, awaiting required CI. Real macOS hardware unavailable, owner directed continuation. Installed registration remains release acceptance. See docs/hardware-acceptance.md.
 41. Code signing and notarization in CI (owner supplies certificates).
 42. Update feed on GitHub Releases; test install, update and rollback.
 43. Installers, install docs, first-run check on a clean machine for each OS.

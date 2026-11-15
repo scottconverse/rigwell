@@ -1,0 +1,28 @@
+# Native platform acceptance
+
+## Windows Halo, November 14, 2026
+
+The owner approved interactive testing for this run. The app used a disposable home, temporary Git repository and fake model service. Personal model settings and existing credential entries were not used.
+
+- Full local desktop suite: 224 passed, five Linux-package skips, zero failures, 1260 assertions. Includes actual Electron trust/questions, tray visibility and attention, and a live terminal surviving reload. This suite ran after the temporary-profile fix and before final credential integration checks.
+- Actual Windows Credential Manager: a uniquely named synthetic entry was absent, created, read back with Unicode, replaced, deleted and confirmed absent. No secret value was printed. Native backend operations require no interactive dialog or elevation.
+- Actual Electron app: Help's copy command placed the expected text in the OS clipboard. The private probe saved advertised format buffers in memory and attempted to restore them in finally; exact multi-format restoration was not independently checked. No clipboard content was retained in the receipt.
+- Native tray creation and attention state were read from the running app. An OS notification reported supported and emitted its native show event. That verifies submission, not visual appearance under every Windows notification/focus setting.
+- The running app's OS URL event handler routed a rigwell URL to Workstreams. This does not establish installed protocol registration or a browser-to-installed-app round trip.
+- All owned probe/test apps and daemons exited. No live model or subscription calls occurred.
+
+Private receipts outside Git: ../windows-desktop-after.log, ../windows-native-handlers.log, ../windows-keychain-probe.log and ../hardware-native-result.json. The latter used the notification candidate plus credential/test-setup source changes. Fake-runner credential/rotation tests separately cover final integration.
+
+The initial native suite failed before app startup because the isolated USERPROFILE lacked AppData/Roaming and Local. A minimal native Electron probe reproduced failed known-folder lookup, then succeeded with those directories present. Test preload now creates them, retaining personal-home isolation. No app path fallback or test deadline was changed.
+
+## Credential behavior
+
+Windows now tries current-user generic Credential Manager entries before the existing owner-private file fallback. Names are prefixed with rigwell and named profiles retain their hashed namespace. A fixed PowerShell/C# bridge calls the documented CredReadW, CredWriteW and CredDeleteW APIs. Names and values travel over stdin, never interpolated into code or command arguments; the subprocess is hidden and bounded. Unicode values use UTF-8. Windows' 2560-byte credential blob limit, unavailable PowerShell or native refusal fall back to the existing file store.
+
+Successful credential rotation removes the same name from other available backends so an older native value cannot shadow a new file fallback. A failure to remove a readable stale value is reported as an error. Existing credential files are not automatically migrated. Ordinary tests use isolated files; backend tests inject fake runners, and native acceptance is an explicit hand run.
+
+API reference: [CREDENTIALW](https://learn.microsoft.com/en-us/windows/win32/api/wincred/ns-wincred-credentialw), [CredWriteW](https://learn.microsoft.com/en-us/windows/win32/api/wincred/nf-wincred-credwritew).
+
+## Remaining release acceptance
+
+Real macOS hardware is unavailable; the owner requested continued work without it. macOS CI tests and unsigned packaging are verified separately. Real macOS Keychain, clipboard, terminal, notifications, tray and deep links remain pending. Installed Windows protocol registration, signed installation, update/rollback and clean-machine behavior belong to the subsequent release items and are not claimed here.

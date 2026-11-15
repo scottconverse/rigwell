@@ -6,6 +6,8 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { rigwellHome } from "./paths.ts";
+import { WindowsCredentialBackend } from "./windows-credentials.ts";
+export { WindowsCredentialBackend } from "./windows-credentials.ts";
 
 export const KEYCHAIN_PREFIX = "keychain:";
 const SERVICE = "rigwell";
@@ -115,7 +117,15 @@ export class CredentialStore {
   set(name: string, value: string): string {
     for (const b of this.backends) {
       if (!b.available()) continue;
-      try { if (b.set(name, value)) return b.name; } catch { /* next backend */ }
+      let saved = false;
+      try { saved = b.set(name, value); } catch { /* next backend */ }
+      if (!saved) continue;
+      // A rotated value must not be shadowed by an older value in another backend.
+      for (const other of this.backends) if (other !== b && other.available()) {
+        try { other.delete(name); } catch { /* verify below */ }
+        if (other.get(name) !== undefined) throw new Error("could not remove the previous credential from another backend");
+      }
+      return b.name;
     }
     throw new Error("no credential backend could store the value");
   }
@@ -140,6 +150,7 @@ export function defaultCredentialStore(platform: string = process.platform, run:
     const scoped = (backend: CredentialBackend): CredentialBackend => scope ? { name: backend.name, available: () => backend.available(), get: (name) => backend.get(scope + name), set: (name, value) => backend.set(scope + name, value), delete: (name) => backend.delete(scope + name) } : backend;
     if (platform === "darwin") backends.push(scoped(new MacKeychainBackend(run)));
     else if (platform === "linux") backends.push(scoped(new SecretToolBackend(run)));
+    else if (platform === "win32") backends.push(scoped(new WindowsCredentialBackend(run === spawnRunner ? undefined : run)));
   }
   backends.push(new FileBackend());
   return new CredentialStore(backends);
