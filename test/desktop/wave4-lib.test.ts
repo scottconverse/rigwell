@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { DaemonBroker } from "../../desktop/main/broker.ts";
 import { readOrgManaged } from "../../desktop/main/org-managed.ts";
 import { loadDesktopSettings, updateDesktopSettings } from "../../desktop/main/settings.ts";
+import { LINUX_UPDATE_PUBLIC_KEY } from "../../desktop/main/release-config.ts";
 import { DEFAULT_ENV_ROW, defaultMode, deleteWarning, filterDomains, importSummary, pollLogin, providerStatus, validateSecret, varsToParam, type LoginStatus } from "../../desktop/renderer/lib/access.ts";
 import { isHandoffOption, nextHandoff, specAnswer, specOptions } from "../../desktop/renderer/lib/handoff.ts";
 import { groupTemplates, previewInstructions, setupCard, templateCreate, visualStale, type TemplateRow } from "../../desktop/renderer/lib/templates.ts";
@@ -135,7 +136,7 @@ describe("org labels, settings and the tray counts", () => {
     const dir = mkdtempSync(join(tmpdir(), "rigwell-ds-"));
     try {
       const d = loadDesktopSettings(dir);
-      expect(d).toMatchObject({ menuBarEnabled: true, updatePublicKey: "", dictation: { backend: "off", command: "" } });
+      expect(d).toMatchObject({ menuBarEnabled: true, updatePublicKey: LINUX_UPDATE_PUBLIC_KEY, dictation: { backend: "off", command: "" } });
       const next = updateDesktopSettings(dir, { dictation: { backend: "bogus", command: 5 }, updatePublicKey: "abc" });
       expect(next.dictation.backend).toBe("off");
       expect(next.dictation.command).toBe("");

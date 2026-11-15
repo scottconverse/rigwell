@@ -7,7 +7,8 @@ import { prepareFeed } from "../../desktop/packaging/prepare-feed.ts";
 import { RELEASE_FEED_URL, WINDOWS_PUBLISHER } from "../../desktop/main/release-config.ts";
 import { DEFAULT_SETTINGS } from "../../desktop/main/settings.ts";
 import { checkForUpdate, feedDocumentUrl } from "../../desktop/main/update-feed.ts";
-import { downloadAndVerify, installAppImage, rollbackAppImage } from "../../desktop/main/update-verify.ts";
+import { downloadAndVerify, installLinuxUpdate, rollbackAppImage } from "../../desktop/main/update-verify.ts";
+import { linuxReleaseTarball } from "../../desktop/main/linux-release.ts";
 
 test("release defaults use platform documents on GitHub, retain explicit disabled feeds and pin the signing publisher", () => {
   expect(DEFAULT_SETTINGS.updateFeedUrl).toBe(RELEASE_FEED_URL);
@@ -25,15 +26,15 @@ test("final-byte feed generation recomputes signed installer hashes and requires
 });
 
 test("local signed release feed drives download, install, upgrade and local rollback without a remote downgrade", async () => {
-  const root = mkdtempSync(join(tmpdir(), "rigwell-release-flow-")), v1 = join(root, "one.AppImage"), v2 = join(root, "two.AppImage"), installed = join(root, "installed.AppImage");
+  const root = mkdtempSync(join(tmpdir(), "rigwell-release-flow-")), v1 = join(root, "one.tar.gz"), v2 = join(root, "two.tar.gz"), installed = join(root, "installed.AppImage");
   const keys = generateKeyPairSync("ed25519"), publicKey = keys.publicKey.export({ type: "spki", format: "pem" }).toString();
-  for (const [file, bytes] of [[v1, "release one"], [v2, "release two"]]) { writeFileSync(file!, bytes!); writeFileSync(file! + ".sig", sign(null, Buffer.from(bytes!), keys.privateKey).toString("base64")); }
+  for (const [file, bytes] of [[v1, "release one"], [v2, "release two"]]) { const archive = linuxReleaseTarball(Buffer.from(bytes!)); writeFileSync(file!, archive); writeFileSync(file! + ".sig", sign(null, archive, keys.privateKey).toString("base64")); }
   let version = "1.0.0", artifact = v1;
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) { if (new URL(req.url).pathname === "/latest-linux.yml") return Response.json(prepareFeed("linux", version, [artifact])); return new Response(readFileSync(artifact)); } });
   try {
     const url = `http://127.0.0.1:${server.port}`;
     writeFileSync(installed, "initial install");
-    const apply = async (currentVersion: string) => { const offer = await checkForUpdate({ feedUrl: url, currentVersion, platform: "linux" }); expect(offer.status).toBe("available"); if (offer.status !== "available") throw new Error("missing offer"); const verified = await downloadAndVerify({ url: offer.downloadUrl!, publicKey, signature: offer.signature, sha512: offer.sha512, size: offer.size, destDir: join(root, "downloads") }); installAppImage(verified.path, installed); };
+    const apply = async (currentVersion: string) => { const offer = await checkForUpdate({ feedUrl: url, currentVersion, platform: "linux" }); expect(offer.status).toBe("available"); if (offer.status !== "available") throw new Error("missing offer"); const verified = await downloadAndVerify({ url: offer.downloadUrl!, publicKey, signature: offer.signature, sha512: offer.sha512, size: offer.size, destDir: join(root, "downloads") }); installLinuxUpdate(verified.path, installed); };
     await apply("0.0.0"); expect(readFileSync(installed, "utf8")).toBe("release one");
     artifact = v2; version = "2.0.0"; await apply("1.0.0"); expect(readFileSync(installed, "utf8")).toBe("release two");
     rollbackAppImage(installed); expect(readFileSync(installed, "utf8")).toBe("release one");

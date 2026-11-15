@@ -24,6 +24,25 @@ blockmap from the final signed installer with the bundled app-builder binary:
 & desktop/node_modules/app-builder-bin/win/x64/app-builder.exe blockmap --input=C:/release/rigwell-setup-0.1.0-x64.exe --output=C:/release/rigwell-setup-0.1.0-x64.exe.blockmap
 ```
 
+The Linux tarball contains exactly one regular `Rigwell.AppImage`. Prepare,
+sign and describe the archive in that order:
+
+```powershell
+bun desktop/packaging/linux-release.ts /release/rigwell-0.1.0-x64.AppImage /release/rigwell-0.1.0-x64.tar.gz
+bun desktop/packaging/sign-update.ts sign /private/update-private.pem /release/rigwell-0.1.0-x64.tar.gz
+bun desktop/packaging/prepare-feed.ts linux 0.1.0 /release/rigwell-0.1.0-x64.tar.gz
+```
+
+Official builds embed the public half of the release key. The private half is
+held outside the checkout under the release owner's local application data,
+with a directory ACL restricted to that owner and SYSTEM on Windows. Back up
+that key securely; do not add it to Git or upload it with release artifacts.
+Custom distributions can select their own key in settings or the environment.
+The verified archive is parsed without filesystem extraction: only the expected
+regular payload is accepted, with checked lengths, header checksum and zero
+trailing blocks. Links, traversal names, extra entries and truncated archives
+are refused before any installed file is changed.
+
 Publish matching metadata, artifacts and blockmaps together only as an
 authorized release. Preparing a local feed does not publish a release.
 
@@ -65,6 +84,7 @@ and Microsoft timestamp. The new runtime verifier accepts that actual signed
 installer and refuses its preserved unsigned original. The intake remains an
 unpublished draft. This baseline does not contain subsequent updater changes.
 
-Real packaged update/rollback, embedded Linux release-key configuration,
-Linux tarball installation and clean-machine first run remain pending.
+The embedded Linux public key and strict tarball install path are implemented;
+independent system tar listing/extraction and fake signed-feed upgrade/rollback
+checks pass. Real packaged update/rollback and clean-machine first run remain pending.
 The owner has no macOS Developer ID certificate; notarization is not claimed.

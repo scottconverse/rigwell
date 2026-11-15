@@ -49,7 +49,8 @@ mac:
 dmg:
   title: Rigwell ${version}
 win:
-  publisherName: Scott Converse
+  signtoolOptions:
+    publisherName: Scott Converse
   icon: assets/icon.ico
   target: [nsis]
   artifactName: rigwell-setup-${version}-${arch}.${ext}

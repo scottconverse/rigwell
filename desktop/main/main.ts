@@ -12,7 +12,7 @@ import { saveAnalyticsExport } from "./analytics-export.ts";
 import { saveEvalExport } from "./eval-export.ts";
 import { daemonCommand as buildDaemonCommand } from "./daemon-cmd.ts";
 import { checkForUpdate, describeCheck, type UpdateCheck } from "./update-feed.ts";
-import { downloadAndVerify, installAppImage, rollbackAppImage, UpdateRefused } from "./update-verify.ts";
+import { downloadAndVerify, installLinuxUpdate, rollbackAppImage, UpdateRefused } from "./update-verify.ts";
 import { dictationStatus, DictationError, transcribe as transcribeSpeech } from "./dictation.ts";
 import { readOrgManaged } from "./org-managed.ts";
 import { trayModel, type TrayModel } from "./tray.ts";
@@ -519,7 +519,7 @@ async function runUpdateCheck(manual: boolean): Promise<UpdateCheck> {
     try {
       const v = await downloadAndVerify({ url: r.downloadUrl, publicKey: process.env.RIGWELL_UPDATE_PUBLIC_KEY || settings.updatePublicKey, signature: r.signature, sha512: r.sha512, size: r.size, destDir: join(HOME, "updates") });
       if (process.env.APPIMAGE) {
-        installAppImage(v.path, process.env.APPIMAGE);
+        installLinuxUpdate(v.path, process.env.APPIMAGE);
         const again = await dialog.showMessageBox({ message: "Update installed", detail: `Rigwell ${r.version} was verified and installed. Restart to use it.`, buttons: ["Restart now", "Later"], cancelId: 1 });
         if (again.response === 0) { app.relaunch(); app.quit(); }
       } else {

@@ -77,7 +77,7 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 
 40. Real macOS and Windows hardware tests: Windows native probes and desktop suite pass; Windows credential backend and test-profile correction delivered on 1bf5859 with all required CI green. Real macOS hardware unavailable, owner directed continuation. Installed registration remains release acceptance. See docs/hardware-acceptance.md.
 41. Code signing and notarization in CI: Windows baseline signed through existing Azure CI, run 43689064653; receipt, timestamp and signature independently verified on Halo. Owner has no macOS Developer ID certificate; notarization remains unavailable. See docs/release-updates.md.
-42. Update feed on GitHub Releases; test install, update and rollback. Feed generation, Windows signature refusal and Linux local rollback implemented; fake-service acceptance passes. Actual packaged upgrade/rollback, embedded Linux key and tarball installation pending. See docs/release-updates.md.
+42. Update feed on GitHub Releases; test install, update and rollback. Feed generation, Windows signature refusal and Linux local rollback implemented; fake-service acceptance passes. Embedded Linux public key and strict tarball installation implemented with independent tar interoperability and fake signed-feed tests. Actual packaged upgrade/rollback pending. See docs/release-updates.md.
 43. Installers, install docs, first-run check on a clean machine for each OS.
 
 ## Not applicable

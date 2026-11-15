@@ -120,7 +120,7 @@ By default nothing is configured, and the microphone button explains how to enab
 
 ### Signed Linux updates (spec 14.5)
 
-Linux updates are installed only if their Ed25519 signature verifies against a public key you configure. No key ships with the app, so out of the box Linux updates are refused with a message saying so.
+Linux updates are installed only if their Ed25519 signature verifies against the embedded release public key. Settings or the environment can select a different release key. The private signing key never ships in the app. An explicitly empty saved key refuses updates.
 
 ```
 bun desktop/packaging/sign-update.ts keygen ~/rigwell-keys        # writes update-private.pem, prints the public key
