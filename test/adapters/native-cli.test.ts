@@ -37,6 +37,21 @@ if(process.env.FAKE_BRIDGE){
 if(process.env.ANTHROPIC_API_KEY||process.env.OPENAI_API_KEY)process.exit(9);
 if(process.env.FAKE_BAD){console.log('not-json');process.exit(0)}
 if(process.env.FAKE_FAIL){console.log(JSON.stringify({type:'turn.failed',error:{message:'failed'}}));process.exit(0)}
+if(process.env.FAKE_METRICS){
+ const emit=e=>console.log(JSON.stringify(e));
+ if(args[0]==='exec'){
+  emit({type:'item.started',item:{id:'one',type:'command_execution',command:'PRIVATE_ARGUMENT'}});
+  emit({type:'item.completed',item:{id:'one',type:'command_execution',exit_code:1,status:'completed',aggregated_output:'PRIVATE_RESULT'}});
+  emit({type:'item.completed',item:{id:'two',type:'file_change',status:'completed'}});
+  emit({type:'item.started',item:{id:'three',type:'web_search'}});
+  emit({type:'item.started',item:{id:'bridge',type:'mcp_tool_call',server:'rigwell',tool:'ListAgents'}});
+  emit({type:'item.completed',item:{id:'bridge',type:'mcp_tool_call',server:'rigwell',tool:'ListAgents',status:'completed'}});
+ }else{
+  for(const [id,name] of [['one','Bash'],['two','Read'],['three','Read'],['bridge','mcp__rigwell__ListAgents']])emit({type:'assistant',message:{content:[{type:'tool_use',id,name,input:{path:'PRIVATE_ARGUMENT'}}]}});
+  for(const [id,is_error] of [['one',true],['two',false],['bridge',false]])emit({type:'user',message:{content:[{type:'tool_result',tool_use_id:id,is_error,content:'PRIVATE_RESULT'}]}});
+ }
+ if(process.env.FAKE_METRICS_FAIL){emit({type:'turn.failed',error:{message:'failed after tools'}});process.exit(0)}
+}
 if(args[0]==='exec'){
  console.log(JSON.stringify({type:'item.started',item:{type:'command_execution'}}));
  if(process.env.FAKE_WAIT)await new Promise(r=>setTimeout(r,30000));
@@ -57,6 +72,22 @@ for (const backend of ["claude-cli", "codex-cli"] as const) test(`${backend} com
   expect(done(events).stopReason).toBe("end_turn");
   expect(done(events).usage.cacheReadTokens).toBe(5);
   expect(done(events).content[0]).toMatchObject({ type: "text" });
+});
+
+for (const backend of ["claude-cli", "codex-cli"] as const) for (const failed of [false, true]) test(`${backend} records structured native tool outcomes on ${failed ? "failed" : "completed"} turns without duplicate bridge accounting`, async () => {
+  const metrics: any[] = [];
+  const fixture = makeStubSession(() => { throw new Error("must use native client"); }, {
+    resolveModel: () => req(backend).model, createAdapter: () => adapter({ FAKE_METRICS: "1", ...(failed ? { FAKE_METRICS_FAIL: "1" } : {}) }), streamWithRetry,
+    persistence: { appendMessage: async () => {}, appendTurnOutcome: async () => {}, saveSettings: async () => {}, appendAnalyticsMetric: async (metric) => { metrics.push(metric); } },
+  });
+  try {
+    fixture.session.addUserMessage("Inspect the fixture"); await fixture.session.settled();
+    const tools = metrics.filter((m) => m.kind === "tool"); expect(new Set(tools.map((m) => m.id)).size).toBe(3);
+    expect(tools.every((m) => m.model === req(backend).model.id)).toBe(true);
+    expect(tools.filter((m) => m.status === "failure").length).toBe(1); expect(tools.filter((m) => m.status === "success").length).toBe(1);
+    expect(JSON.stringify(metrics)).not.toContain("PRIVATE_"); expect(JSON.stringify(tools)).not.toContain("bridge");
+    expect(metrics.filter((m) => m.kind === "usage").length).toBe(failed ? 0 : 1); expect(metrics.find((m) => m.kind === "turn")?.reason).toBe(failed ? "model_request_rejected" : "completed");
+  } finally { await fixture.session.end(); rmSync(fixture.cwd, { recursive: true, force: true }); }
 });
 
 for (const backend of ["claude-cli", "codex-cli"] as const) test(`${backend} MCP calls use Rigwell Session gates and recorded tool results`, async () => {

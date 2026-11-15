@@ -7,8 +7,9 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, 
 import path from "node:path";
 import { projectSlug, rigwellHome, sessionsDir } from "./paths.ts";
 import { buildBloom, chunkText, proseOf, sha256, tokenize } from "./search-text.ts";
+import { cleanUsage, metricsOf } from "./analytics-records.ts";
 
-export const INGEST_SCHEMA_VERSION = 2;
+export const INGEST_SCHEMA_VERSION = 3;
 
 export class SessionIndexError extends Error {}
 
@@ -141,6 +142,10 @@ export function ingestTranscript(db: Database, projectKey: string, file: string)
   const newSpans: { index: number; lineStart: number; lineEnd: number; text: string; eventId: string | null }[] = [];
   let skipped = restart ? 0 : prev.transcript_skipped_lines;
   let messages = restart ? 0 : prev.transcript_messages_count;
+  const accounting = (restart ? null : db.query("SELECT * FROM session_analytics WHERE session_id = ?").get(id)) as any;
+  let inheritedLines = accounting?.inherited_lines ?? 0, legacyFork = accounting?.legacy_fork ?? 0;
+  let inheritedUsage = accounting?.inherited_usage ?? "{}";
+  const metrics: { line: number; slot: number; timestamp: number | null; data: string }[] = [];
   const row: Row = restart || !row0
     ? {
         session_id: id, project_key: projectKey, cwd: null, title: null, owner: null, parent: null, calling_session_id: null, calling_tool_use_id: null,
@@ -166,6 +171,12 @@ export function ingestTranscript(db: Database, projectKey: string, file: string)
       try { o = JSON.parse(line); } catch { skipped++; continue; }
       if (!o || typeof o !== "object") { skipped++; continue; }
       const t = stamp(o.timestamp);
+      if (o.type === "session_start") {
+        inheritedLines = Number.isSafeInteger(o.inheritedRecordCount) && o.inheritedRecordCount >= 0 ? o.inheritedRecordCount + 1 : 0;
+        legacyFork = typeof o.parent === "string" && !inheritedLines ? 1 : 0;
+        inheritedUsage = JSON.stringify(cleanUsage(o.analyticsInheritedUsage));
+      }
+      if (tailLine > inheritedLines) metricsOf(o).forEach((metric, slot) => metrics.push({ line: tailLine, slot, timestamp: t, data: JSON.stringify(metric) }));
       if (t !== null) { row.first_event_at ??= t; row.last_event_at = Math.max(row.last_event_at ?? 0, t); }
       if (o.type === "session_start" && row.cwd === null) {
         row.cwd = typeof o.cwd === "string" ? o.cwd : null;
@@ -220,6 +231,12 @@ export function ingestTranscript(db: Database, projectKey: string, file: string)
          last_event_at=excluded.last_event_at, messages_count=excluded.messages_count, host_id=excluded.host_id, worktree=excluded.worktree,
          pinned=excluded.pinned, preview=excluded.preview, transcript_path=excluded.transcript_path`,
     ).run(Object.fromEntries(Object.entries(row).map(([k, v]) => ["$" + k, v])) as any);
+    if (restart) db.query("DELETE FROM analytics_events WHERE session_id = ?").run(id);
+    db.query(`INSERT INTO session_analytics (session_id, inherited_lines, legacy_fork, inherited_usage, settings_usage) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET inherited_lines=excluded.inherited_lines, legacy_fork=excluded.legacy_fork, inherited_usage=excluded.inherited_usage, settings_usage=excluded.settings_usage`)
+      .run(id, inheritedLines, legacyFork, inheritedUsage, JSON.stringify(cleanUsage(s?.tokenUsage)));
+    const metricInsert = db.query("INSERT INTO analytics_events (session_id, line_number, slot, timestamp, data) VALUES (?, ?, ?, ?, ?)");
+    for (const metric of metrics) metricInsert.run(id, metric.line, metric.slot, metric.timestamp, metric.data);
     db.query(
       `INSERT INTO session_ingest (session_id, transcript_mtime_ms, transcript_size, transcript_offset, transcript_skipped_lines, transcript_messages_count,
          settings_mtime_ms, settings_size, schema_version,

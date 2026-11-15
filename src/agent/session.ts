@@ -25,6 +25,7 @@ import {
 } from "./compaction.ts";
 import { AUTO_MODEL_ID, route, type RouteChoice, type RouterConfig } from "./router.ts";
 import type { CompactionRecord } from "../storage/transcript.ts";
+import type { AnalyticsMetric } from "../storage/analytics-records.ts";
 import { DeferredRegistry, type DeferredState } from "./deferred.ts";
 import { RequestBuilder } from "./request.ts";
 import { COORDINATION_TOOLS } from "../adapters/coordination-bridge.ts";
@@ -115,6 +116,7 @@ export interface SessionPersistence {
   appendMessage(msg: Message, parentId: string | null): Promise<void>;
   appendTurnOutcome(o: { turnId: string; reason: string; resultKind: "text" | "structured" | null }): Promise<void>;
   appendCompaction?(rec: CompactionRecord): Promise<void>;
+  appendAnalyticsMetric?(metric: AnalyticsMetric): Promise<void>;
   /** todo_state record (spec 12.1). */
   appendTodoState?(todos: TodoItem[], messageIndex: number): Promise<void>;
   /** Stores a new session title (a record in the transcript plus the settings file). */
@@ -1066,8 +1068,7 @@ export class Session {
         const content: ContentBlock[] = done.content;
         this.builder.monitor.recordUsage(done.usage);
         turnUsage = addUsage(turnUsage, done.usage);
-        this.tokenUsage = addUsage(this.tokenUsage, done.usage);
-        await this.deps.onUsage?.(model.id, done.usage);
+        await this.accountUsage(model.id, done.usage, "answer");
         this.lastCallTokenUsage = { inputTokens: done.usage.inputTokens, cacheReadTokens: done.usage.cacheReadTokens, outputTokens: done.usage.outputTokens };
         this.providerLock ??= model.provider;
         await this.push({
@@ -1196,6 +1197,7 @@ export class Session {
     if (reason === "cancelled" && !this.deps.isChild) void this.hooks?.notification("idle_prompt", "The user stopped the agent.", turnId);
 
     const durationMs = Date.now() - started;
+    await this.deps.persistence.appendAnalyticsMetric?.({ kind: "turn", id: turnId, durationMs, reason });
     this.activeTimeMs += durationMs;
     const answer = this.structured as { value: unknown } | undefined;
     this.lastStructured = answer?.value;
@@ -1238,12 +1240,24 @@ export class Session {
 
   // ---------- model choice (auto routing, spec 4.5) ----------
 
+  private async accountUsage(model: string, usage: TokenUsage, purpose: string) {
+    this.tokenUsage = addUsage(this.tokenUsage, usage);
+    await this.deps.persistence.appendAnalyticsMetric?.({ kind: "usage", model, usage, purpose });
+    await this.deps.onUsage?.(model, usage);
+  }
+
   private async chooseModels(signal: AbortSignal): Promise<{ primary: ModelConfig; fallbacks: ModelConfig[] }> {
     const id = this.activeModelId();
     if (id === AUTO_MODEL_ID && this.deps.router) {
+      const self = this;
       const choice = await route(this.deps.router, this.messages, {
         resolveModel: this.deps.resolveModel,
-        stream: (m, r) => this.deps.streamWithRetry(this.deps.createAdapter(m), r, { strategy: "no_retry" }),
+        stream: async function* (m, r) {
+          for await (const event of self.deps.streamWithRetry(self.deps.createAdapter(m), r, { strategy: "no_retry" })) {
+            if (event.type === "message_done") await self.accountUsage(m.id, event.usage, "router");
+            yield event;
+          }
+        },
       }, signal);
       const primary = this.deps.resolveModel(choice.modelId);
       if (!primary) throw new ModelError("rejected", `Auto routing picked an unknown model: ${choice.modelId}`);
@@ -1295,6 +1309,9 @@ export class Session {
       },
     })) {
       switch (ev.type) {
+        case "native_tool_metric":
+          await this.deps.persistence.appendAnalyticsMetric?.({ kind: "tool", id: ev.id, name: ev.name, status: ev.status, source: "native", model: model.id });
+          break;
         case "text_delta": {
           this.setState("streaming_assistant_message");
           textBlocks.add(ev.index);
@@ -1447,8 +1464,7 @@ export class Session {
       const { text, usage } = await collectSummary(stream);
       if (!text) throw new ModelError("empty_response", "The summarizer returned no text.");
       if (usage) {
-        this.tokenUsage = addUsage(this.tokenUsage, usage);
-        await this.deps.onUsage?.(model.id, usage);
+        await this.accountUsage(model.id, usage, "compaction");
         this.notifyUsage();
       }
 
@@ -1560,8 +1576,7 @@ export class Session {
       }
       for await (const ev of this.deps.streamWithRetry(this.deps.createAdapter(model), req, { strategy: "non_interactive", baseDelayMs: this.deps.retryBaseDelayMs })) {
         if (ev.type === "message_done") {
-          this.tokenUsage = addUsage(this.tokenUsage, ev.usage);
-          await this.deps.onUsage?.(model.id, ev.usage);
+          await this.accountUsage(model.id, ev.usage, "warmup");
           this.deps.log?.(`[cache] warmup: read ${ev.usage.cacheReadTokens}, created ${ev.usage.cacheCreationTokens}, uncached ${ev.usage.inputTokens}`);
         }
       }
@@ -2093,7 +2108,7 @@ export class Session {
         messages: [{ id: "title-request", role: "user" as const, content: [{ type: "text" as const, text: firstMessage.slice(0, 2000) }] }],
       };
       const { text, usage } = await collectSummary(this.deps.streamWithRetry(this.deps.createAdapter(model), req, { strategy: "no_retry" }));
-      if (usage) { this.tokenUsage = addUsage(this.tokenUsage, usage); await this.deps.onUsage?.(model.id, usage); this.notifyUsage(); }
+      if (usage) { await this.accountUsage(model.id, usage, "title"); this.notifyUsage(); }
       const clean = text.split("\n")[0]!.replace(/^["'`#*\s]+|["'`.*\s]+$/g, "").slice(0, 80);
       if (!clean || this.title.manual) return;
       await this.setTitle(clean, false);

@@ -169,6 +169,7 @@ export interface ModelRequest {
  * counting every content block the adapter produces (text, thinking, tool_use) in order.
  */
 export type StreamEvent =
+  | { type: "native_tool_metric"; id: string; name: string; status: "started" | "success" | "failure" }
   | { type: "text_delta"; index: number; text: string }
   | { type: "thinking_delta"; index: number; text: string }
   | { type: "tool_use_start"; index: number; id: string; name: string }

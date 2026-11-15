@@ -58,7 +58,7 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 
 27. Plugins and marketplace indexes (§20.14). Delivered on 41cc384: all four required CI jobs/packages green; see docs/plugins.md and HANDOFF State.
 28. Project wiki and the four wiki skills (§20.15). Delivered on 647cc35: all four required CI jobs/packages green; see docs/wiki.md and HANDOFF State.
-29. Academy tutorials (§20.17).
+29. Academy tutorials (§20.17). Delivered on 61ab39b with all four required CI jobs and unsigned packages green; see docs/academy.md and HANDOFF State.
 30. Analytics page (§20.18).
 31. Evaluations page: history, side-by-side, judge graders, CSV/JSONL and Google Stax import (§20.19).
 

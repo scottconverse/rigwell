@@ -10,7 +10,7 @@ import { autonomyAllowed, clampAutonomy, modelAllowed } from "../storage/org.ts"
 import { handoffBrief, isHandoffId, loadHandoff } from "../agent/handoff.ts";
 import { hasProjectConfig, isFolderTrusted, loadSettings, trustFolder } from "../storage/settings.ts";
 import { findModel, listModelInfo, resolveModels, validateCustomModels } from "../storage/models.ts";
-import { appendCompaction, appendMessage, appendTitle, appendTodoState, appendTurnOutcome, createSession, findSession, loadTranscript, type SessionFiles } from "../storage/transcript.ts";
+import { appendAnalyticsMetric, appendCompaction, appendMessage, appendTitle, appendTodoState, appendTurnOutcome, createSession, findSession, loadTranscript, type SessionFiles } from "../storage/transcript.ts";
 import { listSessionEntries, searchSessions } from "../storage/session-list.ts";
 import { outputFormatFrom, systemPromptFrom, tagsFrom, toolIdUpdates, toolIdsFrom, userMessageFrom } from "./params.ts";
 import { gitRepoOf } from "./gitrepo.ts";
@@ -224,6 +224,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
       appendTodoState: (todos: any, idx: number) => appendTodoState(f, todos, idx),
       setTitle: async (title: string, manual: boolean) => { await appendTitle(f, title, manual); updateSessionSettings(f, { title, isSessionTitleManuallySet: manual }); },
       appendCompaction: (rec: any) => appendCompaction(f, rec),
+      appendAnalyticsMetric: (metric: import("../storage/analytics-records.ts").AnalyticsMetric) => appendAnalyticsMetric(f, metric),
       saveSettings: async (patch: Record<string, unknown>) => { updateSessionSettings(f, patch); },
     };
   }

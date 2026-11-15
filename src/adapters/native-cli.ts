@@ -155,7 +155,12 @@ export class NativeCliAdapter implements ModelAdapter {
       let state: any; try { state = JSON.parse(status.stdout); } catch {}
       if (!state?.loggedIn || state.authMethod !== "claude.ai") throw new ModelError("auth", "Sign in to the official client with your Claude subscription", { retryable: false });
     } else if (!/logged in.*chatgpt/is.test(status.stdout + status.stderr)) throw new ModelError("auth", "Sign in to the official client with your ChatGPT subscription", { retryable: false });
-    const queue: string[] = [];
+    const queue: (string | Extract<StreamEvent, { type: "native_tool_metric" }>)[] = [];
+    const requestId = crypto.randomUUID(), nativeTools = new Map<string, string>();
+    const toolMetric = (id: unknown, name: unknown, status: "started" | "success" | "failure") => {
+      if (typeof id !== "string" || typeof name !== "string" || name.startsWith("mcp__rigwell__")) return;
+      nativeTools.set(id, name); queue.push({ type: "native_tool_metric", id: `${requestId}:${id}`, name, status });
+    };
     let wake: (() => void) | undefined, finished = false, error: unknown, terminal = false, final = "";
     let usage: TokenUsage = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, thinkingTokens: 0 };
     const controller = new AbortController();
@@ -183,7 +188,8 @@ export class NativeCliAdapter implements ModelAdapter {
         let e: any; try { e = JSON.parse(line); } catch { throw failure("Malformed native client event"); }
         if (e.type === "error" || e.type === "turn.failed") throw failure(cleanError(e.message ?? e.error?.message ?? "Native turn failed"));
         if (backend === "claude-cli") {
-          if (e.type === "assistant") for (const b of e.message?.content ?? []) if (b.type === "tool_use") queue.push(`[Native tool: ${b.name}]\n`);
+          if (e.type === "assistant") for (const b of e.message?.content ?? []) if (b.type === "tool_use") { queue.push(`[Native tool: ${b.name}]\n`); toolMetric(b.id, b.name, "started"); }
+          if (e.type === "user") for (const b of e.message?.content ?? []) if (b.type === "tool_result") toolMetric(b.tool_use_id, nativeTools.get(b.tool_use_id), b.is_error === true ? "failure" : "success");
           if (e.type === "result") {
             if (e.is_error || e.subtype !== "success") throw failure(cleanError(e.result ?? JSON.stringify(e.errors ?? "Native task failed")));
             terminal = true; final = e.result ?? "";
@@ -192,6 +198,16 @@ export class NativeCliAdapter implements ModelAdapter {
               cacheCreationTokens: u.cache_creation_input_tokens ?? 0, cacheReadTokens: u.cache_read_input_tokens ?? 0, thinkingTokens: 0 };
           }
         } else {
+          const item = e.item;
+          if (["command_execution", "file_change", "mcp_tool_call", "web_search"].includes(item?.type) && !(item.type === "mcp_tool_call" && item.server === "rigwell")) {
+            const name = item.type === "mcp_tool_call" ? `mcp:${item.server}:${item.tool}` : item.type;
+            if (e.type === "item.started") toolMetric(item.id, name, "started");
+            if (e.type === "item.completed") {
+              if (item.status === "failed" || item.error || (typeof item.exit_code === "number" && item.exit_code !== 0)) toolMetric(item.id, name, "failure");
+              else if (item.status === "completed" || item.exit_code === 0) toolMetric(item.id, name, "success");
+              else if (!nativeTools.has(item.id)) toolMetric(item.id, name, "started");
+            }
+          }
           if (e.type === "item.started" && e.item?.type !== "agent_message") queue.push(`[Native activity: ${e.item?.type ?? "working"}]\n`);
           if (e.type === "item.completed" && e.item?.type === "agent_message") final = e.item.text ?? "";
           if (e.type === "turn.completed") {
@@ -206,7 +222,7 @@ export class NativeCliAdapter implements ModelAdapter {
     let text = "";
     try {
       while (!finished || queue.length) {
-        while (queue.length) { const part = queue.shift()!; text += part; yield { type: "text_delta", index: 0, text: part }; }
+        while (queue.length) { const part = queue.shift()!; if (typeof part === "string") { text += part; yield { type: "text_delta", index: 0, text: part }; } else yield part; }
         if (!finished) await new Promise<void>((resolve) => { wake = resolve; if (finished || queue.length) resolve(); });
       }
       await task;

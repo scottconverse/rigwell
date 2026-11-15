@@ -8,12 +8,13 @@ export function forkSession(src: SessionFiles, o: { title?: string; tags?: { nam
   const first = JSON.parse(lines[0]!);
   const id = crypto.randomUUID();
   const dest = filesFor(src.dir, id);
+  const settings = readSessionSettings(src);
   const start = {
     ...first, id, title: o.title ?? `${first.title ?? "New Session"} (fork)`, parent: src.id,
     isSessionTitleManuallySet: o.title !== undefined ? true : undefined,
+    inheritedRecordCount: lines.length - 1, analyticsInheritedUsage: settings?.tokenUsage,
   };
   writeFileSync(dest.transcriptPath, [JSON.stringify(start), ...lines.slice(1)].join("\n") + "\n", { flag: "wx" });
-  const settings = readSessionSettings(src);
   if (settings) {
     writeSessionSettings(dest, { ...settings, ...(o.tags ? { tags: [...(settings.tags ?? []), ...o.tags] } : {}) });
   }

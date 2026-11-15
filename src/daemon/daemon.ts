@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { PluginService } from "../plugins/service.ts";
 import { wikiMethods } from "../wiki/wiki.ts";
 import { academyMethods } from "../academy/practice.ts";
+import { analyticsMethods } from "../analytics/analytics.ts";
 import { createConnection } from "./connection.ts";
 import { rigwellHome } from "../storage/paths.ts";
 import { automationTools, createAutomationService, type ServiceOptions } from "../automations/index.ts";
@@ -132,7 +133,7 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
         return owner && session ? { session, alive: () => conns.has(owner) && !owner.closed && owner.session === session, subscribe: (notify) => session.subscribeNotifications(notify) } : undefined;
       },
       sharedRemoteSession: workstreams.sharedRemoteSession,
-      extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx), ...mission.methods, ...stream.methods, ...phone.methods, ...delegation?.methods, ...inbox.methods, ...plugins.methods, ...wikiMethods, ...academyMethods },
+      extraMethods: { ...auto?.methods, ...sidepane?.methodsFor(ctx), ...mission.methods, ...stream.methods, ...phone.methods, ...delegation?.methods, ...inbox.methods, ...plugins.methods, ...wikiMethods, ...academyMethods, ...analyticsMethods },
       notifyUserMessages: true,
       wrapTools: (tools) => stream.wrapTools(mission.wrapTools(tools)),
       extraTools: sidepane || autoTools.length ? () => [...(sidepane ? sidepane.tools() : []), ...autoTools] : undefined,
