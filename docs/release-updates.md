@@ -87,9 +87,11 @@ unpublished draft. This baseline does not contain subsequent updater changes.
 The embedded Linux public key and strict tarball install path are implemented;
 independent system tar listing/extraction and fake signed-feed upgrade/rollback
 checks pass. Clean-runner installed first run passed for all three platforms on
-`5fc5687` (runs `43692783551` and `43692783541`). Real packaged update/rollback
-is being checked separately; its receipt explicitly distinguishes loopback
-package-pipeline verification from native update-dialog interaction.
+`5fc5687` (runs `43692783551` and `43692783541`), and on corrected runtime
+`59dc19d` with all 43 bundled tasks discovered. Real Linux packaged update and
+rollback passed on `59dc19d` and again in explicit dispatch `43732261845` on
+workflow successor `3787b24`. The receipt distinguishes loopback package
+verification from native update-dialog interaction.
 The owner has no macOS Developer ID certificate; notarization is not claimed.
 
 For signed Windows package acceptance, dispatch the existing platform workflow
@@ -99,8 +101,9 @@ baseline and candidate, verifies their receipts and native signatures, then
 checks installation, signed loopback upgrade, version readback, refusal of a
 remote downgrade and explicit local installer rollback. Its receipt states
 that native updater-dialog interaction is not exercised. No signing private
-key or personal access token is added to the Rigwell workflow. This path is
-prepared and must have an actual passing run before being claimed verified.
+key or personal access token is added to the Rigwell workflow. Corrected signed
+runtime `59dc19d` passed this path in run `43731720393`, using signing runs
+`43689064653` and `43730993976` for the baseline and candidate respectively.
 
 Linux package upgrade acceptance runs through an explicit dispatch of `ci.yml`
 with `baseline_run` naming a retained CI run containing the 0.1.0 package.

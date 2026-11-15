@@ -62,7 +62,8 @@ task folders when a trial needs coding fixtures or command checks.
 The Stax option currently performs **explicitly mapped CSV conversion only**:
 `--format stax --columns '{"prompt":"Input","expectedOutput":"Expected Output"}'`.
 Those column names are an example, not a claim about the export schema. Compatibility
-with a real Google Stax export is **unverified**, pending the owner's file. The
+with a real Google Stax export is **unverified**. On 2026-11-15 the owner directed
+skipping real-export verification, so an owner file is no longer awaited. The
 preview, saved record and desktop option preserve that limitation.
 
 ## Export and limits
