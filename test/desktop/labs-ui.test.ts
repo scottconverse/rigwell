@@ -27,7 +27,8 @@ test.skipIf(!pw)("production Labs toggles and resets effective local flags throu
     await nested.check(); await page.getByRole("region", { name: "Nested Workstream controls", exact: true }).getByText(/on; source: features map/).waitFor(); expect(workstreamSettings(env.root).allowNestedSpawn).toBe(true);
     await nested.uncheck(); await page.getByRole("region", { name: "Nested Workstream controls", exact: true }).getByText(/off; source: features map/).waitFor(); expect(workstreamSettings(env.root).allowNestedSpawn).toBe(false);
     await page.getByRole("button", { name: "Use default for Subagents inside Scripts", exact: true }).click(); await page.getByRole("region", { name: "Subagents inside Scripts", exact: true }).getByText(/off; source: default off/).waitFor(); expect(readUserSettings(env.rigwellHome).features).toEqual({ nested_workstreams: false });
-    rejectSave = true; await script.check(); await page.getByRole("alert").getByText("Fixture save refusal").waitFor(); expect(await script.isChecked()).toBe(false); expect(readUserSettings(env.rigwellHome).features).toEqual({ nested_workstreams: false });
+    // A rejected save intentionally restores unchecked; check() asserts the opposite after its click.
+    rejectSave = true; await script.click(); await page.getByRole("alert").getByText("Fixture save refusal").waitFor(); expect(await script.isChecked()).toBe(false); expect(readUserSettings(env.rigwellHome).features).toEqual({ nested_workstreams: false });
     expect([...new Set(calls.filter(Boolean))]).toEqual(["rigwell.list_workstreams", "rigwell.get_features"]); expect(calls.filter((method) => method === "rigwell.get_features").length).toBeGreaterThan(3); expect(errors).toEqual([]); expect(external).toEqual([]);
   } finally { await browser?.close(); await web?.stop(true); await daemon?.stop(); env.cleanup(); }
 }, 20_000);
