@@ -156,7 +156,7 @@ export function runGrader(task: TaskDef, workDir: string): { passed: boolean; de
     windowsVerbatimArguments: shell.windowsVerbatimArguments,
     cwd: workDir, encoding: "utf8", windowsHide: true, timeout: GRADER_TIMEOUT_MS, env: { ...process.env, EVAL_TASK_DIR: task.dir, EVAL_WORK_DIR: workDir },
   });
-  const out = `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().split("\n").slice(0, 2).join(" | ").slice(0, 300);
+  const out = `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().split(/\r?\n/).filter(line => line.trim()).join(" | ").slice(0, 300);
   return { passed: r.status === 0, detail: out || (r.error ? String(r.error.message) : `exit ${r.status}`) };
 }
 

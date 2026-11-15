@@ -39,7 +39,7 @@ function launch(version: string, stage: string) {
   const extracted = spawnSync(installed, ["--appimage-extract"], { cwd: directory, encoding: "utf8", timeout: 60_000, maxBuffer: 4 * 1024 * 1024 });
   assert.equal(extracted.status, 0, `Extract ${stage}: ${extracted.stderr}`);
   const receipt = join(directory, "acceptance.json");
-  const run = spawnSync(process.execPath, [join(import.meta.dir, "accept-install.ts"), join(directory, "squashfs-root/rigwell"), receipt, version], { encoding: "utf8", timeout: 120_000, maxBuffer: 1024 * 1024 });
+  const run = spawnSync(process.execPath, [join(import.meta.dir, "accept-install.ts"), join(directory, "squashfs-root/rigwell"), receipt, version, ...(version === candidateVersion ? ["--require-eval-tasks"] : [])], { encoding: "utf8", timeout: 120_000, maxBuffer: 1024 * 1024 });
   assert.equal(run.status, 0, `Launch ${stage}: ${run.stdout}\n${run.stderr}`);
   receipts.push({ stage, ...JSON.parse(readFileSync(receipt, "utf8")) });
   console.log(`[packaged update] ${stage} ${version} PASS`);

@@ -68,6 +68,7 @@ maybe("Linux package", () => {
     expect(res).toContain("app.asar");
     expect(existsSync(join(unpacked, "resources/bun/bun"))).toBe(true);
     expect(existsSync(join(unpacked, "resources/daemon/src/cli/main.ts"))).toBe(true);
+    expect(existsSync(join(unpacked, "resources/daemon/eval/tasks/add-clamp/task.json"))).toBe(true);
     expect(existsSync(join(unpacked, "resources/daemon/node_modules/quickjs-emscripten"))).toBe(true);
     expect(res).not.toContain("app"); // loaded from the asar only
   });

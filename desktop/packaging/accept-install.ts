@@ -10,6 +10,7 @@ import { probeDaemon, readDaemonInfo } from "../main/supervisor.ts";
 
 if (process.env.CI !== "true") throw new Error("Installed acceptance runs only on an isolated CI runner");
 const executable = resolve(process.argv[2] || ""), output = resolve(process.argv[3] || "installed-acceptance.json");
+const expectedVersion = process.argv.slice(4).find(arg => !arg.startsWith("--"));
 if (!existsSync(executable)) throw new Error("Provide the installed executable");
 const resources = process.platform === "darwin" ? resolve(dirname(executable), "../Resources") : join(dirname(executable), "resources");
 const bundledBun = join(resources, "bun", process.platform === "win32" ? "bun.exe" : "bun");
@@ -50,13 +51,20 @@ try {
   await page.getByRole("region", { name: "Connect a model" }).waitFor({ timeout: 30_000 });
   await page.getByRole("button", { name: "Configure a model", exact: true }).waitFor();
   const info = await page.evaluate(() => (window as any).rigwell.app.info());
-  if (process.argv[4] && info.version !== process.argv[4]) throw new Error(`Installed version ${info.version}, expected ${process.argv[4]}`);
+  if (expectedVersion && info.version !== expectedVersion) throw new Error(`Installed version ${info.version}, expected ${expectedVersion}`);
+  let evalTaskCount: number | undefined;
+  if (process.argv.includes("--require-eval-tasks")) {
+    const listed = spawnSync(bundledBun, [join(resources, "daemon/src/cli/main.ts"), "eval", "tasks"], { env, encoding: "utf8", windowsHide: true, timeout: 30_000 });
+    if (listed.status !== 0) throw new Error(`Installed CLI could not list bundled tasks: ${listed.stderr}`);
+    evalTaskCount = listed.stdout.trim().split(/\r?\n/).length;
+    if (evalTaskCount < 40 || !listed.stdout.includes("add-clamp\t")) throw new Error("Installed CLI task suite is incomplete");
+  }
   observed = readDaemonInfo(home);
   if (!observed?.ws || !await probeDaemon(observed.ws.url)) throw new Error("Bundled daemon did not answer");
   if (!daemonCommandLine(observed.pid).toLowerCase().includes(bundledBun.toLowerCase())) throw new Error("Daemon is not running the installed bundled runtime");
   const configuration = JSON.parse(readFileSync(join(home, "settings.json"), "utf8"));
   if (configuration.customModels?.length || configuration.models?.length) throw new Error("First run imported unexpected model profiles");
-  const receipt = { status: "PASS", platform: process.platform, version: info.version, executable, resources, firstRun: "Connect a model", daemonReady: true, bundledRuntimePresent: true, emptyProfile: true, elapsedMs: Date.now() - started };
+  const receipt = { status: "PASS", platform: process.platform, version: info.version, executable, resources, firstRun: "Connect a model", daemonReady: true, bundledRuntimePresent: true, emptyProfile: true, ...(evalTaskCount !== undefined ? { evalTaskCount } : {}), elapsedMs: Date.now() - started };
   writeFileSync(output, JSON.stringify(receipt, null, 2) + "\n"); console.log(JSON.stringify(receipt));
 } finally {
   console.log("[installed acceptance] disconnecting CDP");

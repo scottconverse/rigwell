@@ -1,3 +1,3 @@
-Extract invoice amount formatting into format.js export formatCents(cents). Keep lib.js export invoice(row) behavior, use the extracted helper and validate safe integer cents. Preserve negative and zero amounts.
+Extract invoice amount formatting into format.js export formatCents(cents). It returns a currency string: 0 becomes "$0.00", 1205 becomes "$12.05", and -123 becomes "-$1.23". Put a negative sign before the dollar sign. Reject values that are not safe integer cents. Keep the named lib.js export invoice(row), delegate to the helper, and preserve its positive and zero output. Negative invoice amounts use the helper's normalized sign placement too.
 
 Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

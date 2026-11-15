@@ -93,7 +93,7 @@ jobs:
           sudo apt-get install -y ./desktop/release/*.deb
           package=$(dpkg-deb -f desktop/release/*.deb Package)
           executable=$(dpkg -L "$package" | rg '/rigwell$')
-          xvfb-run -a bun desktop/packaging/accept-install.ts "$executable" desktop/release/installed-acceptance.json
+          xvfb-run -a bun desktop/packaging/accept-install.ts "$executable" desktop/release/installed-acceptance.json --require-eval-tasks
       - name: Retrieve the verified previous Linux package
         uses: actions/download-artifact@v4
         with:
