@@ -57,9 +57,16 @@ try {
   const receipt = { status: "PASS", platform: process.platform, executable, resources, firstRun: "Connect a model", daemonReady: true, bundledRuntimePresent: true, emptyProfile: true, elapsedMs: Date.now() - started };
   writeFileSync(output, JSON.stringify(receipt, null, 2) + "\n"); console.log(JSON.stringify(receipt));
 } finally {
-  if (browser) { try { const cdp = await browser.newBrowserCDPSession(); await cdp.send("Browser.close"); } catch {} }
-  for (let attempt = 0; attempt < 30 && app.exitCode === null; attempt++) await Bun.sleep(100);
-  if (app.exitCode === null) app.kill();
+  console.log("[installed acceptance] disconnecting CDP");
+  // Electron can close without answering CDP Browser.close, leaving that request
+  // unresolved forever after a successful probe. Disconnect the client instead.
+  if (browser) await Promise.race([browser.close().catch(() => {}), Bun.sleep(2000)]);
+  console.log("[installed acceptance] stopping owned app");
+  const running = () => app.exitCode === null && app.signalCode === null;
+  if (running()) app.kill();
+  for (let attempt = 0; attempt < 30 && running(); attempt++) await Bun.sleep(100);
+  if (running()) { app.kill("SIGKILL"); for (let attempt = 0; attempt < 20 && running(); attempt++) await Bun.sleep(100); }
+  if (running()) throw new Error("Owned installed app did not stop");
   // Only stop the recorded daemon when the same profile still names that process
   // and OS command-line evidence identifies this installed runtime.
   const current = readDaemonInfo(home);
@@ -68,5 +75,7 @@ try {
     const command = daemonCommandLine(current.pid);
     if (command?.toLowerCase().includes(bundledBun.toLowerCase())) { try { process.kill(current.pid); } catch {} }
   }
+  app.stdout!.destroy(); app.stderr!.destroy();
+  console.log("[installed acceptance] teardown complete");
   if (!existsSync(output)) console.error(log);
 }
