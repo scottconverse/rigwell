@@ -12,6 +12,8 @@ a backup of your Rigwell profile when upgrading.
 
 ## Windows
 
+Current release: [signed Windows 0.4.1 installer](https://github.com/scottconverse/rigwell/releases/download/v0.4.1/rigwell-setup-0.4.1-x64.exe). See [0.4.1 release notes](release-0.4.1.md). Linux and macOS downloads remain at [0.4.0](https://github.com/scottconverse/rigwell/releases/tag/v0.4.0).
+
 Run `rigwell-setup-<version>-x64.exe`. The NSIS installer installs for the current
 user and lets you choose its destination. Verify the installer signature in
 Properties > Digital Signatures: the publisher must be Scott Converse. The
@@ -79,6 +81,29 @@ daemon, and checks the first-run model setup page. No model is called and no
 personal settings or credentials are imported. Packages and JSON receipts are
 retained as workflow artifacts for seven days.
 
+### Windows 0.4.1 patch
+
+The Windows installer is built from runtime source `2267038`, including fixes
+`6a63f66`. Azure sign-only run `43945597302` returned final bytes with SHA-256
+`bcfb08613452b53092a4498d9de7d7161fb3338cf3e6468c070b409d97f39be2`
+and length 153,492,432 bytes. Halo independently verified the valid Scott
+Converse publisher, Microsoft timestamp and receipt hashes before silently
+upgrading from 0.4.0. All 64 agent data files and 59 desktop-profile files
+matched the pre-install backups. Credential readback passed without writes.
+Installed payload hashes matched the build. Five installed-daemon/desktop
+controller checks passed, including proposal reattachment; a live native
+approval executed an independently checked marker command. The installed CLI
+listed all 43 evaluation tasks. No interactive app window was used on Halo.
+Only the setup installer is signed; the inner app and uninstaller are not
+individually signed. No new signed updater-dialog or rollback trial is claimed.
+
+Final pre-publication commit `ce6d3cd` passed Linux core/desktop run
+`43946800706`, Windows/macOS tests, packaging and clean-runner installation
+`43946800709`, and website build/deploy `43946801429`. The exact signed runtime
+is unchanged by subsequent release-documentation updates.
+
+### Retained 0.4.0 cross-platform evidence
+
 The 0.4.0 packages are built from source `28cac5b`. Runs `43742095558`
 and `43742095548` passed all four required Linux, macOS and Windows jobs,
 including real installed first run and all 43 bundled evaluation tasks. The
@@ -86,7 +111,7 @@ Windows installer registers its URL handler before first launch; an actual
 Windows-shell deep link reached Workstreams. Linux release run `43742725196`
 passed packaged installation, upgrade and rollback.
 
-The signed Windows setup installer has SHA-256
+The retained 0.4.0 signed Windows setup installer has SHA-256
 `19d3a80b6e46065cb612d9ba69d0ab15a8cf23699a541d2130c31e9a78a6730c`.
 Signing run `43743441653` passed; its returned bytes, signing receipt,
 Scott Converse publisher and Microsoft timestamp were independently verified

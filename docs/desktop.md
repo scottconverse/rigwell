@@ -1,6 +1,8 @@
-# Desktop app (Phase 8)
+# Desktop app
 
 An Electron app in `desktop/` that is one more client of the daemon. Everything that does agent work stays in the daemon.
+
+The current Windows package is [0.4.1](release-0.4.1.md); Linux/macOS packages remain at 0.4.0. For installation and ordinary use, start with the [user manual](user-manual.md) or [installation guide](install.md).
 
 ## Run it
 

@@ -20,7 +20,7 @@ const u = await connectToDaemon({ socketPath: "/path/to/daemon.sock" });        
 (`onTrust`: the folder stays untrusted). `onTrust` gets `{cwd, unlocks}` when a folder with project config (hooks, skills, AGENTS.md, MCP servers)
 is not trusted yet and returns `true`/`false` or `{trust, remember}`; a yes is saved in `trustedFolders` by the harness. With `resumeSessionId`,
 prompts the session still waits on (`pendingPermissions`, `pendingAskUserRequests`) are shown to `onPermission` / `onAskUser` again and answered
-through `rigwell.answer_request`.
+through `rigwell.answer_request`. This includes pending Workstream proposal approvals in 0.4.1 while the same daemon Session remains alive. Request IDs remain bound to that pending request; cancellation or resolution invalidates late answers.
 See `examples/sdk-multi-turn.ts`.
 
 ## Daemon WebSocket

@@ -17,11 +17,11 @@ Build output is ignored under `website/dist`. The deployment prefix is `/rigwell
 
 ## Deployment
 
-The `website` GitHub Actions workflow builds and deploys GitHub Pages from `phase-1-core-loop`. The public URL is https://scottconverse.github.io/rigwell/. Deployment needs Pages configured with the GitHub Actions source. Pull requests build without publishing.
+The `website` GitHub Actions workflow builds and deploys GitHub Pages from `phase-1-core-loop`. The public URL is https://scottconverse.github.io/rigwell/. The historical `/rigwell/manual/` URL redirects to the current generated manual. Deployment needs Pages configured with the GitHub Actions source. Pull requests build without publishing.
 
 ## Maintenance
 
-Edit `index.html` and `styles.css` for the landing page. Edit `docs/*.md` for user documentation. `build.ts` publishes top-level Markdown guides, excluding the internal decisions and Stax comparison, and links other repository material to GitHub. `DESIGN.md` records the source-backed positioning and existing product palette.
+Edit `index.html` and `styles.css` for the landing page. The build substitutes `{{VERSION}}` from root package.json into Windows release/download links. Keep Linux/macOS platform links and update feeds at their actual published versions when shipping a Windows-only patch. Edit `docs/*.md` for user documentation. `build.ts` publishes top-level Markdown guides, excluding the internal decisions and Stax comparison, and links other repository material to GitHub. `DESIGN.md` records the source-backed positioning and existing product palette.
 
 The Workstreams screenshot is the actual renderer using isolated demonstration data. Its provenance is in `public/assets/workstreams-provenance.json`. Do not replace it with fabricated product UI. Recheck the built site at mobile, tablet and desktop widths, navigation, link targets, diagram rendering, keyboard focus and console errors after relevant changes.
 

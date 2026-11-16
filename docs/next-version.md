@@ -1,6 +1,6 @@
 # Next-version list
 
-This is the tracked list of owner-requested work for the version after the shipped 0.4.0 release. The next version number is not assigned. These items do not change current release scope or acceptance. Record future requests here rather than adding them to the current release checklist.
+This is the tracked list of owner-requested work for the version after the shipped 0.4 release series, including the Windows 0.4.1 maintenance patch. The next version number is not assigned. These items do not change current release scope or acceptance. Record future requests here rather than adding them to the current release checklist.
 
 ## NV-001: Optional hosted Stax workflow
 

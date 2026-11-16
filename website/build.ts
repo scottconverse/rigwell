@@ -11,7 +11,10 @@ await mkdir(join(out, 'docs'), {recursive:true});
 await cp(join(import.meta.dir, 'public'), out, {recursive:true});
 for (const name of ['styles.css','site.js']) await cp(join(import.meta.dir,name),join(out,name));
 await cp(join(root,'desktop/assets/icon.png'),join(out,'assets/icon.png'));
-await writeFile(join(out,'index.html'),(await readFile(join(import.meta.dir,'index.html'),'utf8')).replaceAll('{{BASE}}',base));
+await writeFile(join(out,'index.html'),(await readFile(join(import.meta.dir,'index.html'),'utf8')).replaceAll('{{BASE}}',base).replaceAll('{{VERSION}}',version));
+// Preserve the manual URL linked by older releases and the repository default README.
+await mkdir(join(out,'manual'),{recursive:true});
+await writeFile(join(out,'manual/index.html'),`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${base}docs/user-manual.html"><title>Rigwell user manual</title></head><body><a href="${base}docs/user-manual.html">Open the current Rigwell user manual</a></body></html>`);
 const escape = (s:string) => s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
 const pages = (await readdir(join(root,'docs'))).filter(n=>n.endsWith('.md') && !['decisions.md','stax-comparison.md'].includes(n));
 const repo = 'https://github.com/scottconverse/rigwell/blob/phase-1-core-loop/';

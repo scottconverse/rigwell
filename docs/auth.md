@@ -36,6 +36,9 @@ when the owning Session offers those tools. AskUser routes questions to the actu
 Calls use Rigwell's permission gates, hooks and transcript records.
 The service binds actor identity to that Session. The bridge exposes no user approval RPC or general daemon methods.
 Only the user can approve a proposal; a late approval after cancellation cannot create the Workstream.
+In 0.4.1 a pending proposal reappears after the session view reconnects while its daemon Session is alive.
+Native model requests retain the owning native coordination call/result receipts between fresh invocations,
+so member IDs, messages and listener results remain available to the coordinator.
 
 The bridge binds to loopback with a random capability that expires when the native invocation ends. Claude receives
 an owner-only temporary configuration; Codex receives a per-invocation URL and bearer-token environment reference.

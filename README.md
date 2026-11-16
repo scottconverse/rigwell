@@ -2,7 +2,7 @@
 
 Rigwell is a local workbench for coding agents. Use a desktop app or terminal to work with your models, coordinate persistent Workstreams, run staged Missions, inspect changes and create pull requests with explicit confirmation. Repositories stay ordinary files and Git branches. Cloud connections send context to the providers you configure.
 
-[Website](https://scottconverse.github.io/rigwell/) · [Downloads](https://github.com/scottconverse/rigwell/releases) · [User manual](docs/user-manual.md) · [Contributing](docs/contributing.md)
+[Website](https://scottconverse.github.io/rigwell/) · [Windows 0.4.1 download](https://github.com/scottconverse/rigwell/releases/download/v0.4.1/rigwell-setup-0.4.1-x64.exe) · [User manual](docs/user-manual.md) · [Contributing](docs/contributing.md)
 
 ## What it does
 
@@ -13,7 +13,7 @@ Rigwell is a local workbench for coding agents. Use a desktop app or terminal to
 
 ## Quick start
 
-For the desktop app, download the package matching your operating system from [Releases](https://github.com/scottconverse/rigwell/releases), then follow the [installation guide](docs/install.md) and [first-task walkthrough](docs/user-manual.md#new-user-guide). Configure a model connection before starting a task. Do not paste credentials into a conversation.
+For the desktop app, download the [signed Windows 0.4.1 installer](https://github.com/scottconverse/rigwell/releases/download/v0.4.1/rigwell-setup-0.4.1-x64.exe). Linux and macOS packages remain available in [0.4.0](https://github.com/scottconverse/rigwell/releases/tag/v0.4.0). Then follow the [installation guide](docs/install.md) and [first-task walkthrough](docs/user-manual.md#new-user-guide). Configure a model connection before starting a task. Do not paste credentials into a conversation.
 
 For a source checkout, install Bun 1.4.4, Git and ripgrep:
 
@@ -41,13 +41,13 @@ On Windows, if Electron is missing after installation, run `node node_modules/el
 
 The [full user manual](docs/user-manual.md) includes new-user onboarding, a nontechnical-user guide, everyday workflows, technical configuration, troubleshooting, recovery and architecture with Mermaid diagrams.
 
-[Authentication](docs/auth.md) · [Review](docs/review.md) · [Evaluations](docs/evaluations.md) · [Release updates](docs/release-updates.md) · [Specification](spec/harness-spec.md) · [Design decisions](docs/decisions.md)
+[Authentication](docs/auth.md) · [Workstreams](docs/workstreams.md) · [Review](docs/review.md) · [Evaluations](docs/evaluations.md) · [Release updates](docs/release-updates.md) · [Specification](spec/harness-spec.md) · [Design decisions](docs/decisions.md)
 
 To build the public site, run `bun run site:build` and `bun run site:preview`, then open `http://127.0.0.1:4173/rigwell/`. See [website maintenance](website/README.md).
 
 ## Project status
 
-Rigwell 0.4.0 is an early release. The Windows setup installer is signed by Scott Converse, with installed first-run, signed upgrade and rollback evidence. Linux has packaged-install and signed AppImage update/rollback evidence. macOS arm64 packages are unsigned and not notarized; real Mac hardware acceptance is unavailable. Full model-family and long-session qualification remains incomplete. Account access, connector registrations and remote infrastructure require your own configuration.
+The current Windows release is **0.4.1**. It fixes native-client approvals, restores pending Workstream proposals after a view reconnect and preserves coordination receipts across native invocations. See [0.4.1 release notes](docs/release-0.4.1.md). Linux and macOS distributions remain at **0.4.0**. Rigwell is an early release. The Windows setup installer is signed by Scott Converse, with installed first-run, signed upgrade and rollback evidence. Linux has packaged-install and signed AppImage update/rollback evidence. macOS arm64 packages are unsigned and not notarized; real Mac hardware acceptance is unavailable. Full model-family and long-session qualification remains incomplete. Account access, connector registrations and remote infrastructure require your own configuration.
 
 Current acceptance evidence and remaining work are tracked in [the handoff](docs/handoff/HANDOFF.md). Hosted Stax is [next-version work](docs/next-version.md), outside this release.
 

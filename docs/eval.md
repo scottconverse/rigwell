@@ -105,9 +105,13 @@ The automation scheduler (spec section 16) runs it every Monday and catches up o
 
 ## Real adapter smoke acceptance
 
+Current qualification: bounded installed coding checks passed for both signed-in subscription clients, configured Google/cloud routes and compatible local endpoints. The real three-member Workstream exercise is summarized in [0.4.1 release notes](release-0.4.1.md). This does not establish every direct adapter or model family. Bedrock remains an optional documented/fake-tested adapter; the owner has no account and excluded it from live testing. The following is the procedure for an operator who has the relevant accounts, not a demand to create those accounts.
+
 After the owner configures profiles and credentials through settings and the credential store, use the existing eval run CLI with a one-trial config and --task fix-greeting-typo --trials 1. Select one owner-configured profile for each adapter: Anthropic, OpenAI HTTP and WebSocket, Gemini, configured Bedrock paths, and a free local Chat Completions endpoint. Keep credentials and real-run configuration outside the repository and CI. Report exact candidate, adapter/profile, command and grader result. Missing profiles remain pending acceptance. Fake CLI integration covers one task per category without real-provider requests.
 
 ## Head-to-head comparison
+
+The completed one-profile comparison retained 258 receipts across 43 tasks, three trials and two harnesses: Rigwell 128/129, reference 127/129. Failures are retained. This is one configured profile, not universal family qualification or a cash-cost comparison.
 
 The compare subcommand runs both baseline harnesses on the same selected tasks, budgets, autonomy and explicitly declared equivalent model profiles. It requires exactly three trials per harness. Each trial gets a fresh Git working copy and the same actual grader. Pair order alternates to reduce fixed ordering effects. No tuning variant is shipped or applied by a comparison.
 
