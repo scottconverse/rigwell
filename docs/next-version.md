@@ -1,6 +1,6 @@
 # Next-version list
 
-This is the tracked list of owner-requested work for the version after the current 0.4.0 release candidate. The next version number is not assigned. These items do not change current release scope or acceptance. Record future requests here rather than adding them to the current release checklist.
+This is the tracked list of owner-requested work for the version after the shipped 0.4.0 release. The next version number is not assigned. These items do not change current release scope or acceptance. Record future requests here rather than adding them to the current release checklist.
 
 ## NV-001: Optional hosted Stax workflow
 
@@ -20,3 +20,8 @@ This is the tracked list of owner-requested work for the version after the curre
 - Assess how much work it would take to reuse or integrate Google's open-source Stax code, including its fit with Rigwell's local packaging, model execution and existing coding-task evaluator.
 - Keep this assessment distinct from NV-001's hosted option. Do not assume adopting the full application is the chosen approach.
 - Schedule and implementation decisions remain for a later owner discussion. This is not a blocker for the current release.
+
+## NV-003: DevHarmonics integration proposal withdrawn
+
+- Cancelled by the owner on 2026-11-15. The plan was discarded before implementation.
+- No integration, reduced verification feature or follow-up investigation is scheduled. Revisit only if the owner explicitly requests it.
