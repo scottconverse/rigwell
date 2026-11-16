@@ -1,13 +1,20 @@
 # Road to full parity with Factory's CLI and desktop app
 
-Updated 2026-11-14. **Everything on this list is approved by the owner. Build all of it; leave nothing out.**
-Hosted features are built as local versions (spec §20). Work in this order: group 1 blocks the rest. Within a
-group, finish one item (tests green, decision logged, HANDOFF updated) before the next.
+Updated 2026-11-16. This preserves the approved build order and individually
+recorded implementation/acceptance status. Windows **0.4.1** is published;
+Linux/macOS distributions remain **0.4.0**. The latest user documentation is
+[the manual](../user-manual.md) and [0.4.1 notes](../release-0.4.1.md).
+Do not restart completed items or expand the current task from this historical
+list. Remaining quality or external-account limits stay explicit below.
 
-Two items need the owner to act, not only approve. Build the code anyway and ask the owner for the inputs:
-- §20.2: the owner registers Rigwell's own OAuth clients with each provider and gives you the client IDs.
-- §20.24: the owner buys the Apple Developer ID and Windows code-signing certificate and adds them as CI secrets.
-Real-model runs (§20.1) need API keys from the owner, through the credential store, never committed.
+Built-in direct OAuth registrations require the operator's own public client
+IDs when that route is chosen. Existing signed-in native-client subscriptions
+work through their own clients without those registrations. Windows signing
+uses the established Azure service, not a new certificate purchase. The owner
+has no Apple signing certificate or available real Mac hardware; no macOS
+signing/notarization or real-hardware pass is claimed. Bedrock is optional,
+documented and fake-tested; the owner has no account and excluded live testing.
+Hosted Stax is next-version work and the DevHarmonics proposal is withdrawn.
 
 ## 1. Finish what is built (complete on 0260689)
 
@@ -75,10 +82,10 @@ Real-model runs (§20.1) need API keys from the owner, through the credential st
 
 ## 9. Release readiness (§20.24)
 
-40. Real macOS and Windows hardware tests: Windows native probes and desktop suite pass; Windows credential backend and test-profile correction delivered on 1bf5859 with all required CI green. Real macOS hardware unavailable, owner directed continuation. Installed registration remains release acceptance. See docs/hardware-acceptance.md.
-41. Code signing and notarization in CI: corrected Windows candidate 59dc19d signed through existing Azure CI, run 43730993976; receipt, timestamp, hash and publisher independently verified on Halo. Signed SHA-256 8676350a5f6be555b7aefc94a9d0a70f77ba8a8ff5d701be154fc959b6380408. Earlier baseline/signing receipts remain preserved. Owner has no macOS Developer ID certificate; notarization remains unavailable. See docs/release-updates.md.
-42. Update feed on GitHub Releases; test install, update and rollback. Final-byte feed generation, Windows signature refusal and Linux local rollback implemented. Real Linux packaged upgrade/rollback passed on corrected 59dc19d; corrected signed Windows pipeline 43731720393 passed actual install, upgrade with 43 bundled tasks, explicit local rollback and remote downgrade refusal. Production Linux tarball signature independently verified. Explicit release dispatches use retained baseline run inputs (503). Public 0.4.0 release feeds were verified after publication on Windows, Linux and macOS; current version reports up-to-date. Corrected 0.4.0 signed Windows install/upgrade/rollback 43743716936 and Linux upgrade/rollback 43742725196 passed. Native update-dialog interaction is not claimed. See docs/release-updates.md and HANDOFF State.
-43. Installers, install docs, first-run check on a clean machine for each OS. Actual NSIS, DMG and Debian installation/empty-profile first run passed on corrected 59dc19d with all four required jobs green (43729671308, 43729671256), including installed CLI listing of all 43 bundled tasks. Corrected 0.4.0 installed checks also passed and the signed Windows installer, Linux and unsigned macOS packages are publicly delivered at v0.4.0. Actual public Windows redownload hash, publisher, timestamp and signature PASS. These CI runner checks do not replace unavailable real Mac hardware acceptance.
+40. Real macOS and Windows hardware tests: Windows native probes and desktop suite pass; Windows credential backend and test-profile correction delivered on 1bf5859 with all required CI green. Real macOS hardware unavailable, owner directed continuation. Installed Windows registration and actual shell routing passed in corrected 0.4.0 packaging; 0.4.1 clean-runner installation and headless Halo upgrade passed. See docs/hardware-acceptance.md.
+41. Current Windows0.4.1 signing run43945597302 passed; public installer hash/signature/publisher/timestamp and Halo installed checks passed. See the0.4.1 release notes. Historical signing: corrected Windows candidate 59dc19d signed through existing Azure CI, run 43730993976; receipt, timestamp, hash and publisher independently verified on Halo. Signed SHA-256 8676350a5f6be555b7aefc94a9d0a70f77ba8a8ff5d701be154fc959b6380408. Earlier baseline/signing receipts remain preserved. Owner has no macOS Developer ID certificate; notarization remains unavailable. See docs/release-updates.md.
+42. Update feed on GitHub Releases; test install, update and rollback. Final-byte feed generation, Windows signature refusal and Linux local rollback implemented. Real Linux packaged upgrade/rollback passed on corrected 59dc19d; corrected signed Windows pipeline 43731720393 passed actual install, upgrade with 43 bundled tasks, explicit local rollback and remote downgrade refusal. Production Linux tarball signature independently verified. Explicit release dispatches use retained baseline run inputs (503). Public 0.4.1 latest-feed checks offer Windows0.4.1 and retained Linux/macOS0.4.0; each actual current platform version reports up-to-date. Earlier0.4.0 publication checks are retained in HANDOFF. Corrected 0.4.0 signed Windows install/upgrade/rollback 43743716936 and Linux upgrade/rollback 43742725196 passed. Native update-dialog interaction is not claimed. See docs/release-updates.md and HANDOFF State.
+43. Installers, install docs, first-run check on a clean machine for each OS. Actual NSIS, DMG and Debian installation/empty-profile first run passed on corrected 59dc19d with all four required jobs green (43729671308, 43729671256), including installed CLI listing of all 43 bundled tasks. Corrected 0.4.0 installed checks also passed and the signed Windows installer, Linux and unsigned macOS packages are publicly delivered at v0.4.0. The signed Windows0.4.1 patch is now public, with all9 anonymous asset downloads/hash checks, independent Authenticode verification and settings-preserving Halo upgrade PASS. Linux/macOS remain0.4.0. These CI runner checks do not replace unavailable real Mac hardware acceptance.
 
 ## Not applicable
 

@@ -1,49 +1,69 @@
-# Rigwell build brief (shared by every build agent)
+# Rigwell build brief
 
-Rigwell is a local, model-independent coding agent built from `spec/harness-spec.md` (+ `spec/prompts.md`).
-TypeScript on Bun 1.4.4 (`bun`, `node`, `git`, `rg` on PATH). Phase 1 (core loop) is done and green:
-`bun test` (104 pass) and `bunx tsc --noEmit -p .` clean. You are building a later phase from spec §9.
+Rigwell is a local coding workbench built from `spec/harness-spec.md` and
+`spec/prompts.md`. Current Windows release: **0.4.1**; Linux/macOS distributions
+remain **0.4.0**. The implementation includes the desktop/TUI/SDK, direct and
+native-client execution, persistent Workstreams, Missions and the local
+features recorded in `PARITY.md`. Qualification limits are separate from
+implementation and publication. Read `HANDOFF.md` for current receipts and
+`docs/decisions.md` for design history.
 
-## Base branch
-Your worktree may start from `main` (spec only). FIRST run `git merge --ff-only phase-1-core-loop` (or `git reset --hard phase-1-core-loop` before any commit) so you build on the current code. Later phases merged into phase-1-core-loop so far: Phase 10 (src/automations), Phase 9 (src/worktree), Phase 2 (src/script, src/jobs), Phase 5 modules (src/hooks, src/mcp, src/skills, src/subagents, src/instructions, src/config; not yet wired into the loop), Phase 5 clients (src/sdk, src/tui, src/daemon/ws.ts), Phase 6 (src/eval), Phases 3+4 (src/agent/request.ts, deferred.ts, cache-monitor.ts, guards.ts, compaction.ts, router.ts; Session.registerDeferredTool exists), Phase 8 (desktop/, src/sidepane), Phase 5 wiring (hooks, MCP, skills, Task/subagents, spec mode, fork_session all live in the loop).
+## Working checkout and authority
 
-## Code map (Phase 1)
-- src/core/types.ts: shared types (Message, ContentBlock, ModelAdapter, StreamEvent, Tool, ToolContext, PermissionDecision...).
-- src/protocol/rpc.ts: NDJSON JSON-RPC peer (RpcPeer, RpcError, ErrorCodes, METHOD_PREFIX = "rigwell.").
-- src/daemon/connection.ts: one connection = one session; protocol methods -> Session. daemon.ts: Unix-socket daemon.
-- src/agent/session.ts: Session class, the agent loop (runTurn, runTools, askPermission), notifications.
-- src/agent/prompts.ts: system blocks + context blocks; PROMPT_TEXT in prompt-text.generated.ts is generated from
-  spec/prompts.md by scripts/gen-prompts.ts (keys like tool_Script_desc, guard_repeat_nudge, compact_system...).
-- src/adapters/: anthropic.ts, openai.ts (Responses API), retry.ts (streamWithRetry), errors.ts, index.ts (createAdapter).
-- src/tools/: read, edit, create, execute, grep, glob, registry.ts (createCoreTools, toolsForSession).
-- src/permissions/: gate.ts (decide), command.ts (classifyCommand), lists.ts.
-- src/storage/: paths.ts (rigwellHome(): $RIGWELL_HOME or ~/.rigwell), transcript.ts, session-settings.ts, settings.ts (loadSettings), models.ts.
-- src/cli/main.ts: `rigwell exec` (stream-jsonrpc or one-shot prompt), `rigwell daemon`.
-- test/fakes/: startFakeAnthropic / startFakeOpenAI (scripted fake model servers; FakeTurn may be a function of the request body).
-- test/e2e/helpers.ts: makeRepo, makeHome, RpcChild (drives `rigwell exec` over stdio).
-- docs/decisions.md: numbered decision log.
+Use branch `phase-1-core-loop`. Inspect the existing checkout and preserve
+unrelated edits. Commit/push only that branch; never push to main or merge
+without a new explicit owner exception. Do not reset an existing worktree to
+establish a starting point. Published tags and release assets are immutable.
+The owner's current instructions and bounded completion contract take
+precedence over historical process guidance. This brief does not authorize
+new features, real model calls, desktop takeover or delegation.
 
-## Rules (all agents)
-1. Build what your task and the spec sections it points to require. As of Nov 14 2026 Scott has approved
-   everything in the spec, including §15.10 and §20; `docs/handoff/PARITY.md` is the order. List anything you think
-   is needed beyond the spec under "Proposed additions" in your report instead of building it.
-2. Tests and CI: no paid model usage, no real API keys, no network to real providers. The only exception is the
-   §20.1 agent-quality runs, with keys the owner supplies through the credential store, run by hand, never in CI. Test with the local fakes (extend them in
-   test/fakes/ if needed).
-3. Where the spec is [UNKNOWN] or silent, use its [DESIGN] default; else pick the simplest option and append it to
-   docs/decisions.md under a heading "## Phase N: <name>" (numbered entries continuing from the last number).
-4. Never copy code or prompt text from Factory's products. `evidence/` holds Factory text: you may read it only to
-   check a fact the spec states; never copy its text. Prompt/tool text comes from spec/prompts.md (via PROMPT_TEXT).
-   Never use the names "Droid" or "Factory" in code, docs, UI, paths. Paths: `~/.rigwell`, project `.rigwell/`.
-5. Tests that run commands or edit files use temp dirs, never the repo. Tests set RIGWELL_HOME to a temp dir.
-6. The user forbids the em-dash character (U+2014) anywhere. Do not write it in code, comments, docs or tests.
-7. Keep existing tests green. Run `bun test` and `bunx tsc --noEmit -p .` before you finish.
-8. Commit your work on your branch with clear messages, ending each commit message with:
-   Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-   Do not push. Do not include model names anywhere in files.
-9. Report only what you ran and saw.
+## Code map
 
-## Report (final message)
-Branch name and last commit sha; what you built mapped to the phase scope; the phase's done-when test (exact
-command and output); other tests pass/fail; decisions added; files touched outside your own folders (so the lead
-can merge); not checked; proposed additions.
+- `src/agent/`, `src/protocol/`, `src/daemon/`, `src/sdk/`, `src/tui/`: Session loop, transport and clients.
+- `src/adapters/`: direct providers, native clients and request-scoped coordination/permission bridge.
+- `src/workstreams/`, `src/worktree/`, `src/missions/`: persistent coordination, Git isolation/PRs and staged work. Check actual paths before editing.
+- `src/tools/`, `src/script/`, `src/jobs/`, `src/permissions/`: tools, execution and permission enforcement.
+- `src/storage/`, `src/config/`, `src/policy/`: profiles, settings, transcripts, credentials and policy.
+- `src/mcp/`, `src/plugins/`, `src/skills/`, `src/hooks/`: extensions and integrations.
+- `src/automations/`, `src/machines/`, `src/sync/`, `src/eval/`: repeatable/remote work and evaluation.
+- `desktop/main/`, `desktop/preload/`, `desktop/renderer/`: native shell, IPC boundary and React UI.
+- `test/fakes/`, `test/e2e/`, `test/desktop/`: isolated fake services, protocol and desktop acceptance.
+- `docs/user-manual.md`, `docs/workstreams.md`, `docs/auth.md`: user-facing behavior and execution limits.
+- `website/`: landing page and generated documentation; package version drives Windows links.
+
+## Work and verification
+
+1. Complete the current authorized outcome. `PARITY.md` is implementation and
+   acceptance history, not permission to restart the build or promote optional
+   future items into blockers. Hosted Stax stays on the next-version list;
+   the DevHarmonics integration proposal is withdrawn.
+2. Inspect source and reproduce defects when practical. Make the smallest
+   sufficient changes, log material choices in `docs/decisions.md`, and update
+   `HANDOFF.md` before stopping. Preserve passed evidence for unchanged inputs.
+3. Ordinary tests/CI use fake services, temporary repositories and isolated
+   `RIGWELL_HOME`. Personal credentials, instructions and transcripts must not
+   enter fixtures. Real quality runs require owner authorization and private
+   runtime configuration; never run them in CI. Bedrock remains optional and
+   has no owner-account live test.
+4. Windows Halo: Bun 1.4.4, Node 22, Git and ripgrep. Use headless checks while
+   the owner uses the machine or occupancy is unknown. No visible app/browser,
+   installer window or unrelated package installation without authorization.
+5. Run meaningful affected checks and required CI. Root typecheck:
+   `bunx tsc --noEmit -p .`; desktop: `cd desktop` then `npx tsc -p .`.
+   The suite is `bun test`; native Electron checks belong on CI or an explicitly
+   approved interactive test. Never skip a test to get green or raise a timeout
+   instead of diagnosing its cause.
+6. Never copy text/code from `evidence/`. Use it only to check facts. Do not add
+   actual model identifiers, credentials or private transcripts to Git. Do not
+   write the U+2014 character. Provider/client names are distinct from private
+   model identifiers.
+7. Public Windows delivery requires the established Azure sign-only workflow,
+   final-byte hashes/feed/blockmap, independent signature/publisher/timestamp
+   verification, proportionate installed acceptance and public readback.
+   Preserve settings, credential stores, previous installers and recovery
+   evidence. A documentation-only successor does not require rebuilding or
+   re-signing an unchanged binary.
+8. Report observed source, test, installed and publication outcomes separately.
+   Name failures, unverified limits and required owner input. Do not describe a
+   documented blocker, prepared test or running job as completed.
