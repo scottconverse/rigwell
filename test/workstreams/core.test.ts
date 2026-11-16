@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { makeStubSession } from "../agent/helpers.ts";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createWorkstreamService } from "../../src/workstreams/index.ts";
@@ -188,4 +189,19 @@ test("failed member status survives the session's final idle notification", asyn
     await service.members.get(agent.agentId)!.connection.session!.idle();
     expect(store.agent(agent.agentId)!.status).toBe("failed");
   } finally { await service.stop(); fake.stop(); }
+});
+
+test("proposal belongs to Session pending prompts and accepts a reattached answer", async () => {
+  process.env.RIGWELL_HOME = tmp("ws-pending-proposal");
+  const fixture = makeStubSession(() => ({ content: [] }));
+  const service = createWorkstreamService();
+  let sent: any;
+  try {
+    const pending = service.propose({ session: () => fixture.session, notify() {}, request: async (_m, p) => { sent = p; return new Promise(() => {}); } }, proposal);
+    await until(() => !!sent);
+    expect(fixture.session.pendingPrompts().map(p => p.requestId)).toContain(sent.requestId);
+    expect(fixture.session.answerPrompt(sent.requestId, { selectedOption: "proceed_once" })).toBe(true);
+    expect((await pending).accepted).toBe(true);
+    expect(fixture.session.pendingPrompts()).toHaveLength(0);
+  } finally { fixture.session.interrupt(true); await service.stop(); await fixture.session.end(); }
 });

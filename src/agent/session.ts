@@ -824,6 +824,25 @@ export class Session {
   /** Prompts the client has not answered (load_session pendingPermissions / pendingAskUserRequests). */
   pendingPrompts(): PendingPrompt[] { return [...this.prompts.values()]; }
 
+  /** Service-owned approvals use the same reconnectable registry as native tools. */
+  async requestServicePermission(params: Record<string, unknown>, send: () => Promise<any>, signal?: AbortSignal): Promise<any> {
+    const requestId = String(params.requestId);
+    const fallback = { selectedOption: "cancel" };
+    if (signal?.aborted) return fallback;
+    const cancel = () => this.answerPrompt(requestId, fallback);
+    signal?.addEventListener("abort", cancel, { once: true });
+    const previousState = this.workingState;
+    this.asking("start");
+    this.setState("waiting_for_tool_confirmation");
+    try { return await this.prompt("permission", requestId, params, send, fallback); }
+    finally {
+      signal?.removeEventListener("abort", cancel);
+      this.asking("end");
+      this.notify({ type: "permission_resolved", requestId });
+      if (!signal?.aborted) this.setState(previousState);
+    }
+  }
+
   /** An answer from a reconnected client resolves the original wait (keyed by requestId). */
   answerPrompt(requestId: string, answer: unknown): boolean {
     const p = this.prompts.get(requestId);
@@ -1571,6 +1590,32 @@ export class Session {
       ...(model.executionBackend ? { nativeExecution: {
         cwd: this.cwd, readOnly: this.specMode || this.settings.autonomyLevel === "off", skipPermissions: this.deps.skipPermissions,
         coordination: {
+          requestNativePermission: async (name: string, input: Record<string, unknown>, callSignal: AbortSignal): Promise<{ behavior: "allow" } | { behavior: "deny"; message: string }> => {
+            const denied = { behavior: "deny" as const, message: "The native action was not approved. Ask the user to approve it in Rigwell before retrying." };
+            const readOnly = () => this.specMode || this.settings.autonomyLevel === "off";
+            if (callSignal.aborted || signal?.aborted || readOnly()) return denied;
+            const id = `native-permission-${crypto.randomUUID()}`;
+            const cancel = () => {
+              for (const p of this.prompts.values()) {
+                const uses = p.params.toolUses as { toolUse?: { id?: string } }[] | undefined;
+                if (uses?.some((u) => u.toolUse?.id === id)) p.resolve(p.fallback);
+              }
+            };
+            callSignal.addEventListener("abort", cancel, { once: true });
+            this.asking("start");
+            try {
+              const answer = await this.askRaw({ type: "tool_use", id, name, input }, {
+                decision: "ask", confirmationType: "exec", impactLevel: "high", alwaysLevel: null,
+                details: { fullCommand: `Native ${name} in ${this.cwd}\n${typeof input.command === "string" ? input.command : JSON.stringify(input, null, 2)}` },
+                options: [{ label: "Yes, allow once", value: "proceed_once" }, { label: "No, cancel", value: "cancel" }],
+              });
+              return answer.option === "proceed_once" && !callSignal.aborted && !signal?.aborted && !readOnly() ? { behavior: "allow" } : denied;
+            } finally {
+              callSignal.removeEventListener("abort", cancel);
+              this.asking("end");
+              if (!callSignal.aborted && !signal?.aborted) this.setState("executing_tool");
+            }
+          },
           tools: () => this.scriptTools().filter((t) => COORDINATION_TOOLS.has(t.name)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
           call: async (name: string, input: Record<string, unknown>, callSignal: AbortSignal) => {
             if (callSignal.aborted || signal?.aborted || !COORDINATION_TOOLS.has(name)) throw new Error("Coordination call is no longer available");
@@ -1587,7 +1632,8 @@ export class Session {
           },
         },
       } } : {}),
-      model, sessionId: this.id, mode: this.effectiveMode(), tools: this.tools(), messages: this.messages,
+      model, sessionId: this.id, mode: this.effectiveMode(), tools: this.tools(),
+      messages: model.executionBackend ? this.messages.map((m) => /^repl-tool-(call|result):native-/.test(m.id) ? { ...m, visibility: undefined } : m) : this.messages,
       reasoningEffort: this.activeEffort(), signal,
       extraSystem: [...(prof.promptVariant ? [prof.promptVariant] : []), ...(this.deps.extraSystem ?? [])],
       systemPrompt: this.deps.systemPrompt, toolDescriptions: prof.toolDescriptionOverrides, cacheStrategy: prof.cache.strategy, openai: openaiFields(prof),

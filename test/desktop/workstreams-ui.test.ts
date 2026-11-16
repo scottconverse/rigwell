@@ -36,7 +36,7 @@ const { pw, reason } = chromiumStatus("Workstreams headless UI");
     expect(bundle.success).toBe(true); const js = await bundle.outputs[0]!.text();
     server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (r) => new URL(r.url).pathname === "/app.js" ? new Response(js, { headers: { "content-type": "application/javascript" } }) : new Response(`<div id="root"></div><script>window.fixtureUrl=${JSON.stringify(`${d.wsUrl}?token=${d.wsToken}`)};window.fixtureId=${JSON.stringify(accepted.workstreamId)};window.fixtureCwd=${JSON.stringify(cwd)}</script><script type="module" src="/app.js"></script>`, { headers: { "content-type": "text/html" } }) });
     browser = await pw.chromium.launch({ headless: true }); const page = await browser.newPage(); page.setDefaultTimeout(5000);
-    await page.goto(`http://127.0.0.1:${server.port}`);
+    await page.goto(`http://127.0.0.1:${server.port}`, { waitUntil: "domcontentloaded" });
     await page.getByRole("button").filter({ hasText: "UI coordination" }).click();
     await page.getByRole("heading", { name: "UI coordination", exact: true }).waitFor();
     expect(await page.getByLabel("Agents", { exact: true }).innerText()).toContain("Builder");

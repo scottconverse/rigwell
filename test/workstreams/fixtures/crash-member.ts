@@ -8,6 +8,7 @@ import { loadSettings } from "../../../src/storage/settings.ts";
 
 const cwd = process.env.FIXTURE_CWD!;
 const daemon = await startDaemon({ socketPath: join(cwd, "daemon.sock"), automations: false, sidepane: false, ws: false });
+writeFileSync(process.env.FIXTURE_READY! + ".phase", "daemon");
 const service = daemon.workstreams;
 const request = async (_method: string, p: any) => p.toolUses?.[0]?.confirmationType === "propose_workstream" ? { selectedOption: "proceed_once" } : new Promise(() => {});
 const lead = new MemberSession({ tools: (t) => t, notify() {}, request });
@@ -15,6 +16,7 @@ await lead.call("initialize_session", { cwd, modelId: resolveModels(loadSettings
 const conn = { session: () => lead.connection.session, notify() {}, request };
 service.attach(conn);
 const proposal = await service.propose(conn, { title: "Crash recovery", goal: "Recover", plan: "Keep existing sessions" });
+writeFileSync(process.env.FIXTURE_READY! + ".phase", "proposal");
 const agent = await service.spawn(lead.connection.session!, { name: "Interrupted member", role: "task", prompt: "BUSY", worktree: false });
 const session = service.members.get(agent.agentId)!.connection.session!;
 while (!session.pendingPrompts().length) await Bun.sleep(5);

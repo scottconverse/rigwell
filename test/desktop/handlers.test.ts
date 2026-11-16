@@ -154,3 +154,21 @@ describe("desktop: AskUser and re-shown prompts", () => {
     d.stop();
   }, 40000);
 });
+
+test("desktop restores a Workstream proposal after a connection reload", async () => {
+  const {d,repo}=await setup([{toolCalls:[{name:"ProposeWorkstream",input:{title:"Reconnect proposal",goal:"Retain approval",plan:"Wait for the user"}}]},{text:"Proposal handled"}]);
+  const first=await SessionController.create({cwd:repo,modelId:MODEL});
+  let again: SessionController | undefined;
+  try {
+    void first.send("Propose the workstream");await until(()=>first.getSnapshot().prompts.length===1);
+    const id=first.getSnapshot().sessionId!;
+    expect(first.getSnapshot().prompts[0]!.params.toolUses[0].confirmationType).toBe("propose_workstream");
+    first.conn!.close();await sleep(100);
+    again=await SessionController.resume(id,repo);
+    expect(again.getSnapshot().prompts).toHaveLength(1);
+    expect(again.getSnapshot().prompts[0]!.reshown).toBe(true);
+    again.answer(again.getSnapshot().prompts[0]!.requestId,{selectedOption:"proceed_once"});
+    await until(()=>again!.getSnapshot().working==="idle");
+    expect(again.getSnapshot().prompts).toHaveLength(0);
+  } finally {again?.close();first.close();await d.stop();}
+},40000);

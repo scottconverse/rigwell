@@ -17,6 +17,15 @@ const args=process.argv.slice(2);
 if(args[0]==='auth'){console.log(JSON.stringify({loggedIn:true,authMethod:process.env.FAKE_API?'api_key':'claude.ai',subscriptionType:'max'}));process.exit(0)}
 if(args[0]==='login'){console.error('Logged in using ChatGPT');process.exit(0)}
 let prompt='';for await(const chunk of process.stdin)prompt+=chunk;
+if(process.env.FAKE_NATIVE_PERMISSION){
+ const flag=args.indexOf('--permission-prompt-tool');
+ if(flag<0){console.log(JSON.stringify({type:'result',subtype:'success',result:'Command requires approval; it did not run.'}));process.exit(0)}
+ const config=JSON.parse(await Bun.file(args[args.indexOf('--mcp-config')+1]).text()),server=config.mcpServers.rigwell;
+ const result=await(await fetch(server.url,{method:'POST',headers:{authorization:server.headers.Authorization,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:args[flag+1].replace('mcp__rigwell__',''),arguments:{tool_name:'Bash',input:{command:'npm test',description:'Run the workspace tests'}}}})})).json();
+ const decision=JSON.parse(result.result.content[0].text);
+ if(decision.behavior==='allow')await Bun.write('approved-marker.txt','approved');
+ console.log(JSON.stringify({type:'result',subtype:'success',result:decision.behavior==='allow'?'Approved command ran.':'Command denied; it did not run.'}));process.exit(0);
+}
 if(process.env.FAKE_BRIDGE){
  let url,token;
  if(args[0]==='exec'){
@@ -65,6 +74,46 @@ if(args[0]==='exec'){
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const req = (backend: "claude-cli" | "codex-cli") => request(model(backend === "claude-cli" ? "anthropic" : "openai", "", { apiKey: undefined, executionBackend: backend }), [userMsg("Read and fix the requested file")], { nativeExecution: { cwd: dir, readOnly: false, skipPermissions: false } });
 const adapter = (env: NodeJS.ProcessEnv = {}) => new NativeCliAdapter({ command: [process.execPath, fixture], env: { ...process.env, ...env } });
+
+test("native command approval reaches the owning Session before execution", async () => {
+  let approvals = 0;
+  const s = makeStubSession(() => { throw new Error("native client only"); }, {
+    resolveModel: () => req("claude-cli").model,
+    createAdapter: () => adapter({ FAKE_NATIVE_PERMISSION: "1" }), streamWithRetry,
+    autoRejectPermissionRequests: false,
+  }, { async requestPermission(params: any) {
+    approvals++;
+    expect(params.toolUses[0].toolUse.input.command).toBe("npm test");
+    expect(params.options.map((o: any) => o.value)).toEqual(["proceed_once", "cancel"]);
+    expect(await Bun.file(join(s.cwd, "approved-marker.txt")).exists()).toBe(false);
+    return { selectedOption: "proceed_once" };
+  } });
+  try {
+    s.session.addUserMessage("Run the workspace tests"); await s.session.settled();
+    expect(approvals).toBe(1);
+    expect(await Bun.file(join(s.cwd, "approved-marker.txt")).exists()).toBe(true);
+  } finally { await s.session.end(); rmSync(s.cwd, { recursive: true, force: true }); }
+});
+
+for (const mode of ["deny", "invalid", "no approver", "read only", "interrupt"] as const) test(`native command approval fails closed: ${mode}`, async () => {
+  let asked = 0;
+  const s = makeStubSession(() => { throw new Error("native only"); }, {
+    resolveModel: () => req("claude-cli").model,
+    createAdapter: () => adapter({ FAKE_NATIVE_PERMISSION: "1" }), streamWithRetry,
+    autoRejectPermissionRequests: mode === "no approver",
+  }, { async requestPermission() {
+    asked++;
+    if (mode === "interrupt") { setTimeout(() => s.session.interrupt(true), 0); return new Promise(() => {}); }
+    return { selectedOption: mode === "invalid" ? "proceed_always" : "cancel" };
+  } });
+  try {
+    if (mode === "read only") s.session.updateSettings({ autonomyLevel: "off" });
+    s.session.addUserMessage("Run the workspace tests"); await s.session.settled();
+    expect(asked).toBe(mode === "read only" || mode === "no approver" ? 0 : 1);
+    expect(await Bun.file(join(s.cwd, "approved-marker.txt")).exists()).toBe(false);
+    expect(s.session.pendingPrompts()).toHaveLength(0);
+  } finally { await s.session.end(); rmSync(s.cwd, { recursive: true, force: true }); }
+});
 
 for (const backend of ["claude-cli", "codex-cli"] as const) test(`${backend} completes through native events without replaying tools`, async () => {
   const events = await collect(adapter({ ANTHROPIC_API_KEY: "unused", OPENAI_API_KEY: "unused" }).stream(req(backend)));
@@ -220,5 +269,23 @@ test("a required Rigwell commit scan fails closed before any native client launc
     s.session.addUserMessage("Change and commit the file"); await s.session.settled();
     expect(launched).toBe(false);
     expect(s.notes.some((n) => JSON.stringify(n).includes("cannot enforce"))).toBe(true);
+  } finally { await s.session.end(); rmSync(s.cwd, { recursive: true, force: true }); }
+});
+
+test("later native invocations receive completed coordination results", async () => {
+  const prompts: string[] = [];
+  const client = adapter({ FAKE_BRIDGE: "1" });
+  const s = makeStubSession(() => { throw new Error("native only"); }, {
+    resolveModel: () => req("codex-cli").model, streamWithRetry,
+    createAdapter: () => ({ async *stream(r: any) { prompts.push(nativePrompt(r)); yield* client.stream(r); } }),
+    toolsFor: () => [{ name: "ListAgents", description: "fixture", inputSchema: { type: "object" }, category: "other", async run() { return { content: "existing-agent-and-listener-receipt" }; } }],
+    decide: () => ({ decision: "allow" }),
+  });
+  try {
+    s.session.addUserMessage("Read the roster"); await s.session.settled();
+    s.session.addUserMessage("Continue the existing work"); await s.session.settled();
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("existing-agent-and-listener-receipt");
+    expect(prompts[1]).toContain("Current user request:\nContinue the existing work");
   } finally { await s.session.end(); rmSync(s.cwd, { recursive: true, force: true }); }
 });

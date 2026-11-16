@@ -31,13 +31,20 @@ export function startCoordinationBridge(host: NonNullable<NonNullable<ModelReque
       const error = (code: number, message: string) => Response.json({ jsonrpc: "2.0", id: msg.id, error: { code, message } });
       if (msg.method === "initialize") return reply({ protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "rigwell", version: "1.0.0" } });
       if (msg.method === "ping") return reply({});
-      if (msg.method === "tools/list") return reply({ tools: host.tools().filter((t) => COORDINATION_TOOLS.has(t.name)) });
+      if (msg.method === "tools/list") return reply({ tools: [...host.tools().filter((t) => COORDINATION_TOOLS.has(t.name)), ...(host.requestNativePermission ? [{ name: "NativePermission", description: "Request user approval for a native client action. Does not execute tools.", inputSchema: { type: "object", properties: { tool_name: { type: "string" }, input: { type: "object" } }, required: ["tool_name", "input"] } }] : [])] });
       if (msg.method !== "tools/call") return error(-32601, "Method not available");
       if (calls.size >= 16) return error(-32000, "Too many active coordination calls");
       const name = msg.params?.name, input = msg.params?.arguments ?? {};
-      if (!COORDINATION_TOOLS.has(name) || !host.tools().some((t) => t.name === name)) return error(-32602, "Tool not available in this session");
       if (!input || typeof input !== "object" || Array.isArray(input)) return error(-32602, "Tool arguments must be an object");
-      const task = Promise.resolve().then(() => host.call(name, input, AbortSignal.any([combined, req.signal])));
+      const permission = name === "NativePermission" && !!host.requestNativePermission;
+      if (!permission && (!COORDINATION_TOOLS.has(name) || !host.tools().some((t) => t.name === name))) return error(-32602, "Tool not available in this session");
+      if (permission && (typeof input.tool_name !== "string" || !input.tool_name.trim() || input.tool_name.length > 200 || !input.input || typeof input.input !== "object" || Array.isArray(input.input))) return error(-32602, "Invalid native permission request");
+      const task = Promise.resolve().then(async () => {
+        const callSignal = AbortSignal.any([combined, req.signal]);
+        if (!permission) return host.call(name, input, callSignal);
+        const decision = await host.requestNativePermission!(input.tool_name, input.input, callSignal);
+        return { content: JSON.stringify(callSignal.aborted ? { behavior: "deny", message: "Approval cancelled" } : decision) };
+      });
       calls.add(task);
       try {
         const out = await task;

@@ -287,10 +287,12 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
     const budget = budgetFrom(input.budget);
     if (!conn.request) return { accepted: false, reason: "A user approver is required" };
     const requestId = crypto.randomUUID();
-    const answer = await abortable(conn.request("request_permission", { requestId,
+    const params = { requestId,
       toolUses: [{ toolUse: { type: "tool_use", id: requestId, name: "ProposeWorkstream", input }, confirmationType: "propose_workstream", details: { title, goal, plan, budget, agents: input.agents ?? [] } }],
       options: [{ label: "Accept workstream", value: "proceed_once" }, { label: "Edit plan and accept", value: "proceed_edit" }, { label: "Reject", value: "cancel" }],
-    }), signal).catch(() => ({ selectedOption: "cancel" }));
+    };
+    const send = () => conn.request!("request_permission", params);
+    const answer = await abortable(lead.requestServicePermission ? lead.requestServicePermission(params, send, signal) : send(), signal).catch(() => ({ selectedOption: "cancel" }));
     if (signal?.aborted) return { accepted: false, reason: "Proposal cancelled" };
     if (!["proceed_once", "proceed_edit"].includes(answer?.selectedOption)) return { accepted: false };
     const edited = typeof answer.editedSpecContent === "string" && answer.editedSpecContent.trim() ? answer.editedSpecContent : undefined;

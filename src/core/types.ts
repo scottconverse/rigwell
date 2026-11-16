@@ -140,6 +140,7 @@ export interface ModelRequest {
     cwd: string; readOnly: boolean; skipPermissions: boolean; synthesis?: boolean;
     coordination?: {
       tools(): ToolSpec[];
+      requestNativePermission?(name: string, input: Record<string, unknown>, signal: AbortSignal): Promise<{ behavior: "allow" } | { behavior: "deny"; message: string }>;
       call(name: string, input: Record<string, unknown>, signal: AbortSignal): Promise<ToolOutput>;
     };
   };

@@ -118,6 +118,8 @@ test("hard daemon-owner restart retains session identity, interrupted status, qu
   let daemon: Awaited<ReturnType<typeof startDaemon>> | undefined;
   const listenerLog: string[] = [];
   try {
+    await until(() => existsSync(file + ".phase"));
+    await until(() => readFileSync(file + ".phase", "utf8") === "proposal");
     await until(() => existsSync(file));
     const { workstreamId, agent, queued } = JSON.parse(readFileSync(file, "utf8"));
     child.kill(9); await child.exited;

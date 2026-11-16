@@ -47,6 +47,7 @@ export function nativeArguments(req: ModelRequest, bridge?: { url: string; confi
     ? ["-p", "--model", req.model.model, "--output-format", "stream-json", "--verbose", "--no-session-persistence",
       "--strict-mcp-config", "--mcp-config", bridge?.configFile ?? '{"mcpServers":{}}', "--disable-slash-commands",
       ...(bridge ? ["--allowedTools", "mcp__rigwell__*"] : []),
+      ...(bridge && context.coordination?.requestNativePermission ? ["--permission-prompt-tool", "mcp__rigwell__NativePermission"] : []),
       ...(context.synthesis ? ["--tools", ""] : []),
       ...(unsafe ? ["--dangerously-skip-permissions"] : ["--permission-mode", context.readOnly ? "plan" : "acceptEdits"])]
     : ["exec", "--model", req.model.model, "--json", "--ephemeral", "--color", "never", "--skip-git-repo-check",
@@ -169,7 +170,7 @@ export class NativeCliAdapter implements ModelAdapter {
     let args: string[];
     try {
       const host = req.nativeExecution?.coordination;
-      if (host && !req.nativeExecution?.synthesis && host.tools().length) {
+      if (host && !req.nativeExecution?.synthesis && (host.tools().length || host.requestNativePermission)) {
         bridge = startCoordinationBridge(host, signal);
         configDir = mkdtempSync(path.join(tmpdir(), "rigwell-coordination-"));
         if (!makePrivate(configDir, { dir: true })) throw failure("Could not protect the coordination configuration");

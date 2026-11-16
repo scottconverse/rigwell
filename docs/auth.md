@@ -19,10 +19,14 @@ The adapter checks subscription authentication before each invocation, removes i
 parent Codex desktop execution context, and preserves the client's normal credential/config directories.
 Existing client configuration and provider entitlement still apply. Rigwell does not read or copy the tokens.
 
-Native tools use the client's permissions. Read-only/spec sessions select native read-only/plan mode. Writable
+Native tools use the client's permissions. Unresolved Claude native approvals are forwarded to Rigwell's
+permission panel through the client's permission callback. The panel shows the tool, workspace and requested
+command or input, with allow-once and cancel choices. No approver, interruption or read-only mode denies the
+request. Native deny rules still apply; approving a request does not change global client permissions.
+Read-only/spec sessions select native read-only/plan mode. Writable
 sessions use native edit approval/workspace sandbox modes. Unsafe native flags require the session's explicit
 skip-permissions setting and are never enabled for read-only sessions. Native execution cannot enforce Rigwell's
-per-tool permission dialogs, sandbox policy, commit secret scan or restricted tool lists; sessions requiring those
+complete per-tool policy, sandbox policy, commit secret scan or restricted tool lists; sessions requiring those
 Rigwell policies refuse this backend rather than silently bypassing them. Use a direct adapter for those sessions.
 Native failures are not automatically replayed, because tools may already have changed files.
 
