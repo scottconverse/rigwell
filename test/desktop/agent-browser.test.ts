@@ -74,8 +74,12 @@ const ref = (snapshot: string, role: string, name: string) => {
   try {
     const opened = await manager.run("browser_open", { url: "about:blank" }, ctx); expect(opened.isError).not.toBe(true);
     const waiting = manager.run("browser_wait", { text: "This never appears", timeoutMs: 30000 }, ctx);
-    await Bun.sleep(50); const started = Date.now(); await manager.closeSession(ctx.sessionId);
-    expect((await waiting).content).toContain("cancelled"); expect(Date.now() - started).toBeLessThan(2000);
+    await Bun.sleep(50); const started = Date.now();
+    const closing = manager.closeSession(ctx.sessionId);
+    try {
+      expect((await waiting).content).toContain("cancelled");
+      expect(Date.now() - started).toBeLessThan(2000);
+    } finally { await closing; } // Native process exit and profile cleanup are separate from cancellation latency.
     expect(readdirSync(join(env.rigwellHome, "browser-profiles"))).toEqual([]);
   } finally { await manager.closeAll(); env.cleanup(); }
 }, 10_000);
