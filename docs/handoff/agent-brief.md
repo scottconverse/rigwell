@@ -24,7 +24,7 @@ new features, real model calls, desktop takeover or delegation.
 - `src/adapters/`: direct providers, native clients and request-scoped coordination/permission bridge.
 - `src/workstreams/`, `src/worktree/`, `src/missions/`: persistent coordination, Git isolation/PRs and staged work. Check actual paths before editing.
 - `src/tools/`, `src/script/`, `src/jobs/`, `src/permissions/`: tools, execution and permission enforcement.
-- `src/storage/`, `src/config/`, `src/policy/`: profiles, settings, transcripts, credentials and policy.
+- `src/storage/`, `src/config/`, `src/storage/policy.ts`: profiles, settings, transcripts, credentials and policy.
 - `src/mcp/`, `src/plugins/`, `src/skills/`, `src/hooks/`: extensions and integrations.
 - `src/automations/`, `src/machines/`, `src/sync/`, `src/eval/`: repeatable/remote work and evaluation.
 - `desktop/main/`, `desktop/preload/`, `desktop/renderer/`: native shell, IPC boundary and React UI.
