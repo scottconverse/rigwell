@@ -14,6 +14,9 @@ Use branch `phase-1-core-loop`. Inspect the existing checkout and preserve
 unrelated edits. Commit/push only that branch; never push to main or merge
 without a new explicit owner exception. Do not reset an existing worktree to
 establish a starting point. Published tags and release assets are immutable.
+The owner granted a one-time closeout merge exception on 2026-11-16. Preserve
+the current released tree and both unrelated branch histories; see HANDOFF.md
+and decision 525. Further implementation and interactive testing are paused.
 The owner's current instructions and bounded completion contract take
 precedence over historical process guidance. This brief does not authorize
 new features, real model calls, desktop takeover or delegation.

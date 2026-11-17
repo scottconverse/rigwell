@@ -4,6 +4,8 @@ For Windows **0.4.1**, with Linux and macOS distributions remaining at **0.4.0**
 
 This manual covers first use, everyday work, nontechnical review, technical operation and architecture. Feature-specific reference guides are linked where more configuration detail is useful.
 
+**Known 0.4.1 limitation:** subscription-client Workstreams can receive a Next-message listener notification without the message body in model context, causing repeated handoffs and excess token use. The latest interactive exercise was paused before integration. See [message-delivery limits and recovery](workstreams.md#known-041-message-delivery-issue) before using this release for unattended multi-agent work. This defect remains unresolved in the published installer.
+
 ## Choose your starting point
 
 | You want to... | Start here |

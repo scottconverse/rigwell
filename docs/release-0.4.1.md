@@ -41,6 +41,17 @@ established. The missing pending-prompt recovery was reproduced and fixed.
 
 ## Existing features retained
 
+### Post-release finding
+
+A later interactive Windows Workstream exercise reproduced missing message
+bodies in subscription-client model context after **Next** listener delivery.
+Members requested repeated handoffs and reached the configured token budget.
+**Now** delivery recovered the observed message bodies, but the exercise was
+paused before integration and final acceptance. This does not invalidate the
+historical passing exercise below, and it does establish an unresolved defect
+in the released binary. See [Workstream recovery](workstreams.md#known-041-message-delivery-issue).
+The published tag, installer and signing evidence remain unchanged.
+
 The [manual's reference library](user-manual.md#reference-library) covers the
 current functions: desktop sessions, files/terminal/browser/side chat, direct
 and subscription execution, local endpoints, persistent Workstreams, Missions,

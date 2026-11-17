@@ -44,6 +44,21 @@ attention, but do not approve anything on your behalf.
 
 ## Limits and recovery
 
+### Known 0.4.1 message-delivery issue
+
+A live Windows walkthrough reproduced a subscription-client handoff issue:
+**Next** messages can wake a native session with listener metadata but without
+the message body in its model context. A **Delivered** label does not establish
+that the model received or acted on that body. Repeated acknowledgments can
+consume the token budget without advancing the task. **Now** messages delivered
+the bodies in the observed run, but interrupt the active turn and are only a
+temporary recovery option. This issue is not fixed in the published 0.4.1 binary.
+
+If members repeatedly request the same contract, pause the Workstream and
+inspect its messages and transcripts. Preserve worktrees; do not start duplicate
+members or treat the missing acknowledgment as approval. The latest interactive
+exercise was paused before integration, so it is not passing end-to-end evidence.
+
 Token totals can include repeated cached input. Cost remains unpriced when the
 profile has no price data; an absent or zero estimate is not a measured cash
 charge. A reached budget pauses work. Only the user can change a budget or
