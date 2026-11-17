@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { renameSync, writeFileSync } from "node:fs";
 import { startDaemon } from "../../../src/daemon/daemon.ts";
 import { join } from "node:path";
 import { MemberSession } from "../../../src/workstreams/member.ts";
@@ -7,8 +7,17 @@ import { resolveModels } from "../../../src/storage/models.ts";
 import { loadSettings } from "../../../src/storage/settings.ts";
 
 const cwd = process.env.FIXTURE_CWD!;
+const readyPath = process.env.FIXTURE_READY!;
+const publish = (path: string, value: string) => {
+  const pendingPath = path + ".pending";
+  writeFileSync(pendingPath, value);
+  renameSync(pendingPath, path);
+};
+const started = performance.now();
+console.error("crash fixture loaded");
 const daemon = await startDaemon({ socketPath: join(cwd, "daemon.sock"), automations: false, sidepane: false, ws: false });
-writeFileSync(process.env.FIXTURE_READY! + ".phase", "daemon");
+publish(readyPath + ".daemon", "ready");
+console.error("crash fixture daemon ready", Math.round(performance.now() - started));
 const service = daemon.workstreams;
 const request = async (_method: string, p: any) => p.toolUses?.[0]?.confirmationType === "propose_workstream" ? { selectedOption: "proceed_once" } : new Promise(() => {});
 const lead = new MemberSession({ tools: (t) => t, notify() {}, request });
@@ -16,7 +25,8 @@ await lead.call("initialize_session", { cwd, modelId: resolveModels(loadSettings
 const conn = { session: () => lead.connection.session, notify() {}, request };
 service.attach(conn);
 const proposal = await service.propose(conn, { title: "Crash recovery", goal: "Recover", plan: "Keep existing sessions" });
-writeFileSync(process.env.FIXTURE_READY! + ".phase", "proposal");
+publish(readyPath + ".proposal", "ready");
+console.error("crash fixture proposal ready", Math.round(performance.now() - started));
 const agent = await service.spawn(lead.connection.session!, { name: "Interrupted member", role: "task", prompt: "BUSY", worktree: false });
 const session = service.members.get(agent.agentId)!.connection.session!;
 while (!session.pendingPrompts().length) await Bun.sleep(5);
@@ -24,5 +34,6 @@ const store = new WorkstreamStore(proposal.workstreamId!);
 service.listeners.create(store, "lead", { on: "file_changed", filter: { glob: "*.txt" } });
 service.listeners.create(store, agent.agentId, { on: "message" });
 const queued = service.send(lead.connection.session!.id, { to: agent.agentId, message: "LATER AFTER RESTART", priority: "later" });
-writeFileSync(process.env.FIXTURE_READY!, JSON.stringify({ workstreamId: store.id, agent, queued }));
+publish(readyPath, JSON.stringify({ workstreamId: store.id, agent, queued }));
+console.error("crash fixture member waiting", Math.round(performance.now() - started));
 setInterval(() => {}, 1000);

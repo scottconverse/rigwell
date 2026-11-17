@@ -272,8 +272,10 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
       const message = store.writeMessage({ id: crypto.randomUUID(), ts: Date.now(), from, to, priority: priority as MessagePriority, text: messageText });
       store.event("message_sent", { messageId: message.id, from, to, priority });
       notify(store, "workstream_message", { message });
+      // Queue the body before its listener wakes the recipient or resolves WaitForEvents.
+      const delivered = deliver(store, message);
       listeners.emit(store, "message", { messageId: message.id, agentId: from, name: store.agent(from)?.name ?? from, from, to });
-      return { messageId: message.id, delivered: deliver(store, message) };
+      return { messageId: message.id, delivered };
     });
     return { messageId: results[0]!.messageId, delivered: results.every((r) => r.delivered), ...(results.length > 1 ? { messageIds: results.map((r) => r.messageId) } : {}) };
   }

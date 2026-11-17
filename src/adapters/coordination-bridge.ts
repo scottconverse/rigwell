@@ -39,16 +39,19 @@ export function startCoordinationBridge(host: NonNullable<NonNullable<ModelReque
       const permission = name === "NativePermission" && !!host.requestNativePermission;
       if (!permission && (!COORDINATION_TOOLS.has(name) || !host.tools().some((t) => t.name === name))) return error(-32602, "Tool not available in this session");
       if (permission && (typeof input.tool_name !== "string" || !input.tool_name.trim() || input.tool_name.length > 200 || !input.input || typeof input.input !== "object" || Array.isArray(input.input))) return error(-32602, "Invalid native permission request");
+      const callSignal = AbortSignal.any([combined, req.signal]);
       const task = Promise.resolve().then(async () => {
-        const callSignal = AbortSignal.any([combined, req.signal]);
-        if (!permission) return host.call(name, input, callSignal);
-        const decision = await host.requestNativePermission!(input.tool_name, input.input, callSignal);
-        return { content: JSON.stringify(callSignal.aborted ? { behavior: "deny", message: "Approval cancelled" } : decision) };
+        if (permission) {
+          const decision = await host.requestNativePermission!(input.tool_name, input.input, callSignal);
+          return { content: [{ type: "text", text: JSON.stringify(callSignal.aborted ? { behavior: "deny", message: "Approval cancelled" } : decision) }] };
+        }
+        const out = await host.call(name, input, callSignal);
+        const context = !out.isError && !callSignal.aborted ? await host.takeWorkstreamContext?.(callSignal) ?? [] : [];
+        return { content: [out.content, ...context].map((text) => ({ type: "text", text })), ...(out.isError ? { isError: true } : {}) };
       });
       calls.add(task);
       try {
-        const out = await task;
-        return reply({ content: [{ type: "text", text: out.content }], ...(out.isError ? { isError: true } : {}) });
+        return reply(await task);
       } catch (e) {
         return reply({ content: [{ type: "text", text: (e as Error).message }], isError: true });
       } finally { calls.delete(task); }

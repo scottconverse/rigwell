@@ -44,6 +44,13 @@ attention, but do not approve anything on your behalf.
 
 ## Limits and recovery
 
+In current source, a signed-in client's next successful Rigwell coordination
+tool response carries any waiting Next handoffs and listener reminders.
+For example, a lead waiting in `WaitForEvents` receives the message body
+with the event. If the client only uses its own tools, Rigwell hands off the
+message after that native invocation returns. The bridge cannot insert
+messages between calls that the signed-in client makes internally.
+
 ### Known 0.4.1 message-delivery issue
 
 A live Windows walkthrough reproduced a subscription-client handoff issue:
