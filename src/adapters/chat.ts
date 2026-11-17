@@ -107,7 +107,8 @@ export function mapMessages(req: ModelRequest, profile: ChatProfile): Obj[] {
       if (text !== "") parts.push({ type: "text", text });
       msg.content = parts;
     }
-    out.push(msg);
+    // Reasoning-only turns can be stored for the UI without producing a replayable message.
+    if (msg.content !== null || calls.length) out.push(msg);
   }
   return out;
 }
