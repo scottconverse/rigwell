@@ -1,0 +1,3 @@
+Implement Counter in counter.js with inc(labels,amount=1) and snapshot(). Label object key order is irrelevant, distinct label values stay distinct. Reject negative/nonfinite amounts; return defensive snapshot copies sorted by canonical label key. lib.js makeMetrics() exposes record(status) and snapshot(), recording status as a string label.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

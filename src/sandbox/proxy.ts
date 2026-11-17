@@ -22,6 +22,8 @@ export interface ProxyOptions {
   listen: { unix: string } | { port: number };
   /** Test hook: where to connect for an allowed host. */
   connect?: (host: string, port: number) => net.Socket;
+  /** Optional lifecycle diagnostics. Never includes request headers or URL paths. */
+  log?: (message: string) => void;
 }
 
 function parseHostPort(s: string, dflt: number): { host: string; port: number } {
@@ -34,6 +36,7 @@ export function startProxy(o: ProxyOptions): Promise<ProxyHandle> {
   const connect = o.connect ?? ((h, p) => net.connect(p, h));
   const sockets = new Set<net.Socket>();
   const server = net.createServer((client) => {
+    o.log?.("proxy client connected");
     sockets.add(client);
     client.on("close", () => sockets.delete(client));
     client.on("error", () => client.destroy());
@@ -66,6 +69,7 @@ export function startProxy(o: ProxyOptions): Promise<ProxyHandle> {
         }
       }
       const verdict = domainAllowed(host, o.allowed, o.denied);
+      o.log?.(`proxy request ${method} ${host}:${port} allowed=${verdict.ok}`);
       if (!verdict.ok) {
         o.onViolation({ host, reason: verdict.reason });
         client.end(`HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Type: text/plain\r\n\r\nBlocked by the Rigwell sandbox: ${host} (${verdict.reason}).\n`);
@@ -74,10 +78,12 @@ export function startProxy(o: ProxyOptions): Promise<ProxyHandle> {
       const upstream = connect(host, port);
       sockets.add(upstream);
       upstream.on("close", () => sockets.delete(upstream));
-      upstream.on("error", () => {
+      upstream.on("error", (error) => {
+        o.log?.(`proxy upstream error ${(error as NodeJS.ErrnoException).code ?? "unknown"}`);
         if (!client.destroyed) client.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
       });
       upstream.on("connect", () => {
+        o.log?.("proxy upstream connected");
         if (method.toUpperCase() === "CONNECT") {
           client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
           if (rest.length) upstream.write(rest);

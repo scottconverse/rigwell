@@ -1,0 +1,3 @@
+Fix mergeConfig(base,patch): recursively merge plain objects, replace arrays/scalars, do not mutate inputs, and reject __proto__, constructor and prototype keys at any depth.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

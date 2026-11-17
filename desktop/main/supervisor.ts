@@ -11,7 +11,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { daemonSocketPath } from "../../src/daemon/socket-path.ts";
+import { recordCrash } from "../../src/diagnostics/reports.ts";
 
 export type SupervisorState = "stopped" | "starting" | "running" | "stopping";
 
@@ -108,11 +108,12 @@ export class DaemonSupervisor extends EventEmitter {
     this.setState("starting");
     mkdirSync(this.logDir, { recursive: true });
     this.rotateLog();
-    const socketPath = daemonSocketPath(this.opts.home);
+    const socketPath = join(this.opts.home, "daemon.sock");
     const [cmd, ...rest] = this.opts.command;
     const child = spawn(cmd, [...rest, "daemon", "--socket", socketPath, "--ws-port", "0"], {
       env: { ...process.env, ...this.opts.env, RIGWELL_HOME: this.opts.home } as NodeJS.ProcessEnv,
       stdio: ["ignore", "ignore", "pipe"],
+      windowsHide: true,
     });
     this.child = child;
     let stderrTail = "";
@@ -138,7 +139,7 @@ export class DaemonSupervisor extends EventEmitter {
         this.emit("ready", this._info);
         return this._info;
       }
-      if (child.exitCode !== null || child.signalCode !== null) throw new Error(`Daemon exited during start (${startErrorLine(stderrTail)})`);
+      if (child.exitCode !== null || child.signalCode !== null) throw new Error(`Daemon exited during start (${stderrTail.trim().split("\n").pop() ?? "no output"})`);
       if (Date.now() > deadline) { child.kill("SIGKILL"); throw new Error("Daemon was not ready within the time limit"); }
       await new Promise((r) => setTimeout(r, 50));
     }
@@ -149,6 +150,7 @@ export class DaemonSupervisor extends EventEmitter {
     if (gen !== this.generation && !this.wantRunning) return; // a requested stop
     this._info = undefined;
     this.log(`daemon exited (code ${r.code}, signal ${r.signal})`);
+    if (this.wantRunning && gen === this.generation) recordCrash(this.opts.home, "daemon", "unexpected-exit", JSON.stringify({ pid: child.pid, ...r, stderrTail }));
     try {
       writeFileSync(join(this.logDir, "daemon-critical-error.json"), JSON.stringify({ at: new Date().toISOString(), pid: child.pid, code: r.code, signal: r.signal, stderrTail }, null, 2));
     } catch {}
@@ -176,13 +178,4 @@ export class DaemonSupervisor extends EventEmitter {
       if (existsSync(f) && statSync(f).size > (this.opts.logMaxBytes ?? 1024 * 1024)) renameSync(f, f + ".old");
     } catch {}
   }
-}
-
-/**
- * The stderr line that says why a start failed. Bun prints the error line first and its own version line last
- * ("Bun v1.4.4 (Windows x64)"), so the last line alone hides the cause: prefer the last line that says "error".
- */
-export function startErrorLine(stderr: string): string {
-  const lines = stderr.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  return [...lines].reverse().find((l) => /error/i.test(l)) ?? lines.at(-1) ?? "no output";
 }

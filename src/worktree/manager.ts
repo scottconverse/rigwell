@@ -10,6 +10,7 @@ import { CHECKOUT_TIMEOUT_MS, canonicalPath, git, gitDirOf, gitOk } from "./git.
 import { copyWorktreeIncludes, type IncludeResult } from "./include.ts";
 import { CLEANUP_TIMEOUT_MS, SETUP_TIMEOUT_MS, runScript, type ScriptResult } from "./scripts.ts";
 import { findProfile, type SetupProfile } from "./profiles.ts";
+import { getPrStatus, type PrStatus } from "./pr.ts";
 
 export type Lifecycle = "ephemeral" | "persistent";
 export type WorktreeErrorCode =
@@ -33,8 +34,6 @@ export interface WorktreeMeta {
   reserved?: boolean;
   /** True when the branch name was generated (eligible for rename after the title). */
   generatedBranch?: boolean;
-  /** The pull request create_pr opened for this branch (spec 18.6). */
-  pr?: { number: number; url: string };
 }
 
 export interface ManagedWorktree extends WorktreeMeta { path: string }
@@ -47,6 +46,7 @@ export interface Receipt {
 }
 
 export interface ManagerOptions {
+  prStatus?: (cwd: string) => Promise<PrStatus>;
   /** Root folder for worktrees. Must be absolute; a relative value is ignored (see `resolveRoot`). */
   root?: string;
   autoDeleteLimit?: number;
@@ -64,8 +64,6 @@ export interface ManagerOptions {
   onRemoved?: (e: RemovedWorktree) => void;
   /** Trust bookkeeping for worktree folders (spec 18.1: mark trusted on create; 18.5: forget on removal). */
   trust?: { mark(p: string): void; forget(p: string): void };
-  /** Does this worktree's branch have an open pull request? Auto-delete keeps one that does (spec 18.5). */
-  hasOpenPr?: (w: ManagedWorktree) => Promise<boolean>;
 }
 
 export interface RemovedWorktree { path: string; sessionId: string; repoRoot: string; branch: string | null }
@@ -145,6 +143,7 @@ export interface WorktreeStatus {
 }
 
 export interface DeletionInspection {
+  prState: PrStatus["state"] | "unknown";
   path: string;
   branch: string | null;
   changedFiles: string[];
@@ -450,9 +449,12 @@ export class WorktreeManager {
   }
 
   async inspectDeletion(wtPath: string): Promise<DeletionInspection> {
-    const ch = await this.changes(wtPath);
-    const branch = (await git(wtPath, ["symbolic-ref", "--short", "-q", "HEAD"])).stdout.trim() || null;
-    return { path: wtPath, branch, changedFiles: ch.changed, userChangedFiles: ch.user, localOnlyCommits: await this.localOnlyCommits(wtPath, branch) };
+    const pr = (this.o.prStatus ?? getPrStatus)(wtPath).then((s) => s.state, (e): "unknown" => {
+      this.o.log?.(`[worktree] PR status unavailable for ${wtPath}: ${(e as Error).message}`); return "unknown";
+    });
+    const [ch, head, prState] = await Promise.all([this.changes(wtPath), git(wtPath, ["symbolic-ref", "--short", "-q", "HEAD"]), pr]);
+    const branch = head.stdout.trim() || null;
+    return { path: wtPath, branch, prState, changedFiles: ch.changed, userChangedFiles: ch.user, localOnlyCommits: await this.localOnlyCommits(wtPath, branch) };
   }
 
   // ---- remove -------------------------------------------------------------------------
@@ -500,7 +502,7 @@ export class WorktreeManager {
   /**
    * When there are more ephemeral worktrees than the limit, removes least-recently-used ones.
    * Skips pinned, reserved, in-use and recently used worktrees and any with uncommitted work or
-   * local-only commits, and any whose branch has an open pull request. One pass at a time. Returns the removed paths.
+   * local-only commits. One pass at a time. Returns the removed paths.
    */
   async autoDelete(): Promise<string[]> {
     if (this.autoDeleting) return await this.autoDeleting;
@@ -519,8 +521,7 @@ export class WorktreeManager {
       if (w.pinned || w.reserved || this.o.inUse?.(w.path)) continue;
       if (this.now() - w.lastUsedAt < this.o.recentMs) continue;
       const insp = await this.inspectDeletion(w.path);
-      if (insp.userChangedFiles.length > 0 || insp.localOnlyCommits.length > 0) continue;
-      if (this.o.hasOpenPr && (await this.o.hasOpenPr(w).catch(() => true))) continue; // an unknown answer keeps it
+      if (insp.userChangedFiles.length > 0 || insp.localOnlyCommits.length > 0 || insp.prState === "open" || insp.prState === "unknown") continue;
       try {
         await this.remove(w.path);
         removed.push(w.path);
@@ -562,7 +563,7 @@ export class WorktreeManager {
   async isSafeToRemove(w: ManagedWorktree): Promise<boolean> {
     if (w.pinned || w.reserved || this.o.inUse?.(w.path)) return false;
     const insp = await this.inspectDeletion(w.path);
-    return insp.userChangedFiles.length === 0 && insp.localOnlyCommits.length === 0;
+    return insp.userChangedFiles.length === 0 && insp.localOnlyCommits.length === 0 && insp.prState !== "open" && insp.prState !== "unknown";
   }
 
   /**

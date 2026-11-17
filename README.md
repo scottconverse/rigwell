@@ -1,115 +1,62 @@
 # Rigwell
 
-Rigwell is a coding agent that runs on your own machine, with the model you choose. One local daemon serves
-a terminal UI, a desktop app, a headless `exec` mode and a TypeScript SDK. It reads, edits and runs code in your
-repo, and commands above the autonomy level you set wait for your approval.
+Rigwell is a local workbench for coding agents. Use a desktop app or terminal to work with your models, coordinate persistent Workstreams, run staged Missions, inspect changes and create pull requests with explicit confirmation. Repositories stay ordinary files and Git branches. Cloud connections send context to the providers you configure.
 
-**[Website](https://scottconverse.github.io/rigwell/)** ·
-**[User manual](https://scottconverse.github.io/rigwell/manual/)** ·
-[Quick start](#quick-start) ·
-[Download v0.3.3](https://github.com/scottconverse/rigwell/releases/tag/v0.3.3) ·
-[Issues](https://github.com/scottconverse/rigwell/issues)
+[Website](https://scottconverse.github.io/rigwell/) · [Windows 0.4.1 download](https://github.com/scottconverse/rigwell/releases/download/v0.4.1/rigwell-setup-0.4.1-x64.exe) · [User manual](docs/user-manual.md) · [Contributing](docs/contributing.md)
 
 ## What it does
 
-- **Any model.** Adapters for Anthropic Messages, OpenAI Responses, OpenAI-compatible Chat Completions
-  (for example a local Ollama), Google Gemini and Amazon Bedrock Converse. Models are entries in `settings.json`.
-- **Bounded autonomy.** Four levels (off, low, medium, high). The default is off (read-only). The model labels
-  each command with a risk level, and allow, deny and block lists apply on top. Commands can run in a sandbox
-  (bubblewrap on Linux, sandbox-exec on macOS). Edits are snapshotted so you can rewind.
-- **MCP connectors with sign-in.** Connect stdio, streamable HTTP and SSE MCP servers. Since 0.2.0: OAuth
-  sign-in for HTTP and SSE servers (`rigwell mcp login <name>`, or Sign in in the desktop app).
-- **Script mode.** The model can write a short script that calls the tools as functions, so many tool calls
-  take one model request.
-- **More than one chat.** Missions, local automations (schedules and local webhooks), git worktrees with pull
-  requests, spec mode, a side pane, skills, hooks, subagents and custom slash commands.
-- **Built to be driven by programs.** A documented JSON-RPC protocol over stdio, a Unix socket and a
-  token-protected loopback WebSocket, plus a TypeScript SDK.
-- **Eval loop.** `rigwell eval` runs coding tasks against your models and compares a build to the one before.
+- Persistent Workstreams with a lead, reusable member sessions, messages, user questions and isolated Git worktrees.
+- Direct provider adapters, signed-in official coding clients and compatible local model endpoints. Rigwell owns coordination; native clients retain their own coding tools and permission behavior.
+- Desktop conversation, files, terminal, review, Missions, local automations and an Inbox.
+- Configurable connectors, plugins, local profiles, policy and spend limits, project knowledge and evaluation history.
 
 ## Quick start
 
-Download the installer from the [v0.3.3 release](https://github.com/scottconverse/rigwell/releases/tag/v0.3.3).
-Windows x64 is the release target. macOS (Apple silicon) dmg and zip, and Linux AppImage and deb builds are extras.
-All Rigwell Windows files are signed by Scott Converse: the setup file, rigwell.exe and the uninstaller. The Mac files and the Linux files are not signed.
+For the desktop app, download the [signed Windows 0.4.1 installer](https://github.com/scottconverse/rigwell/releases/download/v0.4.1/rigwell-setup-0.4.1-x64.exe). Linux and macOS packages remain available in [0.4.0](https://github.com/scottconverse/rigwell/releases/tag/v0.4.0). Then follow the [installation guide](docs/install.md) and [first-task walkthrough](docs/user-manual.md#new-user-guide). Configure a model connection before starting a task. Do not paste credentials into a conversation.
 
-The Mac app is not signed by Apple, so macOS blocks it the first time. To open it, run
-`xattr -dr com.apple.quarantine /Applications/Rigwell.app` in Terminal, or go to
-System Settings > Privacy & Security and click **Open Anyway**.
+For a source checkout, install Bun 1.4.4, Git and ripgrep:
 
-To run from source you need Bun 1.4 or later, `git` and `rg` (ripgrep) on your PATH.
-
-```bash
-git clone https://github.com/scottconverse/rigwell
+```sh
+git clone --branch phase-1-core-loop https://github.com/scottconverse/rigwell.git
 cd rigwell
 bun install
+bun src/cli/main.ts --help
+bun src/cli/main.ts eval tasks
 ```
 
-Add a model to `~/.rigwell/settings.json` (or `$RIGWELL_HOME/settings.json`):
+Desktop development also requires Node 22:
 
-```json
-{ "customModels": [ { "model": "your-model-id", "displayName": "My model", "provider": "anthropic",
-                      "baseUrl": "https://api.anthropic.com", "apiKey": "${ANTHROPIC_API_KEY}" } ] }
+```sh
+cd desktop
+npm ci
+cd ..
+bunx tsc --noEmit -p .
+bun test
 ```
 
-Run it:
-
-```bash
-bun src/cli/main.ts                                    # terminal UI
-bun src/cli/main.ts exec --auto low "Fix the failing test"
-bun src/cli/main.ts daemon                             # daemon for the desktop app and SDK
-bun test                                               # the test suite
-```
-
-The desktop app is in `desktop/`. See [docs/desktop.md](docs/desktop.md).
+On Windows, if Electron is missing after installation, run `node node_modules/electron/install.js` from `desktop`. See [desktop development](docs/desktop.md) for build and launch commands. The packaged desktop app includes its runtime but does not install a global terminal command.
 
 ## Documentation
 
-The **[user manual](https://scottconverse.github.io/rigwell/manual/)** is the full guide. It covers install,
-models, autonomy, tools, MCP and OAuth, automations, missions, the architecture (with diagrams), every
-JSON-RPC method and notification, every local HTTP and WebSocket path, the CLI, configuration, environment
-variables, the SDK, files on disk and the security model.
+The [full user manual](docs/user-manual.md) includes new-user onboarding, a nontechnical-user guide, everyday workflows, technical configuration, troubleshooting, recovery and architecture with Mermaid diagrams.
 
-| Doc | What it covers |
-|---|---|
-| [User manual](https://scottconverse.github.io/rigwell/manual/) | Everything, in one page ([source](website/manual/index.html)) |
-| [docs/clients.md](docs/clients.md) | The SDK, the daemon WebSocket and the TUI |
-| [docs/desktop.md](docs/desktop.md) | The desktop app |
-| [docs/automations.md](docs/automations.md) | Automation methods, templates and the visual page |
-| [docs/auth.md](docs/auth.md) | Account sign-in, secrets and environments |
-| [docs/eval.md](docs/eval.md) | The eval loop |
-| [docs/decisions.md](docs/decisions.md) | Choices made where the spec was silent |
-| [spec/harness-spec.md](spec/harness-spec.md) | The build spec |
-| [website/](website/) | The website source (static HTML, CSS and JS) |
+[Authentication](docs/auth.md) · [Workstreams](docs/workstreams.md) · [Review](docs/review.md) · [Evaluations](docs/evaluations.md) · [Release updates](docs/release-updates.md) · [Specification](spec/harness-spec.md) · [Design decisions](docs/decisions.md)
+
+To build the public site, run `bun run site:build` and `bun run site:preview`, then open `http://127.0.0.1:4173/rigwell/`. See [website maintenance](website/README.md).
 
 ## Project status
 
-Early. Version 0.3.3 is the latest release (the 0.3.0 code, with every Rigwell Windows file signed and a macOS build). Every part of the local build spec is written and tested, but
-all tests use fake servers, and Rigwell has not had wide real-world use. CI runs the tests on Windows, macOS and
-Linux. It is run by hand on Windows only.
+The current Windows release is **0.4.1**. It fixes native-client approvals, restores pending Workstream proposals after a view reconnect and preserves coordination receipts across native invocations. See [0.4.1 release notes](docs/release-0.4.1.md). Linux and macOS distributions remain at **0.4.0**. Rigwell is an early release. The Windows setup installer is signed by Scott Converse, with installed first-run, signed upgrade and rollback evidence. Linux has packaged-install and signed AppImage update/rollback evidence. macOS arm64 packages are unsigned and not notarized; real Mac hardware acceptance is unavailable. Full model-family and long-session qualification remains incomplete. Account access, connector registrations and remote infrastructure require your own configuration.
 
-Known limits:
+**Known 0.4.1 issue:** subscription-client Workstreams can receive a Next-message notification without its body in model context, causing repeated handoffs and excess token use. The latest interactive exercise was paused before integration. See [Workstream message-delivery limits](docs/workstreams.md#known-041-message-delivery-issue). The published installer does not yet fix this defect.
 
-- No command sandbox on Windows. The sandbox is off by default everywhere.
-- MCP OAuth sign-in is tested against a local fake server only.
-- Chrome cookie import does not work on Windows.
-- Hosted parts and Workstreams for Missions are planned, not built.
-- The SDK is not published to npm.
-
-Open issues are in [docs/handoff/HANDOFF.md](docs/handoff/HANDOFF.md).
+Current acceptance evidence and remaining work are tracked in [the handoff](docs/handoff/HANDOFF.md). Hosted Stax is [next-version work](docs/next-version.md), outside this release.
 
 ## Contributing
 
-Issues and pull requests are welcome on [GitHub](https://github.com/scottconverse/rigwell/issues).
-Run `bun test` and `bun run typecheck` before you open a pull request.
-
-## Attribution
-
-Rigwell's wire protocol shapes (the JSON-RPC message, notification and settings types) are adapted from the
-type definitions of the Apache-2.0 licensed `@factory/droid-sdk` 0.10.0. See [`NOTICE`](NOTICE). This is an
-attribution only: Rigwell is its own product and uses its own names everywhere else.
+Read the [contribution guide](docs/contributing.md), use fake providers in tests, and keep credentials and private runtime data out of Git. Report reproducible issues with the relevant version and platform.
 
 ## License
 
-Rigwell is licensed under the GNU Affero General Public License v3.0 only (AGPL-3.0-only); see [`LICENSE`](LICENSE).
-Third-party attributions are in [`NOTICE`](NOTICE).
+[GNU Affero General Public License v3.0 only](LICENSE) (AGPL-3.0-only). Third-party attribution, including the source of adapted protocol type shapes, is retained in [NOTICE](NOTICE).

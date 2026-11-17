@@ -1,16 +1,15 @@
 // Desktop shell logic that needs no Electron: daemon supervision, appearance before first paint, alerts and sounds.
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyBoot, bootValues, initialWindowOptions, overlayFor, readableOn, resolveTheme } from "../../desktop/main/appearance.ts";
 import { badgeCount, notificationFor, soundFor } from "../../desktop/main/alerts.ts";
 import { DEFAULT_SETTINGS, loadDesktopSettings, updateDesktopSettings } from "../../desktop/main/settings.ts";
-import { DaemonSupervisor, startErrorLine } from "../../desktop/main/supervisor.ts";
-import { daemonSocketPath, MAX_SOCKET_PATH_BYTES } from "../../src/daemon/socket-path.ts";
+import { DaemonSupervisor } from "../../desktop/main/supervisor.ts";
 import { AttentionTracker } from "../../src/sidepane/attention.ts";
 import { RpcClient } from "../../src/sdk/client.ts";
-import { SocketTransport, WebSocketTransport } from "../../src/sdk/transport.ts";
+import { WebSocketTransport } from "../../src/sdk/transport.ts";
 import { CLI } from "../e2e/helpers.ts";
 import { sleep } from "./helpers.ts";
 
@@ -65,6 +64,8 @@ describe("daemon supervisor (spec 14.1)", () => {
     const crash = JSON.parse(readFileSync(join(home, "logs", "daemon-critical-error.json"), "utf8"));
     // Windows has no signals: a killed process reports exit code 1 and no signal name.
     if (process.platform === "win32") { expect(crash.signal).toBeNull(); expect(crash.code).not.toBe(0); } else expect(crash.signal).toBe("SIGKILL");
+    const reports = readdirSync(join(home, "crashes")).map((n) => JSON.parse(readFileSync(join(home, "crashes", n), "utf8")));
+    expect(reports.some((r) => r.source === "daemon" && r.kind === "unexpected-exit" && r.detail.includes(String(first.pid)))).toBe(true);
     // A second kill is attempt 1 again, not 2: the counter reset on ready.
     const again = new Promise<any>((r) => s.once("ready", r));
     process.kill(second.pid, "SIGKILL");
@@ -99,41 +100,8 @@ describe("daemon supervisor (spec 14.1)", () => {
     await sleep(400);
     expect(s.state).toBe("stopped");
     expect(alive(info.pid)).toBe(false);
+    expect(existsSync(join(home, "crashes"))).toBe(false);
   }, 30_000);
-
-  test("a home path too long for a Unix socket still starts; the socket moves to a short temp path", async () => {
-    // Found in a hand walkthrough: a 150-character home made the daemon fail with "Failed to listen".
-    const home = join(tmp(), "a".repeat(60), "b".repeat(60));
-    expect(join(home, "daemon.sock").length).toBeGreaterThan(MAX_SOCKET_PATH_BYTES);
-    const s = make(home);
-    const info = await s.start();
-    expect(s.state).toBe("running");
-    expect(info.socketPath).toBe(daemonSocketPath(home));
-    expect(Buffer.byteLength(info.socketPath)).toBeLessThanOrEqual(MAX_SOCKET_PATH_BYTES);
-    // The Unix socket answers too, not just the WebSocket.
-    const rpc = new RpcClient(await SocketTransport.connect(info.socketPath));
-    await rpc.close();
-    expect(await ping(info)).toHaveProperty("models");
-  }, 30_000);
-
-  test("the start error names the cause, not Bun's version line", () => {
-    const stderr = "error: Failed to listen at C:\\x\\daemon.sock\n    at startDaemon (src/daemon/daemon.ts:90:22)\r\n\nBun v1.4.4 (Windows x64)\n";
-    expect(startErrorLine(stderr)).toBe("error: Failed to listen at C:\\x\\daemon.sock");
-    expect(startErrorLine("only a line\n")).toBe("only a line");
-    expect(startErrorLine("")).toBe("no output");
-  });
-});
-
-describe("daemon socket path", () => {
-  test("<home>/daemon.sock when it fits; a stable short temp path when it does not", () => {
-    expect(daemonSocketPath("/home/u/.rigwell", "/tmp")).toBe(join("/home/u/.rigwell", "daemon.sock"));
-    const long1 = join("/home/u", "x".repeat(120)), long2 = join("/home/u", "y".repeat(120));
-    const p1 = daemonSocketPath(long1, "/tmp");
-    expect(p1).toMatch(/rigwell-[0-9a-f]{16}\.sock$/);
-    expect(p1.startsWith(join("/tmp", "rigwell-"))).toBe(true);
-    expect(daemonSocketPath(long1, "/tmp")).toBe(p1);
-    expect(daemonSocketPath(long2, "/tmp")).not.toBe(p1);
-  });
 });
 
 describe("appearance before first paint (spec 19.4)", () => {

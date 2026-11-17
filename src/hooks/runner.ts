@@ -110,8 +110,8 @@ export async function runHooks(
   config: HooksConfig, event: HookEventName, base: HookBaseInput,
   extra: Record<string, unknown>, opts: RunHooksOptions = {},
 ): Promise<RunHooksResult> {
-  if (config.hooksDisabled) return { results: [], ran: false };
-  const groups = selectGroups(event, config.events[event], { value: opts.matchValue, toolName: opts.toolName, toolInput: opts.toolInput });
+  const configured = config.events[event]?.filter((g) => !config.hooksDisabled || g.required);
+  const groups = selectGroups(event, configured, { value: opts.matchValue, toolName: opts.toolName, toolInput: opts.toolInput });
   if (!groups.length) return { results: [], ran: false };
   const stdin = JSON.stringify({ ...base, hook_event_name: event, ...extra });
   const parallelGroupId = randomUUID();
@@ -127,7 +127,7 @@ export async function runHooks(
       hookMatcher: g.matcher, hookToolCallId: opts.toolCallId, hookParentId: opts.parentId,
       hookOrder: order, isParallelExecution: parallel, parallelGroupId,
     });
-    const results = await Promise.all(g.hooks.map((h) => runOne(h, base.cwd, stdin, env, opts.signal)));
+    const results = await Promise.all(g.hooks.map((h) => runOne(h, base.cwd, stdin, g.pluginRoot ? { ...env, RIGWELL_PLUGIN_ROOT: g.pluginRoot } : env, opts.signal)));
     const failed = results.some((r) => r.timedOut || (r.exitCode !== 0 && r.exitCode !== 1 && r.exitCode !== 2 && r.exitCode !== 3));
     opts.notify?.({
       type: "hook_execution_completed", hookId, hookStatus: failed ? "error" : "completed",

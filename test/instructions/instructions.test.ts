@@ -45,7 +45,7 @@ test("outside a repo only cwd; home folder itself is skipped; duplicates by real
   expect(mk(env.home).load().files).toEqual([]); // cwd == home: skipped, personal dir is .rigwell
   // same file via symlinked subfolder
   w(path.join(proj, "real", "AGENTS.md"), "real");
-  symlinkSync(path.join(proj, "real"), path.join(proj, ".agents"));
+  symlinkSync(path.join(proj, "real"), path.join(proj, ".agents"), process.platform === "win32" ? "junction" : "dir");
   const r = mk(path.join(proj, "real")).load();
   expect(r.files.length).toBe(1);
 });

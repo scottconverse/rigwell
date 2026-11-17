@@ -1,0 +1,20 @@
+job job-186 started on runner-1
+step 0: download 12MB
+step 1: tests: 41 passed
+step 2: lint ok
+step 3: lint ok
+step 4: warning: FAILED to fetch optional mirror, using default
+step 5: tests: 41 passed
+step 6: download 12MB
+step 7: warning: FAILED to fetch optional mirror, using default
+step 8: warning: FAILED to fetch optional mirror, using default
+step 9: download 12MB
+step 10: download 12MB
+step 11: download 12MB
+step 12: tests: 41 passed
+STATUS: FAILED
+retrying (attempt 2)
+STATUS: FAILED
+retrying (attempt 3)
+STATUS: PASSED
+summary: see artifacts

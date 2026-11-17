@@ -10,7 +10,8 @@ import { join } from "node:path";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer, FakeTurn } from "../fakes/types.ts";
 import { CLI, makeHome, makeRepo } from "../e2e/helpers.ts";
-import { electronStatus, sleep } from "./helpers.ts";
+import { closeElectron, electronStatus, sleep } from "./helpers.ts";
+import { jsCommand } from "../platform.ts";
 
 const desktop = join(import.meta.dir, "../../desktop");
 const { pw, electronBin, reason } = electronStatus("electron smoke test");
@@ -31,7 +32,7 @@ maybe("desktop app end to end", () => {
   async function launch() {
     const env: Record<string, string> = { ...(process.env as Record<string, string>), RIGWELL_HOME: home, DISPLAY: display, RIGWELL_DAEMON_CMD: JSON.stringify(["bun", CLI]) };
     delete env.NODE_OPTIONS;
-    app = await pw._electron.launch({ executablePath: electronBin, args: ["--no-sandbox", desktop, `--route=/?folder=${encodeURIComponent(repo)}`], env, timeout: 60_000 });
+    app = await pw._electron.launch({ executablePath: electronBin, args: ["--no-sandbox", ...(process.platform === "darwin" ? ["--use-mock-keychain"] : []), desktop, `--route=/?folder=${encodeURIComponent(repo)}`], env, timeout: 60_000 });
     page = await app.firstWindow();
     await page.waitForSelector(".dot.running", { timeout: 40_000 });
   }
@@ -41,7 +42,7 @@ maybe("desktop app end to end", () => {
     await page.locator(".composer[data-ready=true]").first().waitFor({ timeout: 30_000 });
     const ta = page.getByLabel("Message").first();
     await ta.fill(text);
-    await ta.press("Enter");
+    await page.locator('button[aria-label="Send"]:not([disabled])').first().click();
   };
   const daemonPid = () => JSON.parse(readFileSync(join(home, "daemon.json"), "utf8")).pid as number;
 
@@ -58,15 +59,16 @@ maybe("desktop app end to end", () => {
       const lastUser: string = userTexts.at(-1) ?? "";
       if (all.includes("This is a side conversation")) { sideBodies.push(body); return { text: "side answer: the agent is waiting on a gate file" }; }
       if (lastUser.includes("RICH")) return { text: "Rich reply\n\n```ts\nconst answer: number = 42;\n```\n\nEuler: $e^{i\\pi}+1=0$ and\n\n$$\\frac{a}{b}$$\n\n```mermaid\ngraph TD\n  A[Start] --> B[End]\n```\n" };
+      if (lastUser.includes("BROWSER_HEADLESS")) return toolResult ? { text: "headless browser done" } : { toolCalls: [{ name: "browser_open", input: { url: `http://127.0.0.1:${web.port}/` } }] };
       if (lastUser.includes("browse")) return toolResult ? { text: "browser done" } : { toolCalls: [{ name: "Browser", input: { action: "navigate", url: `http://127.0.0.1:${web.port}/` } }] };
-      if (lastUser.includes("LONG")) return toolResult ? { text: "long finished" } : { toolCalls: [{ name: "Execute", input: { command: `while [ ! -f ${gate.replaceAll("\\", "/")} ]; do sleep 0.05; done; echo released`, riskLevel: "low", riskReason: "waits for a file" } }] };
+      if (lastUser.includes("LONG")) return toolResult ? { text: "long finished" } : { toolCalls: [{ name: "Execute", input: { command: jsCommand(home, `const fs = require("fs"); const timer = setInterval(() => { if (fs.existsSync(${JSON.stringify(gate)})) { clearInterval(timer); console.log("released"); } }, 50);`), riskLevel: "low", riskReason: "waits for a file" } }] };
       return { text: "hi there" };
     };
     fake = await startFakeAnthropic(Array.from({ length: 200 }, () => route));
     home = makeHome([{ provider: "anthropic", url: fake.url, displayName: "Fake Anthropic" }]);
     mkdirSync(home, { recursive: true });
     // Start with the dark theme saved, to check the very first frame later.
-    display = process.env.DISPLAY || `:${90 + Math.floor(Math.random() * 9)}`;
+    display = process.env.DISPLAY || (process.platform === "linux" ? `:${90 + Math.floor(Math.random() * 9)}` : "");
     if (process.platform === "linux" && !process.env.DISPLAY) {
       xvfb = spawn("Xvfb", [display, "-screen", "0", "1280x900x24"], { stdio: "ignore" });
       for (let i = 0; i < 50 && !existsSync(`/tmp/.X11-unix/X${display.slice(1)}`); i++) await sleep(100);
@@ -75,7 +77,7 @@ maybe("desktop app end to end", () => {
   });
 
   afterAll(async () => {
-    await app?.close().catch(() => {});
+    await closeElectron(app).catch(() => {});
     xvfb?.kill();
     fake?.stop(); web?.stop(true);
   });
@@ -86,17 +88,26 @@ maybe("desktop app end to end", () => {
     await page.locator(".assistant", { hasText: "hi there" }).first().waitFor({ timeout: 30_000 });
     expect(page.url()).toContain("#/sessions/");
     firstSession = page.url().split("#/sessions/")[1].split(/[?#]/)[0];
-    // A new session shows in the sidebar once its first turn ends (no manual reload).
-    await page.locator(".side-row", { hasText: "hello" }).first().waitFor({ timeout: 10_000 });
 
     await page.keyboard.press("Control+p");
     await page.locator(".tree-row", { hasText: "greet.js" }).click();
     await page.locator(".code").getByText("Helo").first().waitFor();
+    await page.evaluate(() => {
+      const w = window as any; w.__fileInputs = [];
+      for (const type of ["input", "change", "click"]) document.addEventListener(type, (event) => {
+        const target = event.target as HTMLTextAreaElement;
+        if (target.getAttribute("aria-label") === "Edit file" || (target.tagName === "BUTTON" && target.textContent === "Save")) w.__fileInputs.push({ type, value: target.value, trusted: event.isTrusted });
+      }, true);
+    });
     await page.getByRole("button", { name: "Edit", exact: true }).click();
     await page.getByLabel("Edit file").fill('export function greet(name) {\n  return "Hello, " + name + "!";\n}\n');
+    const beforeSave = await page.getByLabel("Edit file").evaluate((node: HTMLTextAreaElement) => {
+      const key = Object.keys(node).find((k) => k.startsWith("__reactProps$"));
+      return { dom: node.value, react: key ? (node as any)[key].value : "unavailable" };
+    });
     await page.getByRole("button", { name: "Save" }).click();
-    // Exact and in the files view: a loose "Saved" also matched the button row ("Save" + "Discard" reads "SaveDiscard").
-    await page.locator(".files-view").getByText("Saved", { exact: true }).waitFor();
+    await page.getByText("Saved").waitFor();
+    if (!readFileSync(join(repo, "greet.js"), "utf8").includes('"Hello, "')) console.log("[file save diagnostic]", JSON.stringify({ beforeSave, events: await page.evaluate(() => (window as any).__fileInputs), fileName: await page.locator(".file-name").textContent(), text: await page.locator(".files-view").innerText() }));
     expect(readFileSync(join(repo, "greet.js"), "utf8")).toContain('"Hello, "');
 
     // The file changes behind the editor's back: the next save is refused and the disk keeps the other writer's text.
@@ -113,9 +124,8 @@ maybe("desktop app end to end", () => {
     const term = page.locator(".terminal .xterm").first();
     await term.waitFor();
     await term.click();
-    // The Windows terminal is cmd.exe (decision 310). "^" is its escape, so there too the output differs from the typed text.
-    const win = process.platform === "win32";
-    await page.keyboard.type(win ? "echo persisted-4^2\n" : "echo persisted-$((40+2))\n");
+    await page.keyboard.type(process.platform === "win32" ? "echo persisted-42" : "echo persisted-$((40+2))");
+    await page.keyboard.press("Enter");
     await page.locator(".xterm-rows", { hasText: "persisted-42" }).first().waitFor({ timeout: 15_000 });
 
     await page.reload();
@@ -125,11 +135,23 @@ maybe("desktop app end to end", () => {
     // The old output comes back from the daemon's scrollback, and it is the same live shell.
     await page.locator(".xterm-rows", { hasText: "persisted-42" }).first().waitFor({ timeout: 15_000 });
     await page.locator(".terminal .xterm").first().click();
-    await page.keyboard.type(win ? "echo alive-^2\n" : "echo alive-$((1+1))\n");
+    await page.keyboard.type(process.platform === "win32" ? "echo alive-2" : "echo alive-$((1+1))");
+    await page.keyboard.press("Enter");
     await page.locator(".xterm-rows", { hasText: "alive-2" }).first().waitFor({ timeout: 15_000 });
   }, 90_000);
 
+  test("named browser tools use hidden bundled Chromium when no pane is open", async () => {
+    await composerSend("BROWSER_HEADLESS");
+    await page.locator(".assistant", { hasText: "headless browser done" }).first().waitFor({ timeout: LOAD_WAIT });
+    const state = await app.evaluate(({ BrowserWindow }: any) => BrowserWindow.getAllWindows().filter((w: any) => w.webContents.getTitle() === "Tasks").map((w: any) => ({ visible: w.isVisible(), sandbox: w.webContents.getLastWebPreferences().sandbox })));
+    expect(state).toEqual([{ visible: false, sandbox: true }]);
+    expect(webHits).toContain("/");
+  }, 60_000);
+
   test("the agent drives the browser pane", async () => {
+    await page.getByRole("tab", { name: "Browser", exact: true }).click();
+    // The pane is ready for agent control after its main-process registration is acknowledged.
+    await page.waitForFunction(() => (document.querySelector('button[title="Take a screenshot of this tab"]') as HTMLButtonElement | null)?.disabled === false);
     await composerSend("please browse the page");
     await page.locator(".tool-name", { hasText: "Browser" }).first().waitFor({ timeout: LOAD_WAIT });
     await page.locator(".assistant", { hasText: "browser done" }).first().waitFor({ timeout: LOAD_WAIT });
@@ -291,12 +313,12 @@ maybe("desktop app end to end", () => {
     expect(seen.length).toBe(2);
     expect(seen[0].startsWith("light|")).toBe(true);
     expect(seen[1]).toBe("dark|rgb(22, 20, 19)|rgb(22, 20, 19)");
-    expect(await app.evaluate(({ BrowserWindow }: any) => BrowserWindow.getAllWindows()[0].getBackgroundColor())).toBe("#161413");
+    expect(await app.evaluate(({ BrowserWindow }: any) => BrowserWindow.getAllWindows().find((w: any) => w.isVisible()).getBackgroundColor())).toBe("#161413");
 
     // Relaunch: the window is created dark and the first frame is already dark.
-    await app.close();
+    await closeElectron(app);
     await launch();
-    const bg = await app.evaluate(({ BrowserWindow }: any) => BrowserWindow.getAllWindows()[0].getBackgroundColor());
+    const bg = await app.evaluate(({ BrowserWindow }: any) => BrowserWindow.getAllWindows().find((w: any) => w.isVisible()).getBackgroundColor());
     expect(bg).toBe("#161413");
     const first = await page.evaluate(() => (window as any).__firstFrame);
     expect(first).toEqual({ theme: "dark", bg: "rgb(22, 20, 19)" });

@@ -1,245 +1,185 @@
-// create_pr and PR status (spec 18.6) against a local bare origin, a fake gh and a fake GitHub API. Never real GitHub.
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { existsSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { createPr, hasOpenPr, planPr, prStatus, repoSlug, summarizeChecks, type PrDeps } from "../../src/worktree/pr.ts";
+import { createPr, getPrStatus, codeRepo, type PrDeps, type PrStatus } from "../../src/worktree/pr.ts";
 import { WorktreeManager } from "../../src/worktree/manager.ts";
+import { handleWorktreeMethod } from "../../src/worktree/connect.ts";
 import { makeGitRepo, sh, tmp } from "./util.ts";
+import { tmpEnv } from "../storage/helpers.ts";
+import { CredentialStore, FileBackend, setCredentialStore } from "../../src/storage/credentials.ts";
 
-const FAKE_GH = join(import.meta.dir, "../fakes/fake-gh.ts");
-const ghCmd = ["bun", FAKE_GH];
+let environment: ReturnType<typeof tmpEnv>;
+beforeEach(() => { environment = tmpEnv(); setCredentialStore(new CredentialStore([new FileBackend()])); });
+afterEach(() => { setCredentialStore(undefined); environment.cleanup(); });
 
-let ghDir: string;
-beforeEach(() => {
-  process.env.RIGWELL_HOME = tmp("home");
-  ghDir = tmp("gh");
-  process.env.FAKE_GH_DIR = ghDir;
-});
-const ghCalls = (): string[][] => (existsSync(join(ghDir, "calls.jsonl")) ? readFileSync(join(ghDir, "calls.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l).args) : []);
-const ghAnswers = (cfg: Record<string, unknown>) => writeFileSync(join(ghDir, "fake-gh.json"), JSON.stringify(cfg));
-
-/** A repo whose origin is a bare repo at <tmp>/acme/widget.git, on a feature branch with two commits. */
-function featureRepo() {
-  const repo = makeGitRepo();
-  const bare = join(tmp("bare"), "acme", "widget.git");
-  sh(repo, "init", "-q", "--bare", "-b", "main", bare);
+function fixture() {
+  const repo = makeGitRepo(), bare = tmp("pr-bare");
+  sh(bare, "init", "--bare", "-q", "-b", "main");
   sh(repo, "remote", "add", "origin", bare);
-  sh(repo, "push", "-q", "-u", "origin", "main");
-  sh(repo, "remote", "set-head", "origin", "main");
-  sh(repo, "checkout", "-q", "-b", "rigwell/fix-greeting");
-  writeFileSync(join(repo, "a.txt"), "two\n");
-  sh(repo, "commit", "-qam", "Fix the greeting");
-  writeFileSync(join(repo, "a.txt"), "three\n");
-  sh(repo, "commit", "-qam", "Add a test");
-  return { repo, bare };
+  sh(repo, "push", "-q", "origin", "main");
+  sh(repo, "checkout", "-qb", "feature/pr");
+  const published = () => { try { return execFileSync("git", ["rev-parse", "--verify", "refs/heads/feature/pr"], { cwd: bare, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim(); } catch { return null; } };
+  const deps: PrDeps = { repo: () => ({ provider: "github", host: "github.com", project: "owner/repo" }), which: () => "fake-gh" };
+  return { repo, bare, published, deps };
 }
-const remoteHas = (bare: string, branch: string) => sh(bare, "branch", "--list", branch).includes(branch);
+const approve = async () => ({ selectedOption: "proceed_once" });
 
-const yes = async () => ({ selectedOption: "proceed_once" });
-const no = async () => ({ selectedOption: "cancel" });
-
-const servers: { stop(): void }[] = [];
-afterAll(() => servers.forEach((s) => s.stop()));
-
-/** A fake GitHub REST API. `routes` maps "METHOD /path" (no query) to a JSON answer or a function of the request. */
-function fakeApi(routes: Record<string, unknown | ((req: Request, body: any) => unknown)>) {
-  const seen: { method: string; path: string; query: string; auth: string | null; body: any }[] = [];
-  const server = Bun.serve({
-    port: 0, hostname: "127.0.0.1",
-    async fetch(req) {
-      const u = new URL(req.url);
-      const body = req.method === "POST" ? await req.json() : undefined;
-      seen.push({ method: req.method, path: u.pathname, query: u.search, auth: req.headers.get("authorization"), body });
-      const r = routes[`${req.method} ${u.pathname}`];
-      if (r === undefined) return Response.json({ message: "Not Found" }, { status: 404 });
-      return Response.json(typeof r === "function" ? (r as any)(req, body) : r, { status: req.method === "POST" ? 201 : 200 });
-    },
-  });
-  servers.push(server);
-  return { url: `http://127.0.0.1:${server.port}`, seen };
-}
-
-describe("helpers", () => {
-  test("repoSlug reads owner/repo from https, ssh, scp-like and local path remotes", () => {
-    expect(repoSlug("https://github.com/acme/widget.git")).toEqual({ owner: "acme", repo: "widget" });
-    expect(repoSlug("git@github.com:acme/widget.git")).toEqual({ owner: "acme", repo: "widget" });
-    expect(repoSlug("ssh://git@github.com/acme/widget")).toEqual({ owner: "acme", repo: "widget" });
-    expect(repoSlug("C:\\tmp\\x\\acme\\widget.git")).toEqual({ owner: "acme", repo: "widget" });
-    expect(repoSlug("widget")).toBeNull();
-  });
-
-  test("summarizeChecks counts check runs and commit statuses", () => {
-    expect(summarizeChecks([])).toMatchObject({ total: 0, state: "none" });
-    expect(summarizeChecks([{ status: "COMPLETED", conclusion: "SUCCESS" }, { state: "success" }])).toMatchObject({ total: 2, passed: 2, state: "passing" });
-    expect(summarizeChecks([{ status: "completed", conclusion: "success" }, { status: "in_progress", conclusion: null }])).toMatchObject({ passed: 1, pending: 1, state: "pending" });
-    expect(summarizeChecks([{ status: "COMPLETED", conclusion: "FAILURE" }, { state: "pending" }])).toMatchObject({ failed: 1, pending: 1, state: "failing" });
-  });
-
-  test("planPr: base from origin HEAD, title from the last commit, body from the commits", async () => {
-    const { repo } = featureRepo();
-    const plan = await planPr(repo, {});
-    expect(plan).toEqual({ branch: "rigwell/fix-greeting", base: "main", remote: "origin", title: "Add a test", body: "- Fix the greeting\n- Add a test", draft: false });
-    expect((await planPr(repo, { title: "T", body: "B", base: "dev", draft: true }))).toMatchObject({ title: "T", body: "B", base: "dev", draft: true });
-  });
+test("provider parsing accepts SSH/HTTPS and does not mistake local remotes for hosted repos", () => {
+  expect(codeRepo("git@github.com:owner/repo.git")).toEqual({ provider: "github", host: "github.com", project: "owner/repo" });
+  expect(codeRepo("https://gitlab.com/group/sub/repo.git")?.project).toBe("group/sub/repo");
+  expect(codeRepo("C:\\fixture\\bare")).toBeNull();
+  expect(codeRepo("https://unrelated.example/a/b")).toBeNull();
 });
 
-describe("create_pr", () => {
-  test("without an approver it refuses and nothing is pushed", async () => {
-    const { repo, bare } = featureRepo();
-    await expect(createPr(repo, {}, undefined, { deps: { gh: ghCmd } })).rejects.toThrow(/nothing was pushed/);
-    expect(remoteHas(bare, "rigwell/fix-greeting")).toBe(false);
-    expect(ghCalls()).toEqual([]);
-  });
+test("headless, cancelled and invalid approvals never push or call the provider", async () => {
+  const f = fixture();
+  let calls = 0;
+  f.deps.run = async () => { calls++; throw new Error("unexpected provider call"); };
+  for (const answer of [undefined, async () => ({ selectedOption: "cancel" }), async () => ({ selectedOption: "proceed_always" })]) {
+    const error = await createPr(f.repo, {}, answer, f.deps).then(() => null, (e) => e);
+    expect(error.code).toBe(-32800);
+    expect(f.published()).toBeNull();
+  }
+  expect(calls).toBe(0);
+});
 
-  test("the confirmation shows branch, base, title and body; cancel pushes nothing", async () => {
-    const { repo, bare } = featureRepo();
-    let asked: any;
-    const r = await createPr(repo, { title: "Fix it" }, async (p) => { asked = p; return await no(); }, { deps: { gh: ghCmd } });
-    expect(r).toEqual({ created: false, cancelled: true });
-    const tu = asked.toolUses[0];
-    expect(tu.confirmationType).toBe("create_pr");
-    expect(tu.details).toMatchObject({ branch: "rigwell/fix-greeting", base: "main", title: "Fix it", body: "- Fix the greeting\n- Add a test" });
-    expect(asked.options.map((o: any) => o.value)).toEqual(["proceed_once", "cancel"]);
-    expect(remoteHas(bare, "rigwell/fix-greeting")).toBe(false);
-    expect(ghCalls()).toEqual([]);
-  });
+test("approval shows full content before local push and gh creates a draft PR", async () => {
+  const f = fixture(), calls: string[][] = [];
+  f.deps.run = async (cmd) => {
+    expect(f.published()).toBe(sh(f.repo, "rev-parse", "HEAD"));
+    calls.push(cmd); return { code: 0, stdout: "https://github.com/owner/repo/pull/7\n", stderr: "" };
+  };
+  const input = { title: "Add feature", body: "First line\nSecond line", base: "main", draft: true };
+  const result = await createPr(f.repo, input, async (p: any) => {
+    expect(f.published()).toBeNull();
+    expect(p.toolUses[0].confirmationType).toBe("create_pr");
+    expect(p.toolUses[0].details).toMatchObject({ ...input, branch: "feature/pr" });
+    return approve();
+  }, f.deps);
+  expect(result).toEqual({ url: "https://github.com/owner/repo/pull/7", number: 7 });
+  expect(calls[0]).toEqual(["fake-gh", "pr", "create", "--repo", "owner/repo", "--head", "feature/pr", "--base", "main", "--title", input.title, "--body", input.body, "--draft"]);
+  expect(sh(f.repo, "rev-parse", "--abbrev-ref", "@{upstream}")).toBe("origin/feature/pr");
+});
 
-  test("with gh: approve pushes the branch and runs gh pr create; returns url and number", async () => {
-    const { repo, bare } = featureRepo();
-    ghAnswers({ createUrl: "https://github.com/acme/widget/pull/42" });
-    const r = await createPr(repo, { title: "Fix it", body: "Why: typo", draft: true }, yes, { deps: { gh: ghCmd } });
-    expect(r).toEqual({ created: true, url: "https://github.com/acme/widget/pull/42", number: 42, branch: "rigwell/fix-greeting", base: "main", via: "gh" });
-    expect(remoteHas(bare, "rigwell/fix-greeting")).toBe(true);
-    expect(sh(repo, "rev-parse", "--abbrev-ref", "@{upstream}")).toBe("origin/rigwell/fix-greeting");
-    expect(ghCalls()).toEqual([["pr", "create", "--head", "rigwell/fix-greeting", "--base", "main", "--title", "Fix it", "--body", "Why: typo", "--draft"]]);
-  });
+test("changing the checkout during approval invalidates that approval", async () => {
+  const f = fixture();
+  const error = await createPr(f.repo, {}, async () => { sh(f.repo, "checkout", "-qb", "different"); return approve(); }, f.deps).then(() => null, (e) => e);
+  expect(error.message).toContain("changed during approval");
+  expect(f.published()).toBeNull();
+});
 
-  test("with gh: a gh failure is reported", async () => {
-    const { repo } = featureRepo();
-    ghAnswers({ createError: "a pull request for branch already exists" });
-    await expect(createPr(repo, {}, yes, { deps: { gh: ghCmd } })).rejects.toThrow(/gh pr create failed: a pull request for branch already exists/);
-  });
+test("missing API credentials fail before any push", async () => {
+  const f = fixture(); f.deps.which = () => null; f.deps.token = () => undefined;
+  const error = await createPr(f.repo, {}, approve, f.deps).then(() => null, (e) => e);
+  expect(error.message).toContain("before pushing"); expect(f.published()).toBeNull();
+});
 
-  test("without gh: the REST API with the stored token", async () => {
-    const { repo, bare } = featureRepo();
-    const api = fakeApi({ "POST /repos/acme/widget/pulls": (_r: Request, b: any) => ({ number: 9, html_url: `https://github.com/acme/widget/pull/9`, echo: b }) });
-    const deps: PrDeps = { gh: null, token: () => "test-token-not-real", apiBase: api.url };
-    const r = await createPr(repo, { base: "main" }, yes, { deps });
-    expect(r).toMatchObject({ created: true, number: 9, url: "https://github.com/acme/widget/pull/9", via: "api" });
-    expect(remoteHas(bare, "rigwell/fix-greeting")).toBe(true);
-    expect(api.seen).toHaveLength(1);
-    expect(api.seen[0]!.auth).toBe("Bearer test-token-not-real");
-    expect(api.seen[0]!.body).toEqual({ title: "Add a test", body: "- Fix the greeting\n- Add a test", head: "rigwell/fix-greeting", base: "main", draft: false });
-  });
+test("protocol methods validate inputs and refuse creation without an approver", async () => {
+  const f = fixture(), ctx = { cwd: f.repo, settings: () => ({}) };
+  expect(await handleWorktreeMethod("get_pr_status", {}, ctx)).toEqual({ handled: true, result: { state: "none", checks: [] } });
+  const invalid = await handleWorktreeMethod("create_pr", { draft: "yes" }, ctx).then(() => null, (e) => e);
+  expect(invalid.code).toBe(-32602);
+  const refused = await handleWorktreeMethod("create_pr", {}, ctx).then(() => null, (e) => e);
+  expect(refused.code).toBe(-32800); expect(f.published()).toBeNull();
+});
 
-  test("without gh and without a token: refused before asking; nothing pushed", async () => {
-    const { repo, bare } = featureRepo();
-    let asked = false;
-    await expect(createPr(repo, {}, async () => { asked = true; return await yes(); }, { deps: { gh: null, token: () => undefined } })).rejects.toThrow(/install the gh CLI or store a token as "github"/);
-    expect(asked).toBe(false);
-    expect(remoteHas(bare, "rigwell/fix-greeting")).toBe(false);
-  });
+test("provider failure reports that the branch was already pushed", async () => {
+  const f = fixture(); f.deps.run = async () => ({ code: 1, stdout: "", stderr: "fake service unavailable" });
+  const error = await createPr(f.repo, {}, approve, f.deps).then(() => null, (e) => e);
+  expect(error.message).toContain("was pushed"); expect(error.message).toContain("Check PR status before retrying");
+  expect(f.published()).not.toBeNull();
+});
 
-  test("the token comes from the credential store under the name github", async () => {
-    const { repo } = featureRepo();
-    const prev = process.env.RIGWELL_CREDENTIALS;
-    process.env.RIGWELL_CREDENTIALS = "file";
-    const { setCredentialStore, storeCredential } = await import("../../src/storage/credentials.ts");
-    setCredentialStore(undefined);
-    try {
-      storeCredential("github", "stored-token-not-real");
-      const api = fakeApi({ "POST /repos/acme/widget/pulls": { number: 3, html_url: "https://github.com/acme/widget/pull/3" } });
-      const r = await createPr(repo, {}, yes, { deps: { gh: null, apiBase: api.url } });
-      expect(r).toMatchObject({ created: true, number: 3 });
-      expect(api.seen[0]!.auth).toBe("Bearer stored-token-not-real");
-    } finally {
-      setCredentialStore(undefined);
-      if (prev === undefined) delete process.env.RIGWELL_CREDENTIALS; else process.env.RIGWELL_CREDENTIALS = prev;
+test("the real CLI subprocess runner executes a fake gh script after local push", async () => {
+  const f = fixture();
+  // Bun runs the local script named pr; subsequent argv are the same gh subcommands/options.
+  writeFileSync(join(f.repo, "pr"), 'if (process.argv[2] !== "create" || !process.argv.includes("--body")) process.exit(2); if (process.env.GH_TOKEN !== "fixture-cli-token" || process.env.GH_HOST !== "github.com" || process.argv.includes("fixture-cli-token")) process.exit(3); console.log("https://github.com/owner/repo/pull/11");');
+  f.deps.which = () => process.execPath;
+  f.deps.token = async () => "fixture-cli-token";
+  expect(await createPr(f.repo, { body: "one\ntwo" }, approve, f.deps)).toEqual({ url: "https://github.com/owner/repo/pull/11", number: 11 });
+  expect(f.published()).not.toBeNull();
+});
+
+test("GitLab CLI gets source, target and multiline description", async () => {
+  const f = fixture();
+  f.deps.repo = () => ({ provider: "gitlab", host: "gitlab.com", project: "group/repo" });
+  f.deps.which = () => "fake-glab";
+  f.deps.token = async () => "fixture-gitlab-token";
+  f.deps.run = async (cmd, _cwd, env) => {
+    expect(cmd.slice(0, 3)).toEqual(["fake-glab", "mr", "create"]);
+    expect(cmd).toContain("--target-branch"); expect(cmd).toContain("--description"); expect(cmd).toContain("--yes");
+    expect(env).toMatchObject({ GITLAB_TOKEN: "fixture-gitlab-token", GITLAB_HOST: "gitlab.com" }); expect(cmd).not.toContain("fixture-gitlab-token");
+    return { code: 0, stdout: "https://gitlab.com/group/repo/-/merge_requests/8", stderr: "" };
+  };
+  expect((await createPr(f.repo, { base: "main", body: "one\ntwo" }, approve, f.deps)).number).toBe(8);
+});
+
+test("gh status distinguishes no PR, open, merged and closed and includes checks", async () => {
+  const f = fixture();
+  for (const state of ["none", "OPEN", "MERGED", "CLOSED"]) {
+    f.deps.run = async (cmd) => ({ code: 0, stderr: "", stdout: JSON.stringify(cmd[2] === "list" ? state === "none" ? [] : [{ number: 7, state }] : { number: 7, url: "https://github.com/owner/repo/pull/7", state, statusCheckRollup: [{ name: "test", conclusion: "SUCCESS" }] }) });
+    const result = await getPrStatus(f.repo, f.deps);
+    expect(result.state).toBe(state.toLowerCase() as any);
+    if (state !== "none") expect(result.checks).toEqual([{ name: "test", state: "SUCCESS" }]);
+  }
+  f.deps.run = async () => ({ code: 1, stdout: "", stderr: "authentication failed" });
+  const error = await getPrStatus(f.repo, f.deps).then(() => null, (e) => e);
+  expect(error.message).toContain("authentication failed");
+});
+
+test("API fallback uses the stored token with a fake local server and reports checks", async () => {
+  const f = fixture(), requests: any[] = [];
+  const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
+    expect(req.headers.get("authorization")).toBe("Bearer fake-provider-token");
+    const route = new URL(req.url).pathname;
+    const body = req.method === "POST" ? await req.json() : undefined;
+    requests.push({ route, body });
+    if (body) { expect(f.published()).not.toBeNull(); return Response.json({ number: 9, html_url: "https://github.com/owner/repo/pull/9" }); }
+    if (route.endsWith("check-runs")) return Response.json({ check_runs: [{ name: "test", conclusion: "success" }] });
+    if (route.endsWith("status")) return Response.json({ statuses: [{ context: "build", state: "pending" }] });
+    if (route.endsWith("/pulls")) return Response.json([{ number: 9, state: "open" }]);
+    return Response.json({ number: 9, state: "open", html_url: "https://github.com/owner/repo/pull/9", head: { sha: "fake-sha" } });
+  } });
+  f.deps.which = () => null; f.deps.token = () => "fake-provider-token"; f.deps.apiRoot = () => `http://127.0.0.1:${server.port}`;
+  try {
+    expect((await createPr(f.repo, { title: "API", body: "body", base: "main", draft: true }, approve, f.deps)).number).toBe(9);
+    expect(requests[0].body).toEqual({ title: "API", body: "body", base: "main", head: "feature/pr", draft: true });
+    const s = await getPrStatus(f.repo, f.deps);
+    expect(s.state).toBe("open"); expect(s.checks).toEqual([{ name: "test", state: "success" }, { name: "build", state: "pending" }]);
+  } finally { server.stop(true); }
+});
+
+test("GitLab API fallback creates a draft and returns pipeline status", async () => {
+  const f = fixture();
+  f.deps.repo = () => ({ provider: "gitlab", host: "gitlab.com", project: "group/repo" });
+  f.deps.which = () => null; f.deps.token = () => "fake-token";
+  const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
+    expect(req.headers.get("authorization")).toBe("Bearer fake-token");
+    if (req.method === "POST") {
+      expect(await req.json()).toEqual({ title: "Draft: Title", description: "Body", target_branch: "main", source_branch: "feature/pr" });
+      return Response.json({ iid: 12, web_url: "https://gitlab.com/group/repo/-/merge_requests/12" });
     }
-  });
-
-  test("a branch with only uncommitted edits is refused before asking; nothing pushed", async () => {
-    const { repo, bare } = featureRepo();
-    sh(repo, "checkout", "-q", "-b", "rigwell/empty", "main");
-    writeFileSync(join(repo, "a.txt"), "edited, not committed\n");
-    let asked = false;
-    const ask = async () => { asked = true; return { selectedOption: "proceed_once" }; };
-    await expect(createPr(repo, {}, ask, { deps: { gh: ghCmd } })).rejects.toThrow(/not committed\. Commit them first/);
-    expect(asked).toBe(false);
-    expect(remoteHas(bare, "rigwell/empty")).toBe(false);
-    expect(ghCalls()).toEqual([]);
-  });
-
-  test("a clean branch with no new commits is refused", async () => {
-    const { repo } = featureRepo();
-    sh(repo, "checkout", "-q", "-b", "rigwell/nothing", "main");
-    await expect(createPr(repo, {}, yes, { deps: { gh: ghCmd } })).rejects.toThrow(/no commits that are not on main/);
-  });
-
-  test("a detached HEAD is refused", async () => {
-    const { repo } = featureRepo();
-    sh(repo, "checkout", "-q", "--detach");
-    await expect(createPr(repo, {}, yes, { deps: { gh: ghCmd } })).rejects.toThrow(/Detached HEAD/);
-  });
+    const row = { iid: 12, state: "opened", web_url: "https://gitlab.com/group/repo/-/merge_requests/12", head_pipeline: { status: "running" } };
+    return Response.json(new URL(req.url).pathname.endsWith("/12") ? row : [row]);
+  } });
+  f.deps.apiRoot = () => `http://127.0.0.1:${server.port}`;
+  try {
+    expect((await createPr(f.repo, { title: "Title", body: "Body", base: "main", draft: true }, approve, f.deps)).number).toBe(12);
+    expect(await getPrStatus(f.repo, f.deps)).toMatchObject({ state: "open", number: 12, checks: [{ name: "pipeline", state: "running" }] });
+  } finally { server.stop(true); }
 });
 
-describe("get_pr_status", () => {
-  test("with gh: open with a checks summary; none when gh finds no PR", async () => {
-    const { repo } = featureRepo();
-    expect(await prStatus(repo, { gh: ghCmd })).toEqual({ state: "none", branch: "rigwell/fix-greeting" });
-    ghAnswers({ view: { number: 42, url: "https://github.com/acme/widget/pull/42", state: "OPEN", isDraft: false, statusCheckRollup: [
-      { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS" }, { __typename: "CheckRun", status: "IN_PROGRESS", conclusion: "" }, { __typename: "StatusContext", state: "SUCCESS" },
-    ] } });
-    expect(await prStatus(repo, { gh: ghCmd })).toEqual({
-      state: "open", branch: "rigwell/fix-greeting", number: 42, url: "https://github.com/acme/widget/pull/42", draft: false,
-      checks: { total: 3, passed: 2, failed: 0, pending: 1, state: "pending" },
-    });
-    expect(ghCalls().at(-1)).toEqual(["pr", "view", "rigwell/fix-greeting", "--json", "number,url,state,isDraft,statusCheckRollup"]);
-    ghAnswers({ view: { number: 42, url: "u", state: "MERGED", isDraft: false, statusCheckRollup: [] } });
-    expect(await prStatus(repo, { gh: ghCmd })).toMatchObject({ state: "merged", checks: { state: "none" } });
-  });
-
-  test("without gh: pulls, check runs and statuses from the API", async () => {
-    const { repo } = featureRepo();
-    const api = fakeApi({
-      "GET /repos/acme/widget/pulls": [{ number: 9, html_url: "https://github.com/acme/widget/pull/9", state: "closed", merged_at: null, draft: false, head: { sha: "abc" } }],
-      "GET /repos/acme/widget/commits/abc/check-runs": { check_runs: [{ status: "completed", conclusion: "failure" }] },
-      "GET /repos/acme/widget/commits/abc/status": { statuses: [{ state: "success" }] },
-    });
-    const s = await prStatus(repo, { gh: null, token: () => "t", apiBase: api.url });
-    expect(s).toMatchObject({ state: "closed", number: 9, checks: { total: 2, passed: 1, failed: 1, state: "failing" } });
-    expect(api.seen[0]!.query).toContain(`head=${encodeURIComponent("acme:rigwell/fix-greeting")}`);
-    expect(api.seen[0]!.query).toContain("state=all");
-  });
-});
-
-describe("auto-delete and open pull requests (spec 18.5)", () => {
-  test("hasOpenPr: no upstream and no recorded PR is not looked up; an open PR is; unreachable GitHub falls back to the record", async () => {
-    const { repo } = featureRepo();
-    expect(await hasOpenPr({ path: repo }, { gh: ghCmd })).toBe(false);
-    expect(ghCalls()).toEqual([]);
-    sh(repo, "push", "-q", "-u", "origin", "rigwell/fix-greeting");
-    expect(await hasOpenPr({ path: repo }, { gh: ghCmd })).toBe(false); // gh: no pull requests found
-    ghAnswers({ view: { number: 1, url: "u", state: "OPEN", isDraft: false, statusCheckRollup: [] } });
-    expect(await hasOpenPr({ path: repo }, { gh: ghCmd })).toBe(true);
-    const off: PrDeps = { gh: null, token: () => undefined };
-    expect(await hasOpenPr({ path: repo }, off)).toBe(false);
-    expect(await hasOpenPr({ path: repo, pr: { number: 1, url: "u" } }, off)).toBe(true);
-    ghAnswers({ view: "not json" as any });
-    expect(await hasOpenPr({ path: repo }, { gh: ghCmd })).toBe(true); // an unknown answer keeps the worktree
-  });
-
-  test("the manager's auto-delete pass skips a worktree whose branch has an open PR", async () => {
-    const repo = makeGitRepo();
-    let t = 1_000_000;
-    const asked: string[] = [];
-    const m = new WorktreeManager({ root: tmp("root"), autoDeleteLimit: 0, recentMs: 0, now: () => (t += 1000), hasOpenPr: async (w) => { asked.push(w.sessionId); return w.sessionId === "pr000001"; } });
-    const a = await m.create({ repoRoot: repo, sessionId: "pr000001" }); // each create runs a pass; limit 0
-    const b = await m.create({ repoRoot: repo, sessionId: "pr000002" });
-    expect(b.autoDeleted).toEqual([]); // a is kept: open PR
-    expect(await m.autoDelete()).toEqual([b.path]);
-    expect(existsSync(a.path)).toBe(true);
-    expect(existsSync(b.path)).toBe(false);
-    expect(asked).toContain("pr000001");
-  });
+test("automatic and archive cleanup keep open PRs and unknown status, allow merged PRs", async () => {
+  const repo = makeGitRepo(), root = tmp("pr-managed");
+  let state: PrStatus["state"] | "error" = "open";
+  const m = new WorktreeManager({ root, autoDeleteLimit: 0, recentMs: 0, prStatus: async () => { if (state === "error") throw new Error("offline"); return { state, checks: [] }; } });
+  const wt = await m.create({ repoRoot: repo, sessionId: "session-12345678", prompt: "pr retention" });
+  expect((await m.inspectDeletion(wt.path)).prState).toBe("open");
+  expect(await m.autoDelete()).toEqual([]); expect(await m.removeForArchivedSession(wt.sessionId)).toBeNull();
+  state = "error";
+  expect(await m.autoDelete()).toEqual([]); expect(await m.removeForArchivedSession(wt.sessionId)).toBeNull();
+  expect(existsSync(wt.path)).toBe(true);
+  state = "merged";
+  expect(await m.autoDelete()).toEqual([wt.path]); expect(existsSync(wt.path)).toBe(false);
 });

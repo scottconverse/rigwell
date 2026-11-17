@@ -1,0 +1,20 @@
+job job-278 started on runner-7
+step 0: download 12MB
+step 1: download 12MB
+step 2: tests: 41 passed
+step 3: cache hit
+step 4: warning: FAILED to fetch optional mirror, using default
+step 5: warning: FAILED to fetch optional mirror, using default
+step 6: tests: 41 passed
+step 7: tests: 41 passed
+step 8: warning: FAILED to fetch optional mirror, using default
+step 9: lint ok
+step 10: download 12MB
+step 11: download 12MB
+step 12: warning: FAILED to fetch optional mirror, using default
+step 13: download 12MB
+step 14: download 12MB
+STATUS: PASSED
+retrying (attempt 2)
+STATUS: PASSED
+summary: see artifacts

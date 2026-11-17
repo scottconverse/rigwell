@@ -1,4 +1,0 @@
-{
-  "grader": "node \"$EVAL_TASK_DIR/grade.cjs\"",
-  "budget": { "timeoutMs": 120000, "maxRequests": 12 }
-}

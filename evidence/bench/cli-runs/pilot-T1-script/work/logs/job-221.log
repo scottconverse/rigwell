@@ -1,0 +1,21 @@
+job job-221 started on runner-3
+step 0: lint ok
+step 1: download 12MB
+step 2: tests: 41 passed
+step 3: warning: FAILED to fetch optional mirror, using default
+step 4: tests: 41 passed
+step 5: lint ok
+step 6: cache hit
+step 7: cache hit
+step 8: download 12MB
+step 9: download 12MB
+step 10: lint ok
+step 11: warning: FAILED to fetch optional mirror, using default
+step 12: download 12MB
+step 13: compile ok
+step 14: compile ok
+step 15: warning: FAILED to fetch optional mirror, using default
+STATUS: PASSED
+retrying (attempt 2)
+STATUS: FAILED
+summary: see artifacts

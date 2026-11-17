@@ -100,6 +100,9 @@ export interface ModelConfig {
   provider: ProviderKind;
   baseUrl: string;       // e.g. "http://127.0.0.1:4010" (adapter appends /v1/messages or /v1/responses)
   apiKey?: string;       // already env-expanded
+  /** Signed-in official client, invoked by Rigwell's session loop instead of direct HTTP. */
+  executionBackend?: "claude-cli" | "codex-cli";
+  cliExecutable?: string;
   /** Spec 12.2 credentialSource: the OAuth provider whose token authenticates requests (never together with apiKey). */
   oauth?: import("../auth/config.ts").OAuthProviderConfig;
   extraHeaders?: Record<string, string>;
@@ -133,6 +136,14 @@ export interface ToolSpec {
 export interface ModelRequest {
   model: ModelConfig;
   sessionId: string;
+  nativeExecution?: {
+    cwd: string; readOnly: boolean; skipPermissions: boolean; synthesis?: boolean;
+    coordination?: {
+      tools(): ToolSpec[];
+      requestNativePermission?(name: string, input: Record<string, unknown>, signal: AbortSignal): Promise<{ behavior: "allow" } | { behavior: "deny"; message: string }>;
+      call(name: string, input: Record<string, unknown>, signal: AbortSignal): Promise<ToolOutput>;
+    };
+  };
   /**
    * Explicit prompt cache key (spec 4.6.5); the Responses and Chat adapters send `cacheKey ?? sessionId` as prompt_cache_key.
    * A side-chat fork sets it to its parent session id so both share the cached prefix without sharing any session state (spec 17.4).
@@ -159,6 +170,7 @@ export interface ModelRequest {
  * counting every content block the adapter produces (text, thinking, tool_use) in order.
  */
 export type StreamEvent =
+  | { type: "native_tool_metric"; id: string; name: string; status: "started" | "success" | "failure" }
   | { type: "text_delta"; index: number; text: string }
   | { type: "thinking_delta"; index: number; text: string }
   | { type: "tool_use_start"; index: number; id: string; name: string }
@@ -289,7 +301,7 @@ export interface PermissionContext {
   cwd: string;
 }
 
-export type ConfirmationType = "edit" | "create" | "exec" | "mcp_tool" | "exit_spec_mode" | "apply_patch" | "fetch_url" | "recommend_mission" | "upgrade_model" | "secret_scan_violation" | "create_pr";
+export type ConfirmationType = "edit" | "create" | "exec" | "mcp_tool" | "exit_spec_mode" | "apply_patch" | "fetch_url" | "recommend_mission" | "upgrade_model" | "secret_scan_violation";
 
 export type ToolExecutionMode = "direct_only" | "script_only";
 

@@ -5,14 +5,16 @@
 // tracker. The desktop main process feeds it every message it relays (it sees both directions), which is equivalent to
 // the daemon doing it for connected windows. Moving the tracker into the daemon later needs no change to the events.
 export type AttentionKind = "attention_requested" | "attention_resolved" | "source_terminated";
-export type RequestKind = "ask_user" | "permission" | "session_completion" | "mission_attention" | "mission_completion";
-export type AttentionCategory = "questions_and_approvals" | "agent_turn_complete" | "mission_needs_input" | "mission_complete";
+export type RequestKind = "ask_user" | "permission" | "session_completion" | "mission_attention" | "mission_completion" | "workstream_attention";
+export type AttentionCategory = "questions_and_approvals" | "agent_turn_complete" | "mission_needs_input" | "mission_complete" | "workstream_needs_input" | "workstream_agent_failed" | "workstream_budget_reached";
 
 export interface AttentionEvent {
   kind: AttentionKind;
   requestKind?: RequestKind;
   category?: AttentionCategory;
   sessionId: string;
+  workstreamId?: string;
+  agentId?: string;
   summary: string;
   detail: string;
   /** Request id this event resolves or belongs to. */
@@ -27,6 +29,7 @@ export interface AttentionEvent {
 const CATEGORY: Record<RequestKind, AttentionCategory> = {
   ask_user: "questions_and_approvals", permission: "questions_and_approvals", session_completion: "agent_turn_complete",
   mission_attention: "mission_needs_input", mission_completion: "mission_complete",
+  workstream_attention: "workstream_needs_input",
 };
 export const categoryOf = (k: RequestKind) => CATEGORY[k];
 
@@ -61,13 +64,32 @@ export function askUserSummary(params: Record<string, any>): { summary: string; 
   return { summary: q?.question ? `Question: ${clip(String(q.question), 90)}` : "The agent has a question", detail: (params.questions ?? []).map((x: any) => x.question).join("\n") };
 }
 
-/** Per-connection tracker. Feed it relayed traffic; it returns events to act on. */
+/** Shared pure category transition for desktop tracking and the terminal reducer. */
+export function workstreamAttention(states: Readonly<Record<string, string>>, sessionId: string, n: Record<string, any>, at: number): { states: Record<string, string>; events: AttentionEvent[] } {
+  const next = { ...states }, workstreamId = n.workstreamId;
+  if (typeof workstreamId !== "string") return { states: next, events: [] };
+  if (n.type === "workstream_updated" && ["active", "archived"].includes(n.workstream?.state)) {
+    const key = `workstream-${workstreamId}-budget`;
+    if (next[key]) { delete next[key]; return { states: next, events: [{ kind: "attention_resolved", sessionId, workstreamId, requestId: key, summary: "", detail: "", at }] }; }
+  }
+  const agent = n.agent, key = `workstream-${workstreamId}-${agent?.agentId ?? "budget"}`;
+  const state = n.type === "workstream_agent_status" ? agent?.status : n.type === "workstream_budget_reached" ? "budget" : undefined;
+  if (typeof state !== "string" || next[key] === state) return { states: next, events: [] };
+  next[key] = state;
+  if (!["waiting_input", "failed", "budget"].includes(state)) return { states: next, events: [{ kind: "attention_resolved", sessionId, workstreamId, requestId: key, summary: "", detail: "", at }] };
+  return { states: next, events: [{ kind: "attention_requested", requestKind: "workstream_attention", category: state === "budget" ? "workstream_budget_reached" : state === "failed" ? "workstream_agent_failed" : "workstream_needs_input", sessionId, workstreamId, agentId: agent?.agentId, requestId: key, summary: state === "budget" ? `Workstream budget reached: ${n.reason}` : `${agent.name}: ${state === "failed" ? "stopped with a problem" : "needs your input"}`, detail: String(agent?.lastSummary ?? ""), failed: state === "failed", at }] };
+}
+
+/** Feed relayed traffic; one tracker shared across views deduplicates their events. */
 export class AttentionTracker {
+  private workstreamStates: Record<string, string> = {};
   private lastText = new Map<string, { messageId: string; text: string }>();
   private open = new Map<string, AttentionEvent>(); // by requestId
 
   /** A request from the harness to the client (rigwell.request_permission / ask_user / pick_options). */
   onRequest(sessionId: string, method: string, requestId: string, params: Record<string, any>): AttentionEvent | undefined {
+    // Workstream status events cover these on every subscribed window, even when no lead view is open.
+    if (params.workstreamId) return undefined;
     let s: { summary: string; detail: string }, rk: RequestKind;
     if (method === "request_permission") { s = permissionSummary(params); rk = "permission"; }
     else if (method === "ask_user" || method === "pick_options") { s = method === "ask_user" ? askUserSummary(params) : { summary: String(params.title ?? "Choose an option"), detail: "" }; rk = "ask_user"; }
@@ -79,6 +101,11 @@ export class AttentionTracker {
 
   /** A session_notification. */
   onNotification(sessionId: string, n: Record<string, any>): AttentionEvent[] {
+    if (typeof n.workstreamId === "string") {
+      const next = workstreamAttention(this.workstreamStates, sessionId, n, Date.now()); this.workstreamStates = next.states;
+      for (const ev of next.events) if (ev.requestId) { if (ev.kind === "attention_requested") this.open.set(ev.requestId, ev); else this.open.delete(ev.requestId); }
+      return next.events;
+    }
     switch (n.type) {
       case "assistant_text_delta": {
         const cur = this.lastText.get(sessionId);
@@ -118,5 +145,11 @@ export class AttentionTracker {
     if (!open) return undefined;
     this.open.delete(requestId);
     return { kind: "attention_resolved", requestKind: open.requestKind, category: open.category, sessionId, summary: open.summary, detail: "", requestId, at: Date.now() };
+  }
+  resetWorkstreams(): AttentionEvent[] {
+    this.workstreamStates = {};
+    const out: AttentionEvent[] = [];
+    for (const [id, ev] of this.open) if (ev.requestKind === "workstream_attention") { this.open.delete(id); out.push({ ...ev, kind: "attention_resolved", at: Date.now() }); }
+    return out;
   }
 }

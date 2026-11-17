@@ -11,8 +11,9 @@ import { tmpEnv } from "./helpers.ts";
 import { expectOwnerOnly } from "../platform.ts";
 
 let env: ReturnType<typeof tmpEnv>;
-beforeEach(() => { env = tmpEnv(); });
-afterEach(() => { setCredentialStore(undefined); env.cleanup(); });
+let previousBackend: string | undefined;
+beforeEach(() => { env = tmpEnv(); previousBackend = process.env.RIGWELL_CREDENTIALS; delete process.env.RIGWELL_CREDENTIALS; });
+afterEach(() => { setCredentialStore(undefined); env.cleanup(); if (previousBackend === undefined) delete process.env.RIGWELL_CREDENTIALS; else process.env.RIGWELL_CREDENTIALS = previousBackend; });
 
 /** A fake keychain: runs the `security` / `secret-tool` commands against an in-memory map and records every call. */
 function fakeRunner() {
@@ -103,7 +104,7 @@ test("default store: platform picks the keychain, RIGWELL_CREDENTIALS=file skips
   const f = fakeRunner();
   expect(defaultCredentialStore("darwin", f.run).backends.map((b) => b.name)).toEqual(["macos-keychain", "file"]);
   expect(defaultCredentialStore("linux", f.run).backends.map((b) => b.name)).toEqual(["libsecret", "file"]);
-  expect(defaultCredentialStore("win32", f.run).backends.map((b) => b.name)).toEqual(["file"]);
+  expect(defaultCredentialStore("win32", f.run).backends.map((b) => b.name)).toEqual(["windows-credential-manager", "file"]);
   process.env.RIGWELL_CREDENTIALS = "file";
   try { expect(defaultCredentialStore("linux", f.run).backends.map((b) => b.name)).toEqual(["file"]); }
   finally { delete process.env.RIGWELL_CREDENTIALS; }

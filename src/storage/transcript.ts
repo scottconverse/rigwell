@@ -6,6 +6,7 @@ import {
 import path from "node:path";
 import type { ContentBlock, Message, OpenAIReasoning, ReasoningEffort, TodoItem } from "../core/types.ts";
 import { hostId, projectSessionsDir, projectSlug, sessionsDir, validateSessionId } from "./paths.ts";
+import type { AnalyticsMetric } from "./analytics-records.ts";
 
 export interface SessionFiles {
   id: string;
@@ -418,6 +419,10 @@ export function appendTitle(files: SessionFiles, title: string, manual: boolean)
   });
 }
 
+export function appendAnalyticsMetric(files: SessionFiles, metric: AnalyticsMetric): Promise<void> {
+  return withAppendLock(files, () => { appendLine(files, { type: "analytics_metric", id: crypto.randomUUID(), timestamp: new Date().toISOString(), metric }); });
+}
+
 export function appendTurnOutcome(
   files: SessionFiles,
   o: { turnId: string; reason: string; resultKind: "text" | "structured" | null },
@@ -520,7 +525,7 @@ export function loadTranscript(files: SessionFiles): LoadedSession {
       }
     } else if (o.type === "session_title") {
       if (typeof o.title === "string") titleRec = { title: o.title, manual: o.isSessionTitleManuallySet === true };
-    } else if (o.type !== "session_start") {
+    } else if (o.type !== "session_start" && o.type !== "analytics_metric") {
       unknownRecords++;
     }
   });

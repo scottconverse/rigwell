@@ -1,0 +1,3 @@
+Implement retry(fn,{attempts,signal}). Call fn with a zero-based attempt index until it succeeds or attempts are exhausted. Preserve the final error; an already-aborted or subsequently aborted signal prevents another attempt. Validate attempts.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

@@ -1,0 +1,15 @@
+job job-136 started on runner-7
+step 0: tests: 41 passed
+step 1: tests: 41 passed
+step 2: cache hit
+step 3: warning: FAILED to fetch optional mirror, using default
+step 4: lint ok
+step 5: cache hit
+step 6: cache hit
+step 7: lint ok
+step 8: lint ok
+step 9: download 12MB
+step 10: compile ok
+step 11: compile ok
+STATUS: PASSED
+summary: see artifacts

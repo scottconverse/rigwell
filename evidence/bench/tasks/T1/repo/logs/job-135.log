@@ -1,0 +1,14 @@
+job job-135 started on runner-5
+step 0: cache hit
+step 1: warning: FAILED to fetch optional mirror, using default
+step 2: cache hit
+step 3: lint ok
+step 4: warning: FAILED to fetch optional mirror, using default
+step 5: download 12MB
+step 6: cache hit
+step 7: cache hit
+step 8: cache hit
+STATUS: FAILED
+retrying (attempt 2)
+STATUS: FAILED
+summary: see artifacts

@@ -9,8 +9,7 @@ import { join } from "node:path";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer, FakeTurn } from "../fakes/types.ts";
 import { CLI, makeHome, makeRepo } from "../e2e/helpers.ts";
-import { electronStatus, sleep } from "./helpers.ts";
-import { closeSessionIndexes, listSessionEntries, scanSessionEntries } from "../../src/storage/session-list.ts";
+import { closeElectron, electronStatus, sleep } from "./helpers.ts";
 
 const desktop = join(import.meta.dir, "../../desktop");
 const { pw, electronBin, reason } = electronStatus("electron final-gap test");
@@ -20,25 +19,6 @@ setDefaultTimeout(150_000);
 const textOf = (m: any) => (typeof m.content === "string" ? m.content : (m.content ?? []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n"));
 const PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
-/** The promoted session as the files, the file scan and the index see it (printed when the Promote step fails). */
-function promoteState(id: string) {
-  const home = process.env.RIGWELL_HOME;
-  const out: Record<string, unknown> = {};
-  try {
-    const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((x) => x.isDirectory() ? walk(join(d, x.name)) : [join(d, x.name)]);
-    out.files = walk(join(currentHome, "sessions")).filter((f) => f.includes(id)).map((f) => ({ f, tail: readFileSync(f, "utf8").slice(-800) }));
-    process.env.RIGWELL_HOME = currentHome;
-    out.scan = scanSessionEntries({ includeArchived: true }).find((r) => r.sessionId === id) ?? "missing";
-    out.index = listSessionEntries({ includeArchived: true }).find((r) => r.sessionId === id) ?? "missing";
-    closeSessionIndexes();
-    const log = join(currentHome, "logs", "daemon-stderr.log");
-    if (existsSync(log)) out.daemonStderr = readFileSync(log, "utf8").slice(-1500);
-  } catch (e) { out.error = String(e); }
-  if (home === undefined) delete process.env.RIGWELL_HOME; else process.env.RIGWELL_HOME = home;
-  return out;
-}
-let currentHome = "";
-
 maybe("desktop app: final gaps", () => {
   let fake: FakeServer, xvfb: ChildProcess | undefined, app: any, page: any;
   let repo: string, home: string, display: string;
@@ -47,7 +27,7 @@ maybe("desktop app: final gaps", () => {
     await page.locator(".composer[data-ready=true]").first().waitFor({ timeout: 30_000 });
     const ta = page.getByLabel("Message").first();
     await ta.fill(text);
-    await ta.press("Enter");
+    await page.locator('button[aria-label="Send"]:not([disabled])').first().click();
   };
   const newSession = async () => {
     await page.getByRole("button", { name: "New Session" }).first().click();
@@ -85,22 +65,21 @@ maybe("desktop app: final gaps", () => {
     fake = await startFakeAnthropic(Array.from({ length: 200 }, () => route));
     home = makeHome([{ provider: "anthropic", url: fake.url, displayName: "Fake Anthropic" }]);
     mkdirSync(home, { recursive: true });
-    currentHome = home;
-    display = process.env.DISPLAY || `:${70 + Math.floor(Math.random() * 9)}`;
+    display = process.env.DISPLAY || (process.platform === "linux" ? `:${70 + Math.floor(Math.random() * 9)}` : "");
     if (process.platform === "linux" && !process.env.DISPLAY) {
       xvfb = spawn("Xvfb", [display, "-screen", "0", "1280x900x24"], { stdio: "ignore" });
       for (let i = 0; i < 50 && !existsSync(`/tmp/.X11-unix/X${display.slice(1)}`); i++) await sleep(100);
     }
     const env: Record<string, string> = { ...(process.env as Record<string, string>), RIGWELL_HOME: home, DISPLAY: display, RIGWELL_DAEMON_CMD: JSON.stringify(["bun", CLI]) };
     delete env.NODE_OPTIONS;
-    app = await pw._electron.launch({ executablePath: electronBin, args: ["--no-sandbox", desktop, `--route=/?folder=${encodeURIComponent(repo)}`], env, timeout: 60_000 });
+    app = await pw._electron.launch({ executablePath: electronBin, args: ["--no-sandbox", ...(process.platform === "darwin" ? ["--use-mock-keychain"] : []), desktop, `--route=/?folder=${encodeURIComponent(repo)}`], env, timeout: 60_000 });
     page = await app.firstWindow();
     await page.waitForSelector(".dot.running", { timeout: 40_000 });
     await page.getByText("Fake Anthropic").first().waitFor({ timeout: 20_000 });
   });
 
   afterAll(async () => {
-    await app?.close().catch(() => {});
+    await closeElectron(app).catch(() => {});
     xvfb?.kill();
     fake?.stop();
   });
@@ -201,21 +180,34 @@ maybe("desktop app: final gaps", () => {
   }, 120_000);
 
   test("side chat: the writes switch, and Promote makes the side chat a normal session", async () => {
+    // Capture the actual refresh replies if promotion loses its sidebar row on a native runner.
+    await page.evaluate(() => {
+      const w = window as any, daemon = w.rigwell.daemon;
+      w.promotionTrace = [];
+      daemon.onMessage(({ connId, message }: any) => {
+        const m = JSON.parse(message);
+        if (Array.isArray(m.result?.sessions) || m.error) w.promotionTrace.push({ response: m, connId });
+      });
+    });
     // We are on the session of the previous test.
     const before = page.url().split("#/sessions/")[1];
     await page.getByRole("button", { name: "Side chat", exact: true }).first().click();
     const ta = page.getByLabel("Side question");
-    // The button puts "About this: ..." in the box one render later. Wait for it, or it lands in front of the typed text.
-    await page.waitForFunction(() => (document.querySelector('textarea[aria-label="Side question"]') as HTMLTextAreaElement | null)?.value.startsWith('About this: "you chose rust and zig"'), undefined, { timeout: 20_000 });
+    // The contextual button pre-fills the draft in a React effect. Wait for that draft
+    // before replacing it; filling the initially empty field races the prefill.
+    await page.waitForFunction(() => (document.querySelector('textarea[aria-label="Side question"]') as HTMLTextAreaElement)?.value === 'About this: "you chose rust and zig"\n\n');
     await ta.fill("SIDEQ what is going on?");
+    expect(await ta.inputValue()).toBe("SIDEQ what is going on?");
     await ta.press("Enter");
     await page.locator(".sc-entry .assistant", { hasText: "side answer: all quiet" }).waitFor({ timeout: 40_000 });
 
     const writes = page.getByLabel("Allow edits in this side chat");
     expect(await writes.isChecked()).toBe(false);
     await writes.check();
+    await page.waitForFunction(() => { const input = document.querySelector('.sc-tools input') as HTMLInputElement; return input.checked && !input.disabled; });
     expect(await writes.isChecked()).toBe(true);
     await writes.uncheck();
+    await page.waitForFunction(() => { const input = document.querySelector('.sc-tools input') as HTMLInputElement; return !input.checked && !input.disabled; });
 
     const btw = join(home, "sessions", "btw");
     expect(readdirSync(btw).filter((f) => f.endsWith(".jsonl")).length).toBeGreaterThan(0);
@@ -224,12 +216,10 @@ maybe("desktop app: final gaps", () => {
     const promoted = page.url().split("#/sessions/")[1].split(/[?#]/)[0];
     expect(promoted).not.toBe(before);
     expect(readdirSync(btw).filter((f) => f.endsWith(".jsonl"))).toEqual([]);
-    try {
-      await page.locator(".side-row", { hasText: "Side chat: SIDEQ what is going on?" }).first().waitFor({ timeout: 20_000 });
-    } catch (e) {
-      // This step failed once on Windows CI and once on Linux and never locally: print what each layer saw.
-      console.log("promote failure details " + JSON.stringify(promoteState(promoted), null, 1));
-      console.log("sidebar rows: " + JSON.stringify(await page.locator(".side-row").allInnerTexts()));
+    try { await page.locator(".side-row", { hasText: "Side chat: SIDEQ what is going on?" }).first().waitFor({ timeout: 20_000 }); }
+    catch (e) {
+      console.error("[promotion diagnostic]", JSON.stringify(await page.evaluate(() => ({ trace: (window as any).promotionTrace, body: document.body.innerText }))));
+      console.error("[promotion transcripts]", transcripts());
       throw e;
     }
     await page.locator(".assistant", { hasText: "side answer: all quiet" }).first().waitFor({ timeout: 20_000 });

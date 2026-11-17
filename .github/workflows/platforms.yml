@@ -2,15 +2,27 @@ name: platforms
 
 # Runs the suite and the desktop package build on macOS and Windows, which the Linux CI job cannot cover:
 # the sandbox-exec sandbox, the macOS keychain backend, the PowerShell worktree runner, and the packaged apps.
-# Non-code changes (docs, spec, website, notices) start no CI run.
 on:
   push:
-    paths-ignore: ["**.md", "docs/**", "spec/**", "website/**", "LICENSE", "NOTICE", ".github/workflows/pages.yml"]
   pull_request:
-    paths-ignore: ["**.md", "docs/**", "spec/**", "website/**", "LICENSE", "NOTICE", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+    inputs:
+      signed_baseline_run:
+        description: Retained sign-only run containing the 0.1.0 baseline installer
+        required: true
+        type: string
+      signed_candidate_run:
+        description: Existing sign-only run containing the candidate installer
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
 
 jobs:
   test:
+    if: github.event_name != 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -51,6 +63,9 @@ jobs:
           ls node_modules/electron/dist | head
       - name: Typecheck
         run: bunx tsc --noEmit -p .
+      - name: Install Chromium for browser acceptance
+        working-directory: desktop
+        run: npx playwright install chromium
       - name: Tests
         run: bun test
       - name: Build the desktop package for this platform (unsigned)
@@ -63,3 +78,86 @@ jobs:
       - name: List built artifacts
         shell: bash
         run: ls -la desktop/release || true
+      - name: Install NSIS package on the clean Windows runner
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = @(Get-ChildItem desktop/release -Filter '*.exe')
+          if ($installer.Count -ne 1) { throw 'Expected exactly one installer' }
+          $destination = Join-Path $env:RUNNER_TEMP 'rigwell-installed'
+          $process = Start-Process -FilePath $installer[0].FullName -ArgumentList '/S',"/D=$destination" -Wait -PassThru -WindowStyle Hidden
+          if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
+          bun desktop/packaging/accept-install.ts (Join-Path $destination 'rigwell.exe') desktop/release/installed-acceptance.json --require-eval-tasks --require-windows-protocol
+          if ($LASTEXITCODE -ne 0) { throw 'Installed first run failed' }
+      - name: Install DMG package on the clean macOS runner
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mount="$RUNNER_TEMP/rigwell-dmg"
+          destination="$RUNNER_TEMP/rigwell-installed"
+          mkdir -p "$mount" "$destination"
+          hdiutil attach desktop/release/*.dmg -nobrowse -readonly -mountpoint "$mount"
+          trap 'hdiutil detach "$mount" || true' EXIT
+          cp -R "$mount/Rigwell.app" "$destination/Rigwell.app"
+          hdiutil detach "$mount"
+          trap - EXIT
+          bun desktop/packaging/accept-install.ts "$destination/Rigwell.app/Contents/MacOS/rigwell" desktop/release/installed-acceptance.json --require-eval-tasks
+      - name: Preserve packages and installed acceptance
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ runner.os }}-${{ github.sha }}
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.dmg
+            desktop/release/*.zip
+            desktop/release/*.blockmap
+            desktop/release/*.yml
+            desktop/release/installed-acceptance.json
+          if-no-files-found: error
+          retention-days: 7
+
+  signed-install:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/phase-1-core-loop'
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            /*
+            !/evidence/
+          sparse-checkout-cone-mode: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - run: npm ci --ignore-scripts
+        working-directory: desktop
+      - uses: actions/download-artifact@v4
+        with:
+          repository: scottconverse/civiccast
+          name: signed-native-installer
+          run-id: ${{ inputs.signed_baseline_run }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/signed-baseline
+      - uses: actions/download-artifact@v4
+        with:
+          repository: scottconverse/civiccast
+          name: signed-native-installer
+          run-id: ${{ inputs.signed_candidate_run }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/signed-candidate
+      - name: Verify signed install, upgrade and local rollback
+        shell: pwsh
+        run: bun desktop/packaging/accept-windows-update.ts "$env:RUNNER_TEMP/signed-baseline" "$env:RUNNER_TEMP/signed-candidate" signed-update-acceptance.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-windows-acceptance-${{ github.sha }}
+          path: signed-update-acceptance.json
+          if-no-files-found: error
+          retention-days: 7

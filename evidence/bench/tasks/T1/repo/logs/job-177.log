@@ -1,0 +1,13 @@
+job job-177 started on runner-4
+step 0: download 12MB
+step 1: warning: FAILED to fetch optional mirror, using default
+step 2: lint ok
+step 3: download 12MB
+step 4: cache hit
+step 5: lint ok
+STATUS: PASSED
+retrying (attempt 2)
+STATUS: PASSED
+retrying (attempt 3)
+STATUS: PASSED
+summary: see artifacts

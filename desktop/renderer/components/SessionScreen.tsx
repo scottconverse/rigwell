@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { app, useApp, useStore } from "../lib/app-model.ts";
 import { SessionController } from "../lib/session.ts";
-import { toMarkdown } from "../lib/transcript.ts";
+import { bridge } from "../lib/rpc.ts";
 import { readinessText } from "../lib/missions.ts";
+import { MissionReadiness } from "./MissionReadiness.tsx";
 import { Composer } from "./Composer.tsx";
 import { toParams } from "../lib/attachments.ts";
-import { ConfirmDialog, TextDialog } from "./Dialogs.tsx";
+import { ConfirmDialog, Dialog, TextDialog } from "./Dialogs.tsx";
 import { Prompts } from "./Prompts.tsx";
 import { SidePane, type PaneTab } from "./SidePane.tsx";
 import { Transcript } from "./Transcript.tsx";
@@ -37,7 +38,7 @@ function useController(sessionId: string): { ctl?: SessionController; error?: st
   useEffect(() => {
     if ((ctl && !down) || trying.current || a.daemon.state !== "running" || !cwd) return;
     trying.current = true;
-    SessionController.resume(sessionId, cwd, { title: row?.title, pinned: row?.pinned, archived: row?.archivedAt != null }).then((c) => { live.set(sessionId, c); setCtl(c); setError(undefined); }, (e) => setError((e as Error).message)).finally(() => { trying.current = false; });
+    SessionController.resume(sessionId, cwd, { title: row?.title, pinned: row?.pinned, archived: row?.archivedAt != null, machine: row?.machine }).then((c) => { live.set(sessionId, c); setCtl(c); setError(undefined); }, (e) => setError((e as Error).message)).finally(() => { trying.current = false; });
   }, [ctl, down, a.daemon.state, cwd, sessionId]);
   useEffect(() => { if (!cwd && a.daemon.state === "running" && !ctl) void app.refresh(); }, [cwd, a.daemon.state, ctl]);
   return { ctl, error };
@@ -58,6 +59,7 @@ function Loaded({ ctl }: { ctl: SessionController }) {
   const [mounted, setMounted] = useState<Set<PaneTab>>(new Set(["browser"])); // the browser stays mounted so the agent can drive it
   const [maximized, setMaximized] = useState(false);
   const [prefill, setPrefill] = useState<string>();
+  const [readinessDraft, setReadinessDraft] = useState<string>();
   const [menu, setMenu] = useState(false);
   const [toast, setToast] = useState("");
   const [dialog, setDialog] = useState<null | "rename" | { readiness: string }>(null);
@@ -72,14 +74,6 @@ function Loaded({ ctl }: { ctl: SessionController }) {
   }, [ctl]);
   const sid = state.sessionId;
   useEffect(() => { if (state.phase === "ready" && sid && pendingMission.delete(sid)) void enterMission(); }, [state.phase, sid, enterMission]);
-
-  // The sidebar hides a session until its transcript has a user message. Home refreshes the list before the first
-  // message is written, so refresh again each time a turn ends: a new session then shows up, and its time updates.
-  const lastWorking = useRef(state.working);
-  useEffect(() => {
-    if (lastWorking.current !== "idle" && state.working === "idle") void app.refresh();
-    lastWorking.current = state.working;
-  }, [state.working]);
 
   // Approved spec handoff (spec 5.5.7): the old turn ended with reason spec_handoff; this client opens the new session.
   useEffect(() => ctl.onHandoff((specHandoffId) => {
@@ -116,6 +110,20 @@ function Loaded({ ctl }: { ctl: SessionController }) {
     try { await fn(); say(done); void app.refresh(); } catch (e) { say((e as Error).message); }
   };
 
+  const exportSession = async (format: "html" | "markdown") => {
+    setMenu(false);
+    try { const result = await ctl.request("export_session", { format }); const file = await bridge().dialog.saveSessionExport(format, result.content); say(file ? "Exported redacted session" : "Export canceled"); }
+    catch (e) { say((e as Error).message); }
+  };
+  const shareSession = async () => {
+    setMenu(false);
+    try { const result = await ctl.request("share_session"); if (result.shared) await copy(result.url, "share link"); else say("Share canceled"); }
+    catch (e) { say((e as Error).message); }
+  };
+  const copyMarkdown = async () => {
+    setMenu(false); try { const result = await ctl.request("export_session", { format: "markdown" }); await copy(result.content, "redacted Markdown"); } catch (e) { say((e as Error).message); }
+  };
+
   if (state.phase === "error") return <div className="center-note">Could not connect: {state.error}</div>;
 
   return (
@@ -124,6 +132,8 @@ function Loaded({ ctl }: { ctl: SessionController }) {
         <header className="session-head">
           <h1 title={state.cwd}>{state.title}</h1>
           <span className="muted cwd">{state.cwd}</span>
+          <span className="chip static" aria-label="Session machine">{state.machine ?? "Local"}</span>
+          {state.settings.tags?.some((t) => t.name === "delegation-slack" || t.name === "delegation-teams") && <span className="chip static" aria-label="Session source">{state.settings.tags.some((t) => t.name === "delegation-slack") ? "Slack" : "Teams"}</span>}
           <span className="spacer" />
           {state.phase === "disconnected" && <span className="badge warn">Reconnecting</span>}
           <button aria-label="Toggle tools panel" onClick={() => setPaneOpen(!paneOpen)} title="Tools panel (Alt+Ctrl+B)">Tools</button>
@@ -135,10 +145,14 @@ function Loaded({ ctl }: { ctl: SessionController }) {
                 <button role="menuitem" className="menu-item" onClick={() => { setMenu(false); setDialog("rename"); }}>Rename</button>
                 <button role="menuitem" className="menu-item" onClick={() => void act(() => ctl.setArchived(!state.archived), state.archived ? "Unarchived" : "Archived")}>{state.archived ? "Unarchive" : "Archive"}</button>
                 <button role="menuitem" className="menu-item" onClick={() => { showTab("terminal"); setMenu(false); }}>Open terminal</button>
+                <button role="menuitem" className="menu-item" onClick={() => { window.location.hash = `/review?folder=${encodeURIComponent(state.cwd)}`; setMenu(false); }}>Review changes</button>
                 <button role="menuitem" className="menu-item" onClick={() => void copy(state.cwd, "working folder")}>Copy working folder</button>
                 <button role="menuitem" className="menu-item" onClick={() => void copy(id, "session id")}>Copy session id</button>
                 <button role="menuitem" className="menu-item" onClick={() => void copy(`rigwell://sessions/${id}`, "session link")}>Copy session link</button>
-                <button role="menuitem" className="menu-item" onClick={() => void copy(toMarkdown(state.items), "as Markdown")}>Copy as Markdown</button>
+                <button role="menuitem" className="menu-item" onClick={() => void copyMarkdown()}>Copy as Markdown</button>
+                <button role="menuitem" className="menu-item" onClick={() => void exportSession("html")}>Export redacted HTML</button>
+                <button role="menuitem" className="menu-item" onClick={() => void exportSession("markdown")}>Export redacted Markdown</button>
+                <button role="menuitem" className="menu-item" onClick={() => void shareSession()}>Copy share link</button>
               </div>
             )}
           </div>
@@ -146,6 +160,7 @@ function Loaded({ ctl }: { ctl: SessionController }) {
         <Transcript items={state.items} working={state.working} />
         <Prompts prompts={state.prompts} onAnswer={(rid, r) => ctl.answer(rid, r)} />
         <Composer
+          prefill={readinessDraft} onPrefillUsed={() => setReadinessDraft(undefined)}
           settings={state.settings} models={state.models.length ? state.models : a.models} busy={state.working !== "idle"} disabled={state.phase !== "ready"}
           disabledShortcuts={off} autoFocus placeholder="Message the agent" session={ctl} cwd={state.cwd} autoAvailable={!!a.userSettings.autoRouter} onMission={() => void enterMission()}
           onChange={(p) => void ctl.updateSettings({ ...p })} onSend={(t, atts) => void ctl.send(t, atts ? toParams(atts) : {})} onStop={() => ctl.interrupt()}
@@ -153,7 +168,7 @@ function Loaded({ ctl }: { ctl: SessionController }) {
         />
         {toast && <div className="toast" role="status">{toast}</div>}
         {dialog === "rename" && <TextDialog title="Rename session" label="Title" initial={state.title} action="Rename" onCancel={() => setDialog(null)} onSubmit={(v) => { setDialog(null); void act(() => ctl.rename(v), "Renamed"); }} />}
-        {dialog && typeof dialog === "object" && <ConfirmDialog title="This folder is not ready for a mission" body={`${dialog.readiness}\n\nYou can continue anyway.`} action="Continue anyway" onCancel={() => setDialog(null)} onConfirm={() => void enterMission(true)} />}
+        {dialog && typeof dialog === "object" && <Dialog title="This folder is not ready for a mission" onClose={() => setDialog(null)}><p className="muted pre">{dialog.readiness}</p><MissionReadiness request={(method) => ctl.request(method)} prepare={() => { setReadinessDraft("Use the readiness-report skill to identify build/test commands and required tools, then ask for approval before running these checks."); setDialog(null); }} /><div className="dialog-actions"><button onClick={() => setDialog(null)}>Cancel</button><button className="primary" onClick={() => void enterMission(true)}>Continue anyway</button></div></Dialog>}
       </div>
       <div className={paneOpen ? "pane-slot open" : "pane-slot"} hidden={!paneOpen}>
         <SidePane

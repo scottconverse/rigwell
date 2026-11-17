@@ -1,5 +1,5 @@
 // One MCP client: initialize, tools/list, tools/call over a Connection.
-import { McpAuthRequiredError } from "./oauth.ts";
+import { McpAuthRequired } from "./auth.ts";
 import { createConnection, McpRpcError, type Connection } from "./transport.ts";
 import type { McpCallResult, McpServerConfig, McpToolDef } from "./types.ts";
 
@@ -44,14 +44,14 @@ export class McpClient {
     try {
       await this.conn.start();
       const r = await this.conn.request("initialize", {
-        protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "rigwell", version: "0.3.3" },
+        protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "rigwell", version: "0.1.0" },
       }, timeoutMs);
       this.serverInfo = r?.serverInfo;
       await this.conn.notify("notifications/initialized");
     } catch (e) {
       const tail = this.conn.stderrTail?.();
       await this.conn.close().catch(() => {});
-      if (e instanceof McpAuthRequiredError) throw e; // the manager shows "sign-in needed" for it
+      if (e instanceof McpAuthRequired) throw e;
       const msg = (e as Error).message;
       throw new McpRpcError(tail && !msg.includes(tail) ? `${msg}: ${tail}` : msg);
     }

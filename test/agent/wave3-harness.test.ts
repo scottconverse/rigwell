@@ -53,8 +53,8 @@ test("secret scan: off by default, a commit with a secret just runs", async () =
   expect(commits(cwd)).toBe("1");
 });
 
-test("secret scan: cancel blocks the commit; proceed_once runs it; false positive is logged and not asked again", async () => {
-  const answers = ["cancel", "proceed_once", "proceed_report_false_positive"];
+test("secret scan: cancel blocks the commit and proceed_once runs it", async () => {
+  const answers = ["cancel", "proceed_once"];
   const asked: any[] = [];
   const { session, cwd, requests } = makeStubSession(
     (_r, n) => (n % 2 === 0 ? commitCall() : text("ok")),
@@ -78,25 +78,30 @@ test("secret scan: cancel blocks the commit; proceed_once runs it; false positiv
   await session.idle();
   expect(asked).toHaveLength(2);
   expect(commits(cwd)).toBe("1");
+});
 
-  // a second commit with another change containing the same secret: report it as a false positive
-  writeFileSync(path.join(cwd, "other.ts"), `x("${AWS}")\n`);
-  execSync("git add other.ts", { cwd });
-  session.addUserMessage("commit 3");
+test("secret scan: a reported false positive is logged and not asked again on the next commit", async () => {
+  const asked: any[] = [];
+  const { session, cwd } = makeStubSession(
+    (_r, n) => (n % 2 === 0 ? commitCall() : text("ok")),
+    { enableSecretScan: true, autoRejectPermissionRequests: false },
+  );
+  (session as any).host.requestPermission = async (p: any) => { asked.push(p); return { selectedOption: "proceed_report_false_positive" }; };
+  repoWithStagedSecret(cwd);
+  session.addUserMessage("commit and report the false positive");
   await session.idle();
-  expect(asked).toHaveLength(3);
-  expect(commits(cwd)).toBe("2");
+  expect(asked).toHaveLength(1);
+  expect(commits(cwd)).toBe("1");
   const log = readFileSync(path.join(home, "logs", "secret-scan-false-positives.jsonl"), "utf8");
   expect(log).toContain("aws-access-key-id");
   expect(log).not.toContain(AWS);
 
-  // the same finding is not asked about again
-  writeFileSync(path.join(cwd, "third.ts"), `y("${AWS}")\n`);
-  execSync("git add third.ts", { cwd });
-  session.addUserMessage("commit 4");
+  writeFileSync(path.join(cwd, "other.ts"), `x("${AWS}")\n`);
+  execSync("git add other.ts", { cwd });
+  session.addUserMessage("commit the same finding again");
   await session.idle();
-  expect(asked).toHaveLength(3);
-  expect(commits(cwd)).toBe("3");
+  expect(asked).toHaveLength(1);
+  expect(commits(cwd)).toBe("2");
 });
 
 test("secret scan: with nobody to ask the commit is not run", async () => {

@@ -1,0 +1,10 @@
+job job-031 started on runner-6
+step 0: compile ok
+step 1: compile ok
+step 2: download 12MB
+step 3: download 12MB
+step 4: cache hit
+step 5: lint ok
+step 6: cache hit
+STATUS: FAILED
+summary: see artifacts

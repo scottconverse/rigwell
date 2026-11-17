@@ -1,0 +1,10 @@
+job job-109 started on runner-2
+step 0: download 12MB
+step 1: cache hit
+step 2: lint ok
+step 3: cache hit
+step 4: lint ok
+step 5: cache hit
+step 6: cache hit
+STATUS: PASSED
+summary: see artifacts

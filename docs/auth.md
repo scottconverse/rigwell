@@ -1,5 +1,54 @@
 # Sign-in with an account plan, secrets and environments
 
+## Signed-in coding clients
+
+Settings > Custom Models offers **Signed-in official client** for Anthropic and OpenAI profiles.
+The settings entry uses `executionBackend: "claude-cli"` with `provider: "anthropic"`, or
+`executionBackend: "codex-cli"` with `provider: "openai"`. Supply the model through private settings.
+An optional absolute `cliExecutable` overrides executable discovery. No API key or base URL is needed.
+API credentials, cloud routing, HTTP overrides and credentialSource cannot be combined with this backend.
+
+Rigwell retains its Session loop, workspace selection, message history, turn lifecycle, cancellation and usage
+recording. The official client owns OAuth, refresh and native coding tools. Native tool events appear as activity;
+Rigwell does not execute those tool calls again. Each request starts a fresh native invocation with the visible
+history and current request. No native resume mapping is assumed. This differs from the direct HTTP adapters.
+
+Install and sign in to the official client first. Claude subscription login uses `claude auth login --claudeai`;
+OpenAI device sign-in uses `codex login --device-auth`. Those are user-run commands; Rigwell does not open a browser.
+The adapter checks subscription authentication before each invocation, removes inherited API/cloud overrides and
+parent Codex desktop execution context, and preserves the client's normal credential/config directories.
+Existing client configuration and provider entitlement still apply. Rigwell does not read or copy the tokens.
+
+Native tools use the client's permissions. Unresolved Claude native approvals are forwarded to Rigwell's
+permission panel through the client's permission callback. The panel shows the tool, workspace and requested
+command or input, with allow-once and cancel choices. No approver, interruption or read-only mode denies the
+request. Native deny rules still apply; approving a request does not change global client permissions.
+Read-only/spec sessions select native read-only/plan mode. Writable
+sessions use native edit approval/workspace sandbox modes. Unsafe native flags require the session's explicit
+skip-permissions setting and are never enabled for read-only sessions. Native execution cannot enforce Rigwell's
+complete per-tool policy, sandbox policy, commit secret scan or restricted tool lists; sessions requiring those
+Rigwell policies refuse this backend rather than silently bypassing them. Use a direct adapter for those sessions.
+Native failures are not automatically replayed, because tools may already have changed files.
+
+Workstream coordination uses Rigwell's request-scoped MCP bridge. Both signed-in clients can propose a Workstream,
+spawn persistent members, send messages, read the roster, register listeners, wait for events and control members
+when the owning Session offers those tools. AskUser routes questions to the actual user, including member prompts.
+Calls use Rigwell's permission gates, hooks and transcript records.
+The service binds actor identity to that Session. The bridge exposes no user approval RPC or general daemon methods.
+Only the user can approve a proposal; a late approval after cancellation cannot create the Workstream.
+In 0.4.1 a pending proposal reappears after the session view reconnects while its daemon Session is alive.
+Native model requests retain the owning native coordination call/result receipts between fresh invocations,
+so member IDs, messages and listener results remain available to the coordinator.
+
+The bridge binds to loopback with a random capability that expires when the native invocation ends. Claude receives
+an owner-only temporary configuration; Codex receives a per-invocation URL and bearer-token environment reference.
+No global MCP configuration is changed. Native permission grants cover only the Rigwell bridge tools, whose actual
+approval still happens inside Rigwell. Cancelling a request closes the bridge and cancels outstanding event waits.
+
+The Windows live acceptance used one identical isolated coding task through Rigwell on the Anthropic subscription,
+OpenAI subscription and a local Chat Completions server; all three external graders passed. This does not establish
+long-session quality or every account/model entitlement. Separate live Workstream checks exercise coordination.
+
 ## A note on terms of use
 
 Rigwell ships no provider entries, no client ids and does not identify itself as any other application. Whether a
@@ -84,62 +133,6 @@ Names carry the `rigwell.` prefix. No result ever contains a token.
 - `auth_login_status { loginId }` returns the same object with `state` `pending`, `complete`, `failed` (with `error`) or `cancelled`. Poll it every second or two.
 - `auth_logout { name }` returns `{ loggedOut: boolean }`.
 
-## MCP server sign-in (OAuth)
-
-An http or sse MCP server can require OAuth sign-in (MCP authorization, protocol version `2025-06-18`). When such a
-server answers 401, Rigwell shows it as failed with "Sign-in needed: run `rigwell mcp login <name>`". Nothing is
-registered and no browser opens until you ask.
-
-```
-rigwell mcp login acme    # finds the sign-in server, prints a URL, waits for the redirect on 127.0.0.1
-rigwell mcp status        # signed in / not signed in / OAuth off, per http and sse server in mcp.json
-rigwell mcp logout acme   # removes the stored token
-```
-
-What `login` does:
-
-1. Reads the protected resource metadata (RFC 9728): the `resource_metadata` URL in the 401 `WWW-Authenticate`
-   header, else `/.well-known/oauth-protected-resource<path>`, else the same at the root.
-2. Reads the authorization server metadata (RFC 8414, else OpenID discovery) of the first listed authorization server.
-   Every endpoint must be https (http only on 127.0.0.1 or localhost). If the server lists its PKCE methods and S256
-   is not one of them, sign-in is refused.
-3. Picks a client: `oauth.clientId` from `mcp.json`; else `oauth.clientMetadataUrl` when the server supports client
-   metadata documents; else the app Rigwell registered before for this server; else a new dynamic client
-   registration (RFC 7591) with a `http://127.0.0.1:<port>/callback` redirect and no client secret.
-4. Runs the browser sign-in (authorization code with PKCE S256, as above). Every authorization and token request
-   carries the server as the RFC 8707 `resource`.
-
-After a sign-in started with `mcp_auth_start`, that session reconnects the server. After `rigwell mcp login` in a
-terminal, a session that is already open connects the server at its next start. Tokens are stored under `oauth:mcp.<name>`, the
-discovery result and the client under `mcp-oauth:<name>` (both in the credential store). A token is refreshed before
-it expires; when the refresh is refused, the server shows "The sign-in expired" again. `logout` removes the token and
-keeps the registered app, so the next `login` does not register again.
-
-Options in the server's `mcp.json` entry:
-
-```json
-{ "mcpServers": { "acme": { "type": "http", "url": "https://mcp.acme.example/mcp",
-  "oauth": { "scopes": ["tools.read"], "clientId": "my-app" } } } }
-```
-
-- `oauth: false` turns OAuth off for the server. An `Authorization` header in `headers` also turns it off (the header
-  is sent as it is), and a 401 is then a plain error.
-- `oauth.scopes` (default: the header's `scope`, else the metadata's `scopes_supported`), `oauth.resource` (default:
-  the metadata's `resource`, else the server URL), `oauth.authorizationServerIssuer` (for a server that publishes no
-  metadata), `oauth.clientId`, `oauth.clientSecret` (only for a confidential client; it is stored in `mcp.json` as
-  written), `oauth.clientMetadataUrl`.
-- A 403 is a plain error, not a sign-in request.
-
-Protocol methods: `mcp_auth_start { serverName }` returns the same login status as `auth_login_start` (open `url`,
-then poll `auth_login_status { loginId }`); `mcp_auth_logout { serverName }` returns `{ success }`. `list_mcp_servers`
-shows `requiresAuth` and `hasAuthTokens` for servers with OAuth on. No result contains a token.
-
-Desktop app: the Connectors dialog (the Connectors chip in the message box) and Settings > Connectors show a "Sign in"
-button for a server that needs sign-in, and "Sign out" for a server with a stored token. Sign in opens the sign-in page
-in your browser and waits. From the Connectors dialog, the open session connects the server when you finish. From
-Settings > Connectors, other open sessions connect it at their next start. The TUI has no button: run the terminal
-command (decision 347).
-
 ## Secrets
 
 Named secrets (API keys, tokens). Values live only in the credential store under `secret:<name>`; a custom model can
@@ -173,3 +166,120 @@ matches the value as written; an encoded or split copy (base64, one character pe
 ## Sign-in from the desktop app and the terminal
 
 Desktop: Settings > Accounts lists the providers from `auth_list`, starts the browser or device-code sign-in, polls the status and signs out. Terminal: `/login [provider] [--device]` and `/logout [provider]`. Settings > API keys and Environments edit the secrets and environments below; stored values are never displayed.
+
+## Code-provider connections (spec 20.21)
+
+Settings > Code providers connects GitHub and GitLab. Paste an access token to verify its account before saving it.
+The page shows the signed-in account and the scopes reported by the provider. An absent scope response means
+permissions are unknown, including GitHub fine-grained tokens; inspect permissions at the provider. A failed
+replacement preserves the working credential. Disconnect removes local credentials and cancels pending sign-in;
+it does not revoke a token at the provider.
+
+Device sign-in reuses the normal OAuth manager and requires Rigwell's own registered public clients. The owner
+must supply the real client IDs. Example user settings, with placeholders to replace:
+
+```json
+{
+  "oauthProviders": {
+    "github": {
+      "clientId": "REGISTERED-RIGWELL-GITHUB-CLIENT-ID",
+      "deviceAuthorizationEndpoint": "https://github.com/login/device/code",
+      "tokenEndpoint": "https://github.com/login/oauth/access_token",
+      "scopes": ["repo", "read:user"]
+    },
+    "gitlab": {
+      "clientId": "REGISTERED-RIGWELL-GITLAB-CLIENT-ID",
+      "deviceAuthorizationEndpoint": "https://gitlab.com/oauth/authorize_device",
+      "tokenEndpoint": "https://gitlab.com/oauth/token",
+      "scopes": ["api", "read_user"]
+    }
+  }
+}
+```
+
+Enable the device flow on the registered application. The page displays its verification URL and code; opening
+that URL is a user action. Cancelling an attempt preserves the previous connection. OAuth tokens refresh through
+the existing manager. Token connections use credential names `github` and `gitlab`; OAuth uses `oauth:github`
+and `oauth:gitlab`. Tokens never return through the code-provider protocol. `create_pr` and PR status reuse this
+connection for their API fallback; installed `gh` or `glab` keeps its existing priority and receives a connected
+credential through its child process environment, never command arguments. Without a connected credential the
+CLI keeps its own authentication. Git pushes use the machine's
+Git authentication, so configure that separately if needed. Later review, triggers and share use the same resolver.
+
+Protocol methods: `code_provider_list {}`, `code_provider_connect {provider, token}`,
+`code_provider_disconnect {provider}`, `code_provider_login_start {provider}`,
+`code_provider_login_status {provider, loginId}`, and `code_provider_login_cancel {provider, loginId}`.
+`provider` is `github` or `gitlab`. List/status responses contain account and scope metadata, never credentials.
+The daemon owns the device poll; clients poll its status and can reconnect without taking ownership of the login.
+
+Provider references: [GitHub device flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps),
+[GitHub scope reporting](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps),
+[GitLab OAuth](https://docs.gitlab.com/api/oauth2/) and
+[GitLab personal access token metadata](https://docs.gitlab.com/api/personal_access_tokens/).
+
+
+## Guided model setup (spec 20.2)
+
+With no configured models, the Home page offers account sign-in first, followed by model configuration and API-key
+storage. An absent registered client is shown as not available. No client IDs are borrowed from installed coding
+clients. API keys and signed-in coding CLI sessions are different credentials; neither supplies Rigwell's own
+public OAuth client registration. Registered built-in entries and real provider sign-in remain pending those IDs.
+
+Settings > Accounts supports sign-in, sign-in again and sign-out. Reauthorization is available even when a saved
+token remains, so an expired or revoked account can be renewed. Tokens refresh in the daemon before expiry; a
+refused refresh reports a non-retryable authentication error. Stopping the page's waiting operation does not revoke
+a login already completed at the provider.
+
+Settings > Custom Models supports Anthropic Messages, OpenAI Responses, native Google, Chat Completions (including
+local Ollama-compatible endpoints), and Bedrock Converse. Choose an available account in Authentication to save
+only its credentialSource name; that choice cannot be combined with an API key. Google sends the refreshed account
+token in its configured header, and rejects a signed-out account before contacting the model endpoint. Bedrock
+supports region plus automatic credentials, an AWS profile, bearer token, access keys or credential commands.
+Editing a model preserves its other adapter/profile options. No model or provider is selected globally by setup.
+
+Stored API keys, helper commands, OAuth client secrets and Bedrock secret fields are masked before user settings
+reach a renderer and restored when their unchanged masks are saved. Environment references remain readable. Use the
+API keys page and keychain references, or existing AWS profiles/environment references, instead of duplicating a
+secret into each model entry.
+
+Real sign-in availability and account-plan coverage depend on the provider's registered-client offering. See
+[provider sign-in guidance](https://support.claude.com/en/articles/13189465-log-in-to-your-claude-account) and
+[Google's own-client OAuth setup](https://ai.google.dev/gemini-api/docs/oauth). Fake authorization/model servers test
+the implementation; those tests do not prove that a real subscription is enabled for Rigwell.
+
+
+## Remote MCP sign-in
+
+A remote HTTP or SSE server that answers with an authorization challenge is shown as needing sign-in. Use its
+Sign in button in Connectors or Settings > Connectors, then open the sign-in page. The CLI equivalent is
+/mcp sign-in <name>. The desktop and TUI show completion without receiving access or refresh tokens.
+/mcp sign-out <name> removes that server URL's saved registration and tokens; other server URLs keep theirs.
+
+Rigwell discovers protected-resource metadata from the challenge, or the standard path/root locations, then
+OAuth or OpenID authorization-server metadata. It checks the resource and issuer identity and requires PKCE S256.
+HTTPS is required for authorization endpoints, with HTTP permitted on loopback for local services. Authorization
+and token requests include the server's resource indicator. Browser responses return to a loopback listener at
+/mcp-callback with state and PKCE validation. No visible browser is launched by the daemon.
+
+When oauth.clientId is absent and dynamic registration is offered, Rigwell registers its actual bound callback
+URI as a public native client. Registration is private and reused only with the same issuer/endpoints/redirect.
+Otherwise configure an owned registration in the server's oauth object in mcp.json:
+
+~~~json
+{"mcpServers":{"private-tools":{"type":"http","url":"https://tools.example/mcp","oauth":{"clientId":"your-own-client-id","redirectPort":8765}}}}
+~~~
+
+For a confidential registration, clientSecret accepts a keychain reference or environment reference, and
+tokenAuthMethod accepts client_secret_basic or client_secret_post. oauth: false disables OAuth and retains static
+headers. Tokens and private registration metadata use the credential store, scoped by canonical server URL. The
+store uses an available OS backend or its private-file fallback; native Windows keychain acceptance remains open.
+
+Each HTTP leg sends the bearer token, refreshes before expiry, and retries a rejected token once. A second 401
+or failed refresh removes the server's available tools and restores its sign-in action. Cleanup does not refresh.
+Redirects and cross-origin legacy SSE endpoints never forward credentials. Cancelling/removing a pending login
+closes its callback; sign-out during refresh cannot restore a removed credential.
+
+Protocol methods are mcp_sign_in {name}, mcp_sign_out {name}, mcp_sign_in_status {name,loginId}, and
+mcp_sign_in_cancel {name,loginId}, under the normal rigwell. prefix. list_mcp_servers includes requiresAuth and
+hasAuthTokens. Sign-in returns only a URL and pollable login status. The implementation follows the
+[MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).

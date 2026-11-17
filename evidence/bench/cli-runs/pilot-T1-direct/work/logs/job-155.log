@@ -1,0 +1,12 @@
+job job-155 started on runner-3
+step 0: warning: FAILED to fetch optional mirror, using default
+step 1: download 12MB
+step 2: lint ok
+step 3: tests: 41 passed
+step 4: lint ok
+step 5: compile ok
+step 6: cache hit
+step 7: lint ok
+step 8: cache hit
+STATUS: FAILED
+summary: see artifacts

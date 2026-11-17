@@ -1,0 +1,3 @@
+Implement mergeIntervals(intervals) for closed numeric [start,end] intervals. Sort and merge overlaps or touching endpoints without mutating input; reject reversed or nonfinite endpoints.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

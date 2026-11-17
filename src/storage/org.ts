@@ -7,10 +7,11 @@
 //   modelPolicy        allowedModelIds / blockedModelIds / allowCustomModels; when the org sets it, lower levels' copy is dropped
 //   sandbox            the stricter setting wins (see mergeSandboxOrg in src/sandbox/policy.ts)
 //   hooks, allowManagedHooksOnly   org hooks always run; with allowManagedHooksOnly every other hook is dropped
-// File shape: the settings object itself, or {"managedSettings": {...}} (the same shape a server cache would hold).
+// Legacy file shape: settings or {"managedSettings": {...}}. Local/system policy.json (20.20) is stricter authority.
 import { readFileSync, statSync } from "node:fs";
 import type { AutonomyLevel } from "../core/types.ts";
 import { mergeSandboxOrg, type SandboxSettings } from "../sandbox/policy.ts";
+import { effectivePolicy, loadPolicies } from "./policy.ts";
 
 export interface ModelPolicy {
   allowedModelIds?: string[];
@@ -33,6 +34,7 @@ export interface OrgSettings {
 
 export interface LoadedOrg {
   path: string;
+  paths?: string[];
   settings: OrgSettings;
   warnings: string[];
 }
@@ -45,7 +47,7 @@ const isPlain = (v: unknown): v is Record<string, unknown> => typeof v === "obje
 const strings = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined);
 
 /** Reads the org file named by the environment. Returns null when the variable is unset or the file is unusable (warnings say why). */
-export function loadOrgSettings(env: Record<string, string | undefined> = process.env): LoadedOrg | null {
+function loadLegacyOrgSettings(env: Record<string, string | undefined> = process.env): LoadedOrg | null {
   const file = env[ORG_ENV];
   if (!file) return null;
   const warnings: string[] = [];
@@ -70,6 +72,14 @@ export function loadOrgSettings(env: Record<string, string | undefined> = proces
     s.maxAutonomyLevel = "off";
   }
   return { path: file, settings: s, warnings };
+}
+
+/** Local/system policy overrides settings, including legacy managed-file settings. */
+export function loadOrgSettings(env: Record<string, string | undefined> = process.env): LoadedOrg | null {
+  const legacy = loadLegacyOrgSettings(env), files = loadPolicies(env);
+  if (!files.length) return legacy;
+  const { schemaVersion, missions, workstreams, mcpServerAllowlist, ...managed } = effectivePolicy(env, files);
+  return { path: files.at(-1)!.path, paths: [...(legacy ? [legacy.path] : []), ...files.map((f) => f.path)], settings: { ...legacy?.settings, ...managed, policy: { missions, workstreams, mcpServerAllowlist } }, warnings: legacy?.warnings ?? [] };
 }
 
 /** The org's autonomy ceiling, or undefined when none. */

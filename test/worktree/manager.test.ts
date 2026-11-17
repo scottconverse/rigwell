@@ -47,7 +47,10 @@ describe("secret stripping", () => {
     expect(r.output).toContain("key=[unset] normal=[visible] repo=[/the/repo]");
   });
   test("output is capped at 4 KB and control chars removed", async () => {
-    const r = await runScript({ script: 'printf "\\033[31m"; head -c 9000 /dev/zero | tr "\\0" "a"', cwd: tmp("s"), repoRoot: "/r", timeoutMs: 10000 });
+    const script = process.platform === "win32"
+      ? '[Console]::Write(([char]27).ToString() + "[31m" + ("a" * 9000))'
+      : 'printf "\\033[31m"; head -c 9000 /dev/zero | tr "\\0" "a"';
+    const r = await runScript({ script, cwd: tmp("s"), repoRoot: "/r", timeoutMs: 10000 });
     expect(r.output.length).toBe(4096);
     expect(r.output).not.toContain("\u001b");
   });
@@ -69,7 +72,9 @@ describe(".worktreeinclude", () => {
     writeFileSync(join(repo, ".env"), "K=1\n");
     mkdirSync(join(repo, "secrets"));
     writeFileSync(join(repo, "secrets", "k.txt"), "k\n");
-    symlinkSync("/etc/hostname", join(repo, "link.env"));
+    const outside = tmp("include-outside");
+    writeFileSync(join(outside, "secret.txt"), "must not copy");
+    symlinkSync(outside, join(repo, "link.env"), process.platform === "win32" ? "junction" : "dir");
     writeFileSync(join(repo, ".worktreeinclude"), ".env\nsecrets\na.txt\nlink.env\nmissing\n");
     const dest = tmp("dest");
     writeFileSync(join(dest, "preexisting"), "x");
@@ -182,7 +187,8 @@ describe("auto-delete", () => {
     const m = mk({ autoDeleteLimit: 2, recentMs: 60_000, now: () => t });
     const ids = ["old00001", "old00002", "old00003", "old00004", "old00005", "old00006"];
     const wts = [];
-    for (const id of ids) { wts.push(await m.create({ repoRoot: repo, sessionId: id, lifecycle: id === "old00006" ? "persistent" : "ephemeral" })); t += 1000; }
+    // This exercises cleanup blockers, so avoid repeated generated-name collision probes in fixture setup.
+    for (const id of ids) { wts.push(await m.create({ repoRoot: repo, sessionId: id, branch: `cleanup-${id}`, lifecycle: id === "old00006" ? "persistent" : "ephemeral" })); t += 1000; }
     const [w1, w2, w3, w4, w5] = wts;
     writeFileSync(join(w1!.path, "dirty.txt"), "wip\n");           // uncommitted work: skipped
     writeFileSync(join(w2!.path, "a.txt"), "ahead\n");              // local-only commit: skipped

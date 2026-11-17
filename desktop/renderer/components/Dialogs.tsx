@@ -3,8 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { bridge } from "../lib/rpc.ts";
 import { app, useStore } from "../lib/app-model.ts";
 import { trustAsks, type SessionController } from "../lib/session.ts";
-import { validateNewSkill, validateSkillName } from "../lib/skill-md.ts";
-import { mcpAuthButtons, pollLogin, type LoginStatus } from "../lib/access.ts";
+import { ConnectorCatalog } from "./ConnectorCatalog.tsx";
 
 export function Dialog({ title, onClose, children, wide }: { title: string; onClose(): void; children: React.ReactNode; wide?: boolean }) {
   useEffect(() => {
@@ -64,6 +63,7 @@ export function ConfirmDialog({ title, body, action, onConfirm, onCancel }: { ti
 // ------------------------------------------------------------------ Connectors
 
 export interface McpServer { name: string; status: string; serverType: string; source?: string; displayName?: string; error?: string; toolCount?: number; requiresAuth?: boolean; hasAuthTokens?: boolean }
+interface McpLogin { name: string; loginId: string; state: string; url?: string; error?: string }
 
 /** MCP server list, refresh, add and remove over any `request` function (a session, or a temporary connection). */
 export function useMcp(request: ((method: string, params?: Record<string, unknown>) => Promise<any>) | undefined) {
@@ -71,45 +71,43 @@ export function useMcp(request: ((method: string, params?: Record<string, unknow
   const [summary, setSummary] = useState<{ total: number; connected: number; failed: number; configError?: { path: string; message: string } }>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [login, setLogin] = useState<McpLogin>();
   const refresh = useCallback(async () => {
     if (!request) return;
     try { const r = await request("list_mcp_servers"); setServers(r.servers ?? []); setSummary(r.summary); setError(""); } catch (e) { setError((e as Error).message); }
   }, [request]);
   useEffect(() => { void refresh(); }, [refresh]);
-  const run = async (fn: () => Promise<unknown>) => { setBusy(true); try { await fn(); setError(""); } catch (e) { setError((e as Error).message); } finally { setBusy(false); await refresh(); } };
-  const [login, setLogin] = useState<{ name: string; status: LoginStatus } | null>(null);
-  /** Browser sign-in (docs/auth.md): the daemon gives a URL, the system browser opens it, the page polls until done. */
-  const signIn = (name: string) => run(async () => {
-    const first: LoginStatus = await request!("mcp_auth_start", { serverName: name });
-    setLogin({ name, status: first });
-    try {
-      if (first.url) void bridge().shell.openExternal(first.url).catch(() => {});
-      const done = await pollLogin(() => request!("auth_login_status", { loginId: first.loginId }), { cancelled: () => mcpCancelled.has(first.loginId) });
-      if (done.state === "failed") throw new Error(done.error ?? "Sign-in failed.");
-    } finally { setLogin(null); }
-  });
+  useEffect(() => {
+    if (!request || login?.state !== "pending") return;
+    let stopped = false;
+    const timer = setInterval(() => {
+      void request("mcp_sign_in_status", { name: login.name, loginId: login.loginId }).then((s: McpLogin) => {
+        if (stopped) return;
+        setLogin(s);
+        if (s.state !== "pending") void refresh();
+      }).catch((e) => { if (!stopped) setLogin({ ...login, state: "failed", error: (e as Error).message }); });
+    }, 750);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [request, login, refresh]);
+  const run = async (fn: () => Promise<unknown>) => { setBusy(true); let failure = ""; try { await fn(); } catch (e) { failure = (e as Error).message; } finally { setBusy(false); await refresh(); setError(failure); } };
   return {
     servers, summary, error, busy, refresh, login,
+    signIn: (name: string) => run(async () => { setLogin(await request!("mcp_sign_in", { name })); }),
+    signOut: (name: string) => run(async () => { await request!("mcp_sign_out", { name }); if (login?.name === name) setLogin(undefined); }),
+    cancelLogin: () => run(async () => { if (login) { await request!("mcp_sign_in_cancel", { name: login.name, loginId: login.loginId }); setLogin({ ...login, state: "cancelled" }); } }),
     add: (p: Record<string, unknown>) => run(() => request!("add_mcp_server", p)),
+    addCatalog: (p: Record<string, unknown>) => run(async () => { const r = await request!("mcp_catalog_add", p); if (r.login) setLogin(r.login); }),
     remove: (name: string) => run(() => request!("remove_mcp_server", { serverName: name, settingsLevel: "user" })),
-    signIn,
-    signOut: (name: string) => run(() => request!("mcp_auth_logout", { serverName: name })),
-    stopWaiting: () => { if (login) mcpCancelled.add(login.status.loginId); },
   };
 }
-const mcpCancelled = new Set<string>();
 
-/** Shown while an MCP sign-in waits for the browser. */
-export function McpLoginPanel({ login, onCancel }: { login: { name: string; status: LoginStatus } | null; onCancel(): void }) {
+export function McpLoginPanel({ login, onCancel }: { login?: McpLogin; onCancel(): void }) {
   if (!login) return null;
-  const u = login.status.url;
-  return (
-    <div className="banner" role="status" aria-label="Sign-in in progress" data-testid="mcp-login-panel">
-      <div>Signing in to <b>{login.name}</b>...</div>
-      <div className="small">A browser window should open. If it did not, <a href={u} data-testid="mcp-login-url" onClick={(e) => { e.preventDefault(); if (u) void bridge().shell.openExternal(u); }}>open the sign-in page</a>.</div>
-      <button onClick={onCancel}>Stop waiting</button>
-    </div>
-  );
+  return <div className="banner" role="status" aria-label="MCP sign-in">
+    <b>{login.name}: {login.state === "complete" ? "Signed in" : login.state === "pending" ? "Waiting for sign-in" : login.state}</b>
+    {login.state === "pending" && <><p><a href={login.url} onClick={(e) => { e.preventDefault(); if (login.url) void bridge().shell.openExternal(login.url); }}>Open the sign-in page</a></p><button onClick={onCancel}>Cancel sign-in</button></>}
+    {login.error && <p className="error-text">{login.error}</p>}
+  </div>;
 }
 
 export function AddServerForm({ onAdd, busy }: { onAdd(p: Record<string, unknown>): Promise<void>; busy: boolean }) {
@@ -137,7 +135,7 @@ export function AddServerForm({ onAdd, busy }: { onAdd(p: Record<string, unknown
   );
 }
 
-export function ServerList({ servers, onRemove, onSignIn, onSignOut, busy }: { servers: McpServer[]; onRemove(n: string): void; onSignIn?(n: string): void; onSignOut?(n: string): void; busy: boolean }) {
+export function ServerList({ servers, onRemove, busy, onSignIn, onSignOut }: { servers: McpServer[]; onRemove(n: string): void; busy: boolean; onSignIn?(n: string): void; onSignOut?(n: string): void }) {
   if (!servers.length) return <div className="muted pad">No MCP servers yet.</div>;
   return (
     <ul className="plain-list" aria-label="MCP servers">
@@ -148,8 +146,8 @@ export function ServerList({ servers, onRemove, onSignIn, onSignOut, busy }: { s
           <span className="muted small">{s.serverType} / {s.status}{s.toolCount != null ? ` / ${s.toolCount} tools` : ""}{s.requiresAuth ? " / needs sign-in" : ""}</span>
           {s.error && <span className="error-text small">{s.error}</span>}
           <span className="spacer" />
-          {onSignIn && mcpAuthButtons(s).signIn && <button className="primary" disabled={busy} aria-label={`Sign in to ${s.name}`} onClick={() => onSignIn(s.name)}>Sign in</button>}
-          {onSignOut && mcpAuthButtons(s).signOut && <button disabled={busy} aria-label={`Sign out of ${s.name}`} onClick={() => onSignOut(s.name)}>Sign out</button>}
+          {s.requiresAuth && onSignIn && <button disabled={busy} aria-label={`Sign in to ${s.name}`} onClick={() => onSignIn(s.name)}>Sign in</button>}
+          {s.hasAuthTokens && onSignOut && <button disabled={busy} aria-label={`Sign out of ${s.name}`} onClick={() => onSignOut(s.name)}>Sign out</button>}
           {s.source === "user" || s.source === undefined ? <button disabled={busy} aria-label={`Remove ${s.name}`} onClick={() => onRemove(s.name)}>Remove</button> : <span className="muted small">{s.source}</span>}
         </li>
       ))}
@@ -160,10 +158,13 @@ export function ServerList({ servers, onRemove, onSignIn, onSignOut, busy }: { s
 export function ConnectorsDialog({ ctl, onClose }: { ctl: SessionController; onClose(): void }) {
   const request = useMemo(() => ctl.request.bind(ctl), [ctl]);
   const m = useMcp(request);
+  const [tab, setTab] = useState("servers");
   const [q, setQ] = useState("");
   const shown = useMemo(() => m.servers.filter((s) => `${s.name} ${s.displayName ?? ""}`.toLowerCase().includes(q.toLowerCase())), [m.servers, q]);
   return (
     <Dialog title="Connectors" onClose={onClose} wide>
+      <div role="tablist" aria-label="Connector tabs"><button role="tab" aria-selected={tab === "servers"} onClick={() => setTab("servers")}>Installed</button><button role="tab" aria-selected={tab === "catalog"} onClick={() => setTab("catalog")}>Catalog</button></div>
+      {tab === "catalog" ? <ConnectorCatalog request={request} busy={m.busy} onAdd={m.addCatalog} /> : <>
       <div className="dlg-row">
         <input placeholder="Search" aria-label="Search connectors" value={q} onChange={(e) => setQ(e.target.value)} />
         <button onClick={() => void m.refresh()}>Refresh</button>
@@ -172,8 +173,9 @@ export function ConnectorsDialog({ ctl, onClose }: { ctl: SessionController; onC
       <h4>MCP Servers ({m.servers.length})</h4>
       {m.summary?.configError && <div className="banner warn" role="status">{m.summary.configError.path}: {m.summary.configError.message}</div>}
       <ServerList servers={shown} busy={m.busy} onRemove={(n) => void m.remove(n)} onSignIn={(n) => void m.signIn(n)} onSignOut={(n) => void m.signOut(n)} />
-      <McpLoginPanel login={m.login} onCancel={m.stopWaiting} />
       <AddServerForm busy={m.busy} onAdd={m.add} />
+      </>}
+      <McpLoginPanel login={m.login} onCancel={() => void m.cancelLogin()} />
       {m.error && <div className="banner error" role="alert">{m.error}</div>}
       <div className="dialog-actions"><button onClick={onClose}>Close</button></div>
     </Dialog>
@@ -183,9 +185,8 @@ export function ConnectorsDialog({ ctl, onClose }: { ctl: SessionController; onC
 // ------------------------------------------------------------------ Skills
 
 interface SkillView { name: string; description: string; bucket: string; status: string; filePath: string; body: string; errors: string[]; userInvocable: boolean }
-type SkillTab = "All" | "User" | "Project" | "Built-in";
-/** Where a skill comes from: built-in (bundled), project (<repo>/.rigwell/skills and friends) or user ($RIGWELL_HOME/skills and friends). */
-export const skillTab = (s: { bucket: string }): Exclude<SkillTab, "All"> => (s.bucket === "builtin" ? "Built-in" : s.bucket === "project-dir" ? "Project" : "User");
+type SkillTab = "All" | "Personal" | "Built-in";
+export const skillTab = (s: { bucket: string }): SkillTab => (s.bucket === "builtin" ? "Built-in" : "Personal");
 
 /** Skills come from the shared registry in the main process (no daemon method lists them). `list_tools` only tells whether the Skill tool is exposed. */
 export function SkillsDialog({ ctl, cwd, onClose }: { ctl?: SessionController; cwd: string; onClose(): void }) {
@@ -194,80 +195,31 @@ export function SkillsDialog({ ctl, cwd, onClose }: { ctl?: SessionController; c
   const [q, setQ] = useState("");
   const [tab, setTab] = useState<SkillTab>("All");
   const [sel, setSel] = useState<string>();
-  const [creating, setCreating] = useState(false);
-  const reload = useCallback(() => bridge().skills.list(cwd).then(setSkills).catch(() => setSkills([])), [cwd]);
-  useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => { void bridge().skills.list(cwd).then(setSkills).catch(() => setSkills([])); }, [cwd]);
   useEffect(() => { void ctl?.request("list_tools").then((r) => setToolOn((r.tools ?? []).some((t: any) => t.id === "Skill"))).catch(() => {}); }, [ctl]);
-  if (creating) return <CreateSkillDialog cwd={cwd} skills={skills} onClose={() => setCreating(false)} onCreated={(file) => { setCreating(false); setQ(""); setTab("All"); setSel(file); void reload(); }} />;
   const rows = skills.filter((s) => (tab === "All" || skillTab(s) === tab) && `${s.name} ${s.description}`.toLowerCase().includes(q.toLowerCase()));
   const cur = skills.find((s) => s.filePath === sel) ?? rows[0];
   return (
     <Dialog title="Skills" onClose={onClose} wide>
       <div className="dlg-row">
         <input placeholder="Search skills" aria-label="Search skills" value={q} onChange={(e) => setQ(e.target.value)} />
-        <div className="seg" role="tablist">{(["All", "User", "Project", "Built-in"] as SkillTab[]).map((t) => <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t}</button>)}</div>
-        <button onClick={() => setCreating(true)}>Create skill</button>
+        <div className="seg" role="tablist">{(["All", "Personal", "Built-in"] as SkillTab[]).map((t) => <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t}</button>)}</div>
       </div>
       {toolOn === false && <div className="banner warn small" role="status">The Skill tool is not available to the agent in this session, so skills are listed but cannot be loaded by the model.</div>}
       <div className="skills">
         <ul className="plain-list skill-list" aria-label="Skills">
           {rows.map((s) => (
             <li key={s.filePath}><button className={`side-row ${cur?.filePath === s.filePath ? "on" : ""}`} onClick={() => setSel(s.filePath)}>
-              <span className="side-title">{s.name}</span><span className="muted small skill-src">{skillTab(s)}</span>{s.status !== "enabled" && <span className="muted small">{s.status}</span>}
+              <span className="side-title">{s.name}</span><span className="muted small">{s.status === "enabled" ? skillTab(s) : s.status}</span>
             </button></li>
           ))}
-          {!rows.length && <li className="muted pad">No skills found. Use Create skill, or add a folder with a SKILL.md under ~/.rigwell/skills or .rigwell/skills.</li>}
+          {!rows.length && <li className="muted pad">No skills found. Add a folder with a SKILL.md under ~/.rigwell/skills or .rigwell/skills.</li>}
         </ul>
         <div className="skill-preview">
-          {cur ? (<><h4>{cur.name}</h4><p className="muted">{cur.description}</p>{cur.errors.length > 0 && <p className="error-text small">{cur.errors.join(" ")}</p>}<pre className="code-block" aria-label="SKILL.md body">{cur.body}</pre><div className="muted small">{cur.filePath}</div></>) : <div className="muted pad">Select a skill to view its SKILL.md.</div>}
+          {cur ? (<><h4>{cur.name}</h4><p className="muted">{cur.description}</p>{cur.errors.length > 0 && <p className="error-text small">{cur.errors.join(" ")}</p>}<pre className="code-block">{cur.body}</pre><div className="muted small">{cur.filePath}</div></>) : <div className="muted pad">Select a skill to preview its SKILL.md.</div>}
         </div>
       </div>
       <div className="dialog-actions"><button onClick={onClose}>Close</button></div>
-    </Dialog>
-  );
-}
-
-/** Create skill: writes SKILL.md under the user or project skills folder. An existing skill is only replaced after a second click on Replace. */
-function CreateSkillDialog({ cwd, skills, onClose, onCreated }: { cwd: string; skills: SkillView[]; onClose(): void; onCreated(filePath: string): void }) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [body, setBody] = useState("");
-  const [scope, setScope] = useState<"user" | "project">("user");
-  const [error, setError] = useState("");
-  const [exists, setExists] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const nameErr = name ? validateSkillName(name) : "";
-  const clash = skills.find((s) => s.name === name);
-  const save = async (overwrite: boolean) => {
-    const errs = validateNewSkill({ name, description, body });
-    if (errs.length) { setError(errs.join(" ")); return; }
-    setBusy(true); setError("");
-    try {
-      const r = await bridge().skills.create(cwd, { name, description, body, scope, overwrite });
-      if (r.ok) onCreated(r.filePath);
-      else { setExists(!!r.exists); setError(r.error); }
-    } catch (e) { setError((e as Error).message); }
-    setBusy(false);
-  };
-  return (
-    <Dialog title="Create skill" onClose={onClose} wide>
-      <label className="field">Name<input aria-label="Skill name" placeholder="code-review" value={name} onChange={(e) => { setName(e.target.value.trim()); setExists(false); setError(""); }} /></label>
-      {nameErr && <div className="error-text small" role="alert">{nameErr}</div>}
-      {!nameErr && clash && <div className="muted small" role="status">A {skillTab(clash).toLowerCase()} skill named {name} exists. A project skill replaces a user or built-in one with the same name when it loads.</div>}
-      <label className="field">Description<input aria-label="Skill description" placeholder="When the agent should use this skill" value={description} onChange={(e) => setDescription(e.target.value)} /></label>
-      <div className="field">Scope
-        <div className="seg" role="radiogroup" aria-label="Scope">
-          <button role="radio" aria-checked={scope === "user"} className={scope === "user" ? "on" : ""} onClick={() => { setScope("user"); setExists(false); }}>User (all projects)</button>
-          <button role="radio" aria-checked={scope === "project"} className={scope === "project" ? "on" : ""} onClick={() => { setScope("project"); setExists(false); }}>Project (this folder)</button>
-        </div>
-      </div>
-      <label className="field">Instructions<textarea aria-label="Skill instructions" placeholder="Steps and rules the agent follows when this skill is loaded" value={body} onChange={(e) => setBody(e.target.value)} /></label>
-      {error && <div className="banner error" role="alert">{error}</div>}
-      <div className="dialog-actions">
-        <button onClick={onClose}>Cancel</button>
-        {exists ? <button className="primary" disabled={busy} onClick={() => void save(true)}>Replace existing skill</button>
-          : <button className="primary" disabled={busy || !!nameErr} onClick={() => void save(false)}>Create</button>}
-      </div>
     </Dialog>
   );
 }

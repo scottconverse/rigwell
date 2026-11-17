@@ -39,6 +39,7 @@ export class CdpConnection {
   private listeners = new Set<(method: string, params: any, sessionId?: string) => void>();
   closed = false;
   onClose?: () => void;
+  trace: (message: string) => void = () => {};
 
   static async connect(url: string, timeoutMs = 10_000): Promise<CdpConnection> {
     const c = new CdpConnection();
@@ -49,12 +50,7 @@ export class CdpConnection {
       c.ws.onerror = () => { clearTimeout(t); reject(new Error(`Could not connect to ${url}`)); };
     });
     c.ws.onmessage = (ev) => c.onMessage(typeof ev.data === "string" ? ev.data : new TextDecoder().decode(ev.data as ArrayBuffer));
-    c.ws.onclose = () => {
-      c.closed = true;
-      for (const p of c.pending.values()) p.reject(new Error(`Browser connection closed during ${p.method}`));
-      c.pending.clear();
-      c.onClose?.();
-    };
+    c.ws.onclose = () => c.finish();
     return c;
   }
 
@@ -64,27 +60,44 @@ export class CdpConnection {
     if (typeof m.id === "number") {
       const p = this.pending.get(m.id);
       if (!p) return;
+      this.trace(`CDP reply ${m.id} ${p.method}${m.error ? " error" : ""}`);
       this.pending.delete(m.id);
       if (m.error) p.reject(new Error(`${p.method}: ${m.error.message ?? "CDP error"}`));
       else p.resolve(m.result ?? {});
     } else if (m.method) {
+      if (m.method === "Network.requestWillBeSent") {
+        try { const url = new URL(m.params?.request?.url); this.trace(`CDP request ${m.params?.type} ${url.protocol}//${url.host}`); } catch {}
+      }
+      if (/^(Page\.(?:frameStartedLoading|frameStoppedLoading|frameNavigated|loadEventFired)|Fetch\.requestPaused|Network\.loadingFailed|Target\.detachedFromTarget)$/.test(m.method)) this.trace(`CDP event ${m.method} session=${m.sessionId ?? "browser"}`);
       for (const l of this.listeners) l(m.method, m.params, m.sessionId);
     }
   }
 
-  send<T = any>(method: string, params: Record<string, unknown> = {}, sessionId?: string, timeoutMs = 30_000): Promise<T> {
+  send<T = any>(method: string, params: Record<string, unknown> = {}, sessionId?: string, timeoutMs = 30_000, signal?: AbortSignal): Promise<T> {
     if (this.closed) return Promise.reject(new Error("Browser connection is closed"));
+    if (signal?.aborted) return Promise.reject(new Error(`${method} cancelled`));
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
-      const t = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method} timed out`)); }, timeoutMs);
-      this.pending.set(id, { method, resolve: (v) => { clearTimeout(t); resolve(v); }, reject: (e) => { clearTimeout(t); reject(e); } });
-      this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+      const cleanup = () => { clearTimeout(t); signal?.removeEventListener("abort", abort); this.pending.delete(id); };
+      const abort = () => { cleanup(); reject(new Error(`${method} cancelled`)); };
+      const t = setTimeout(() => { cleanup(); reject(new Error(`${method} timed out`)); }, timeoutMs);
+      this.pending.set(id, { method, resolve: (v) => { cleanup(); resolve(v); }, reject: (e) => { cleanup(); reject(e); } });
+      signal?.addEventListener("abort", abort, { once: true });
+      this.trace(`CDP send ${id} ${method}`);
+      try { this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })); }
+      catch (error) { cleanup(); reject(error); }
     });
   }
 
   on(l: (method: string, params: any, sessionId?: string) => void) { this.listeners.add(l); return () => this.listeners.delete(l); }
 
-  close() { this.closed = true; try { this.ws.close(); } catch {} }
+  private finish() {
+    if (this.closed) return;
+    this.closed = true;
+    for (const p of this.pending.values()) p.reject(new Error(`Browser connection closed during ${p.method}`));
+    this.pending.clear(); this.listeners.clear(); this.onClose?.();
+  }
+  close() { this.finish(); try { this.ws.close(); } catch {} }
 }
 
 // Runs in the page: numbers interactive elements and returns a compact description.
@@ -119,7 +132,7 @@ export class BrowserService {
   private idleTimer?: ReturnType<typeof setTimeout>;
   readonly screenshotDir: string;
 
-  constructor(private opts: { cdpUrl: string; idleMs?: number; screenshotDir?: string; log?: (m: string) => void }) {
+  constructor(private opts: { cdpUrl: string; browserContextId?: string; idleMs?: number; screenshotDir?: string; log?: (m: string) => void }) {
     this.screenshotDir = opts.screenshotDir ?? join(rigwellHome(), "browser-screenshots");
   }
 
@@ -145,13 +158,16 @@ export class BrowserService {
     if (this.conn && !this.conn.closed) return this.conn;
     this.sessions.clear();
     this.conn = await CdpConnection.connect(this.opts.cdpUrl);
+    this.conn.trace = this.opts.log ?? (() => {});
     return this.conn;
   }
 
   async tabs(): Promise<TabInfo[]> {
     const c = await this.cdp();
     const { targetInfos } = await c.send<{ targetInfos: any[] }>("Target.getTargets");
-    const pages = targetInfos.filter((t) => t.type === "page" && !String(t.url).startsWith("devtools://"));
+    const pages = targetInfos.filter((t) => t.type === "page" && !String(t.url).startsWith("devtools://") && (!this.opts.browserContextId || t.browserContextId === this.opts.browserContextId));
+    const visibleActive = pages.find((p) => p.rigwellActive);
+    if (visibleActive) this.activeTarget = visibleActive.targetId;
     if (!this.activeTarget || !pages.some((p) => p.targetId === this.activeTarget)) this.activeTarget = pages[0]?.targetId;
     return pages.map((p) => ({ id: p.targetId, title: p.title, url: p.url, active: p.targetId === this.activeTarget }));
   }
@@ -166,7 +182,7 @@ export class BrowserService {
 
   async newTab(url = "about:blank"): Promise<string> {
     const c = await this.cdp();
-    const { targetId } = await c.send<{ targetId: string }>("Target.createTarget", { url });
+    const { targetId } = await c.send<{ targetId: string }>("Target.createTarget", { url, ...(this.opts.browserContextId ? { browserContextId: this.opts.browserContextId } : {}) });
     this.activeTarget = targetId;
     return targetId;
   }
@@ -175,6 +191,7 @@ export class BrowserService {
     const c = await this.cdp();
     const t = id ?? this.activeTarget;
     if (!t) throw new Error("No tab to close");
+    if (this.opts.browserContextId && !(await this.tabs()).some((p) => p.id === t)) throw new Error(`No tab with id ${t} in this browser context`);
     await c.send("Target.closeTarget", { targetId: t });
     this.sessions.delete(t);
     if (this.activeTarget === t) this.activeTarget = undefined;
@@ -204,16 +221,29 @@ export class BrowserService {
     return r.result?.value;
   }
 
-  /** Navigates and waits for the load event (or a 15 s cap). */
-  async navigate(url: string) {
+  /** Shared CDP session for the named agent tools; it is also used by the desktop pane. */
+  pageEndpoint() { return this.page(); }
+
+  /** Navigates and waits for load, with an explicit bounded error and cancellation. */
+  async navigate(url: string, signal?: AbortSignal) {
     const { c, sid } = await this.page();
-    const loaded = new Promise<void>((resolve) => {
-      const off = c.on((m, _p, s) => { if (s === sid && m === "Page.loadEventFired") { off(); resolve(); } });
-      setTimeout(() => { off(); resolve(); }, 15_000);
-    });
-    const r = await c.send<any>("Page.navigate", { url }, sid);
-    if (r.errorText) throw new Error(`Navigation failed: ${r.errorText}`);
-    await loaded;
+    this.opts.log?.("navigation target ready");
+    let done!: () => void, fail!: (e: Error) => void;
+    const loaded = new Promise<void>((resolve, reject) => { done = resolve; fail = reject; });
+    // A command error can precede awaiting loaded; always observe its rejection.
+    void loaded.catch(() => {});
+    const off = c.on((m, _p, s) => { if (s === sid && m === "Page.loadEventFired") done(); });
+    const timer = setTimeout(() => fail(new Error("Browser navigation did not load within 15 seconds")), 15_000);
+    const abort = () => { void c.send("Page.stopLoading", {}, sid).catch(() => {}); fail(new Error("Browser navigation cancelled")); };
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      if (signal?.aborted) { abort(); await loaded; return; }
+      const r = await c.send<any>("Page.navigate", { url }, sid, 15_000, signal);
+      this.opts.log?.(`navigation response loader=${!!r.loaderId} error=${r.errorText ?? "none"}`);
+      if (r.errorText) throw new Error(`Navigation failed: ${r.errorText}`);
+      if (!r.loaderId) done(); // Same-document navigation has no load event.
+      await loaded;
+    } finally { clearTimeout(timer); off(); signal?.removeEventListener("abort", abort); }
   }
 
   async history(delta: -1 | 1) {

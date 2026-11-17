@@ -3,12 +3,13 @@
 import { readFileSync, statSync } from "node:fs";
 import { listSessions } from "./transcript.ts";
 import { readSessionSettings } from "./session-settings.ts";
-import { displayTitle, indexDbPath, openSessionIndex, queryPicker, refreshIndex } from "./session-index.ts";
+import { indexDbPath, openSessionIndex, queryPicker, refreshIndex } from "./session-index.ts";
 import { projectSlug } from "./paths.ts";
 import type { Database } from "bun:sqlite";
 import { type SearchHit, searchSessionIndex } from "./session-search.ts";
 
 export interface SessionListEntry {
+  source?: "slack" | "teams";
   sessionId: string;
   title: string;
   cwd: string;
@@ -18,8 +19,6 @@ export interface SessionListEntry {
   archivedAt: string | null;
   isSubagent: boolean;
   hasUserVisibleMessages: boolean;
-  /** Session this one was forked from (fork_session), when known. */
-  parent?: string;
 }
 
 const visibleCache = new Map<string, { mtimeMs: number; value: boolean; first: string }>();
@@ -46,6 +45,12 @@ function firstVisibleUserMessage(file: string, mtimeMs: number): { value: boolea
   return { value, first };
 }
 
+/** An untitled session shows the start of its first message. */
+function displayTitle(title: string, first: string): string {
+  if (title !== "New Session" || !first.trim()) return title;
+  const one = first.trim().replace(/\s+/g, " ");
+  return one.length > 80 ? one.slice(0, 79) + "..." : one;
+}
 
 const indexes = new Map<string, Database>();
 
@@ -58,7 +63,8 @@ function listFromIndex(o: { cwd?: string; includeArchived?: boolean; includeBtwF
     refreshIndex(db, o.cwd ? projectSlug(o.cwd) : undefined);
     return queryPicker(db, o).map((r) => ({
       sessionId: r.sessionId, title: displayTitle(r.title, r.preview), cwd: r.cwd, updatedAt: new Date(r.lastEventAt).toISOString(), pinned: r.pinned,
-      archivedAt: r.archivedAt, isSubagent: false, hasUserVisibleMessages: true, ...(r.parent ? { parent: r.parent } : {}),
+      archivedAt: r.archivedAt, isSubagent: false, hasUserVisibleMessages: true,
+      ...(r.tags["delegation-slack"] ? { source: "slack" as const } : r.tags["delegation-teams"] ? { source: "teams" as const } : {}),
     }));
   } catch (e) {
     try { db.close(); } catch { /* already closed */ }
@@ -99,6 +105,7 @@ export function scanSessionEntries(o: { cwd?: string; includeArchived?: boolean;
     if (!o.includeBtwForks && tags.some((t) => t?.name === "btw-fork")) continue;
     if (archivedAt && !o.includeArchived) continue;
     rows.push({
+      ...(tags.some((t) => t?.name === "delegation-slack") ? { source: "slack" as const } : tags.some((t) => t?.name === "delegation-teams") ? { source: "teams" as const } : {}),
       sessionId: s.id, title: displayTitle(typeof settings.title === "string" && settings.title ? settings.title : s.title, first), cwd: s.cwd ?? "",
       updatedAt: new Date(s.mtimeMs).toISOString(), pinned: settings.pinned === true, archivedAt, isSubagent, hasUserVisibleMessages: visible,
     });

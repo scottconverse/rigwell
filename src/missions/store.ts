@@ -29,6 +29,8 @@ export interface StateFile {
   lastReviewedHandoffCount: number;
   initialFeatureCount: number;
   featureRetryBudgetBonus: Record<string, number>;
+  /** A paused worker resumes on its original host and repository even if defaults change. */
+  workerLocations?: Record<string, { machine?: string; cwd: string }>;
   /** Why the mission is paused (extra field; absent otherwise). */
   pauseReason?: string;
   /** Set once the scope-growth pause has fired. */

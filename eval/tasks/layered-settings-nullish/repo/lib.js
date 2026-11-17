@@ -1,0 +1,1 @@
+import {defaults} from './defaults.js';export const resolveSettings=(u,p)=>({theme:p.theme||u.theme||defaults.theme,retries:p.retries||u.retries||defaults.retries,enabled:p.enabled||u.enabled||defaults.enabled});

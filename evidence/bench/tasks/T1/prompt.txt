@@ -1,0 +1,4 @@
+The logs/ folder holds 300 CI job logs. A job's result is the LAST line in its file that starts with
+"STATUS:". Earlier STATUS lines are from retries and do not count. Write report.json in the repository
+root with exactly this shape: {"failed_count": <int>, "failed_jobs": [<job ids, sorted ascending>]}.
+A job id is the file name without ".log". Do not change the logs.

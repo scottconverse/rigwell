@@ -1,0 +1,8 @@
+job job-156 started on runner-9
+step 0: lint ok
+step 1: lint ok
+step 2: compile ok
+step 3: tests: 41 passed
+step 4: download 12MB
+STATUS: PASSED
+summary: see artifacts

@@ -1,0 +1,19 @@
+job job-206 started on runner-6
+step 0: warning: FAILED to fetch optional mirror, using default
+step 1: tests: 41 passed
+step 2: lint ok
+step 3: compile ok
+step 4: download 12MB
+step 5: warning: FAILED to fetch optional mirror, using default
+step 6: warning: FAILED to fetch optional mirror, using default
+step 7: cache hit
+step 8: compile ok
+step 9: download 12MB
+step 10: compile ok
+step 11: download 12MB
+STATUS: PASSED
+retrying (attempt 2)
+STATUS: PASSED
+retrying (attempt 3)
+STATUS: PASSED
+summary: see artifacts

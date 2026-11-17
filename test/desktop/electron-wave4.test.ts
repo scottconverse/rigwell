@@ -4,16 +4,16 @@
 // Skipped, with the reason printed, when Electron, Playwright or an X server are not available.
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import { startFakeOAuth, type FakeOAuth } from "../fakes/fake-oauth.ts";
-import { startFakeMcpOAuth } from "../fakes/fake-mcp-oauth.ts";
 import type { FakeServer, FakeTurn } from "../fakes/types.ts";
 import { CLI, makeHome, makeRepo } from "../e2e/helpers.ts";
 import { deriveKey } from "../../src/sidepane/chrome-cookies.ts";
 import { makeCookieDb, SECRET_SESSION_VALUE } from "./cookie-fixture.ts";
-import { diagnose, electronStatus, sleep, withDiagnosis } from "./helpers.ts";
+import { closeElectron, diagnose, electronStatus, sleep, withDiagnosis } from "./helpers.ts";
+import { jsCommand } from "../platform.ts";
 
 const desktop = join(import.meta.dir, "../../desktop");
 const { pw, electronBin, reason } = electronStatus("electron wave 4 test");
@@ -24,8 +24,8 @@ const textOf = (m: any) => (typeof m.content === "string" ? m.content : (m.conte
 const SECRET_VALUE = "sk-test-0123456789abcdef";
 
 maybe("desktop app: wave 4 features", () => {
-  let fake: FakeServer, idp: FakeOAuth, mcpIdp: ReturnType<typeof startFakeMcpOAuth>, xvfb: ChildProcess | undefined, app: any, page: any;
-  let repo: string, home: string, display: string, chromeDir: string, sttDir: string, sttProgram: string;
+  let fake: FakeServer, idp: FakeOAuth, xvfb: ChildProcess | undefined, app: any, page: any;
+  let repo: string, home: string, display: string, chromeDir: string, sttDir: string, sttCommand: string;
   let stderr = "";
 
   const hook = <T>(fn: string, ...args: unknown[]): Promise<T> => app.evaluate((_e: unknown, a: { fn: string; args: unknown[] }) => (globalThis as any).__rigwellTest[a.fn](...a.args), { fn, args });
@@ -35,13 +35,17 @@ maybe("desktop app: wave 4 features", () => {
     const ta = page.getByLabel("Message").first();
     await ta.fill(text);
     await page.locator('button[aria-label="Send"]:not([disabled])').first().waitFor({ timeout: 10_000 });
-    await ta.press("Enter");
+    await page.locator('button[aria-label="Send"]:not([disabled])').first().click();
   };
   const newSession = async () => {
     await go("/?folder=" + encodeURIComponent(repo));
     await page.locator(".home .composer[data-ready=true]").waitFor({ timeout: 30_000 });
   };
-  const why = (label: string, fn: () => Promise<unknown>) => withDiagnosis(page, home, () => ({ label, requests: fake.requests.length }), fn);
+  const why = (label: string, fn: () => Promise<unknown>) => withDiagnosis(page, home, async () => ({
+    label, requests: fake.requests.length,
+    windows: await app.evaluate(({ BrowserWindow }: any) => BrowserWindow.getAllWindows().map((w: any) => ({ visible: w.isVisible(), focused: w.isFocused(), minimized: w.isMinimized(), bounds: w.getBounds() }))),
+    pageState: await page.evaluate(() => ({ visibility: document.visibilityState, focused: document.hasFocus() })),
+  }), fn);
 
   beforeAll(async () => {
     spawnSync("bun", ["run", "build.ts"], { cwd: desktop, stdio: "ignore" });
@@ -63,29 +67,25 @@ maybe("desktop app: wave 4 features", () => {
     const settings = JSON.parse(readFileSync(settingsFile, "utf8"));
     settings.oauthProviders = { acme: { clientId: "own-client", authorizationEndpoint: `${idp.url}/authorize`, tokenEndpoint: `${idp.url}/token`, deviceAuthorizationEndpoint: `${idp.url}/device`, scopes: ["models.read"] } };
     writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
-    // An http MCP server that needs OAuth sign-in (decision 347: the Sign in button).
-    mcpIdp = startFakeMcpOAuth();
-    writeFileSync(join(home, "mcp.json"), JSON.stringify({ mcpServers: { acmemcp: { type: "http", url: mcpIdp.url } } }));
 
     // A fake speech-to-text program and a synthetic Chrome profile.
     sttDir = join(home, "stt");
     mkdirSync(sttDir, { recursive: true });
-    // Windows cannot run a #!/bin/sh script, so there the fake is a .cmd file with the same rule: text only for a non-empty file.
-    sttProgram = join(sttDir, process.platform === "win32" ? "fake-stt.cmd" : "fake-stt");
-    writeFileSync(sttProgram, process.platform === "win32"
-      ? '@echo off\r\nfor %%A in ("%~1") do if %%~zA gtr 0 echo dictated words from the fake backend\r\n'
-      : '#!/bin/sh\nif [ -s "$1" ]; then echo "dictated words from the fake backend"; fi\n');
-    chmodSync(sttProgram, 0o755);
+    sttCommand = jsCommand(sttDir, 'if (require("fs").statSync(process.argv[2]).size) console.log("dictated words from the fake backend");');
     chromeDir = join(home, "chrome");
     mkdirSync(join(chromeDir, "Default", "Network"), { recursive: true });
     writeFileSync(join(chromeDir, "Local State"), JSON.stringify({ profile: { info_cache: { Default: { name: "Work" } } } }));
-    makeCookieDb(join(chromeDir, "Default", "Network", "Cookies"), deriveKey("peanuts", "linux"), true);
+    makeCookieDb(join(chromeDir, "Default", "Network", "Cookies"), deriveKey("peanuts", process.platform), true);
+    if (process.platform === "darwin") {
+      // Synthetic fixture key only; never query the signed-in user's browser Keychain entry.
+      writeFileSync(join(sttDir, "security"), '#!/bin/sh\ncase "$*" in *"Chrome Safe Storage"*) printf peanuts;; *) exit 1;; esac\n', { mode: 0o755 });
+    }
 
     // The organization sets `missions` and an autonomy ceiling: the settings pages say so.
     const orgFile = join(home, "org-settings.json");
     writeFileSync(orgFile, JSON.stringify({ managedSettings: { missions: { skipScrutiny: false }, maxAutonomyLevel: "high" } }));
 
-    display = process.env.DISPLAY || `:${60 + Math.floor(Math.random() * 9)}`;
+    display = process.env.DISPLAY || (process.platform === "linux" ? `:${60 + Math.floor(Math.random() * 9)}` : "");
     if (process.platform === "linux" && !process.env.DISPLAY) {
       xvfb = spawn("Xvfb", [display, "-screen", "0", "1280x900x24"], { stdio: "ignore" });
       for (let i = 0; i < 50 && !existsSync(`/tmp/.X11-unix/X${display.slice(1)}`); i++) await sleep(100);
@@ -95,28 +95,30 @@ maybe("desktop app: wave 4 features", () => {
       RIGWELL_TEST_HOOKS: "1", RIGWELL_FAKE_AUDIO: "1", RIGWELL_CHROME_USER_DATA_DIR: chromeDir, RIGWELL_ORG_MANAGED_SETTINGS_LOCAL_PATH: orgFile,
     };
     delete env.NODE_OPTIONS;
-    app = await pw._electron.launch({ executablePath: electronBin, args: ["--no-sandbox", desktop, `--route=/?folder=${encodeURIComponent(repo)}`], env, timeout: 60_000 });
+    if (process.platform === "darwin") env.PATH = `${sttDir}:${env.PATH}`;
+    app = await pw._electron.launch({ executablePath: electronBin, args: ["--no-sandbox", ...(process.platform === "darwin" ? ["--use-mock-keychain"] : []), desktop, `--route=/?folder=${encodeURIComponent(repo)}`], env, timeout: 60_000 });
     app.process().stderr?.on("data", (b: Buffer) => { stderr += b.toString(); });
     page = await app.firstWindow();
     await page.waitForSelector(".dot.running", { timeout: 40_000 });
+    expect(await app.evaluate(({ BrowserWindow }: any) => BrowserWindow.getAllWindows()[0].isVisible())).toBe(true);
   });
 
   afterAll(async () => {
-    await app?.close().catch(() => {});
+    await closeElectron(app).catch(() => {});
     xvfb?.kill();
-    fake?.stop(); idp?.stop(); mcpIdp?.stop();
+    fake?.stop(); idp?.stop();
   });
 
   test("dictation: the button explains how to enable it, then a fake backend turns a recording into text", async () => {
     await page.locator(".home .composer[data-ready=true]").waitFor({ timeout: 30_000 });
-    await page.getByRole("button", { name: "Dictate", exact: true }).click();
+    await why("first dictation click", () => page.getByRole("button", { name: "Dictate", exact: true }).click());
     const note = page.getByRole("status", { name: "Dictation" });
     await note.waitFor({ timeout: 10_000 });
     expect(await note.textContent()).toContain("whisper.cpp");
     await note.getByRole("button", { name: "Close" }).click();
 
     // Configure the fake backend the way the settings page would (the desktop settings file).
-    await page.evaluate((cmd: string) => (window as any).rigwell.settings.update({ dictation: { backend: "command", command: cmd } }), `${sttProgram} {file}`);
+    await page.evaluate((cmd: string) => (window as any).rigwell.settings.update({ dictation: { backend: "command", command: cmd } }), `${sttCommand} {file}`);
     await page.getByRole("button", { name: "Dictate", exact: true }).click();
     await page.getByRole("button", { name: "Stop dictation" }).waitFor({ timeout: 15_000 });
     await sleep(1200); // a moment of (fake) microphone audio
@@ -189,32 +191,6 @@ maybe("desktop app: wave 4 features", () => {
     await page.locator('tr[data-provider="acme"] [data-testid="provider-status"]', { hasText: "Signed out" }).waitFor({ timeout: 20_000 });
   }, 150_000);
 
-  test("connectors: Sign in to an MCP server that needs OAuth, then Sign out", async () => {
-    await newSession();
-    await send("hello connectors");
-    await why("reply", () => page.getByText("hi there").first().waitFor({ timeout: 30_000 }));
-    await page.getByRole("button", { name: "Connectors", exact: true }).click();
-    const dlg = page.getByRole("dialog", { name: "Connectors" });
-    const row = dlg.locator("li.srv", { hasText: "acmemcp" });
-    await why("needs sign-in", () => row.getByText("needs sign-in").waitFor({ timeout: 30_000 }));
-    const before = (await hook<string[]>("opened")).length;
-    await row.getByRole("button", { name: "Sign in to acmemcp" }).click();
-    await why("mcp login panel", () => dlg.locator('[data-testid="mcp-login-url"]').waitFor({ timeout: 20_000 }));
-    await why("opened mcp url", async () => { for (let i = 0; i < 50; i++) { if ((await hook<string[]>("opened")).length > before) return; await sleep(100); } throw new Error("no URL was opened"); });
-    const url = (await hook<string[]>("opened")).at(-1)!;
-    expect(url).toStartWith(`${mcpIdp.origin}/authorize`);
-    const r1 = await fetch(url, { redirect: "manual" }); // plays the browser: authorize, then the loopback callback
-    expect(r1.status).toBe(302);
-    expect((await fetch(r1.headers.get("location")!)).status).toBe(200);
-    await why("connected", () => row.getByText(/connected/).waitFor({ timeout: 40_000 }));
-    await dlg.locator('[data-testid="mcp-login-panel"]').waitFor({ state: "detached", timeout: 20_000 });
-    expect(await row.getByRole("button", { name: "Sign in to acmemcp" }).count()).toBe(0);
-    expect(await page.locator("body").innerText()).not.toMatch(/mcp-access-|mcp-refresh-/); // no token reaches the page
-    await row.getByRole("button", { name: "Sign out of acmemcp" }).click();
-    await why("signed out", () => row.getByRole("button", { name: "Sign in to acmemcp" }).waitFor({ timeout: 20_000 }));
-    await dlg.getByRole("button", { name: "Close" }).click();
-  }, 150_000);
-
   test("automations: create from a template, view the overview page, start guided setup", async () => {
     await go("/automations");
     await page.getByRole("button", { name: "From a template" }).click();
@@ -247,6 +223,8 @@ maybe("desktop app: wave 4 features", () => {
   }, 150_000);
 
   test("tray: menu items, show or hide, active session count and the attention badge", async () => {
+    // The preceding setup text is streamed before its turn finishes. Check the idle baseline only after that state arrives.
+    await why("setup turn idle", async () => { for (let i = 0; i < 100; i++) { if ((await hook<any>("tray")).icon === "idle") return; await sleep(100); } throw new Error("setup turn never went idle"); });
     const t0 = await hook<any>("tray");
     expect(t0.created).toBe(true);
     expect(t0.items.map((i: any) => i.label).filter(Boolean)).toEqual(["Hide Rigwell", "Active sessions: 0", "Nothing needs your attention", "Quit Rigwell"]);
@@ -299,16 +277,6 @@ maybe("desktop app: wave 4 features", () => {
     await page.keyboard.press("Control+Shift+B");
     await page.getByRole("button", { name: "Import cookies" }).click();
     const dlg = page.getByRole("dialog", { name: "Import cookies from Chrome" });
-    if (process.platform === "win32") {
-      // Windows Chrome protects cookies with DPAPI, which is not supported (decision 294). The dialog says so when it
-      // opens, before any profile or site is picked, and offers no picker and no Import button. Nothing is copied.
-      await why("windows refusal", () => dlg.getByRole("status").getByText(/not supported on Windows/).waitFor({ timeout: 30_000 }));
-      expect(await dlg.getByLabel("Chrome profile").count()).toBe(0);
-      expect(await dlg.getByRole("button", { name: /^Import/ }).count()).toBe(0);
-      const winJar = await app.evaluate(async ({ session }: any) => (await session.fromPartition("persist:browserpanel").cookies.get({})).map((c: any) => c.name));
-      expect(winJar).not.toContain("sid");
-      return;
-    }
     await dlg.getByLabel("Chrome profile").selectOption({ label: "Chrome: Work" });
     await dlg.getByRole("button", { name: "Show sites" }).click();
     await why("sites list", () => dlg.getByText("other.org").waitFor({ timeout: 20_000 }));
@@ -318,6 +286,14 @@ maybe("desktop app: wave 4 features", () => {
     expect(await dlg.getByRole("group", { name: "Sites" }).getByText("other.org").count()).toBe(0);
     for (const d of ["example.com", "app.example.com", "plain.example.com"]) await dlg.getByRole("group", { name: "Sites" }).getByLabel(new RegExp(`^${d.replace(/\./g, "\\.")}`)).check();
     await dlg.getByRole("button", { name: /^Import 3 sites/ }).click();
+    if (process.platform === "win32") {
+      await dlg.getByRole("alert").getByText(/not supported on Windows/).waitFor();
+      const cookies = await app.evaluate(async ({ session }: any) => await session.fromPartition("persist:browserpanel").cookies.get({}));
+      expect(cookies).toEqual([]);
+      expect(stderr).not.toContain(SECRET_SESSION_VALUE);
+      await dlg.getByRole("button", { name: "Close", exact: true }).click();
+      return;
+    }
     await why("import summary", () => dlg.getByText(/Imported 3 cookies/).waitFor({ timeout: 30_000 }));
     expect(await dlg.textContent()).toContain("1 could not be decrypted");
 
@@ -331,6 +307,15 @@ maybe("desktop app: wave 4 features", () => {
     expect(stderr).not.toContain(SECRET_SESSION_VALUE);
     expect(stderr).toContain("[cookies] imported 3 cookies");
   }, 120_000);
+
+  test("Help opens all nine offline Academy tutorials without starting a model request", async () => {
+    const before = fake.requests.length;
+    await app.evaluate(({ Menu }: any) => { const item = Menu.getApplicationMenu()?.getMenuItemById("academy"); if (!item) throw new Error("Academy Help entry missing"); item.click(); });
+    await page.getByRole("heading", { name: "Academy", exact: true }).waitFor();
+    const nav = page.getByRole("navigation", { name: "Academy lessons" }); await nav.getByRole("button", { name: "Models and keys", exact: true }).click();
+    await page.getByRole("article", { name: "Tutorial" }).getByText(/Subscription access and separately billed API access/).waitFor();
+    expect(await nav.getByRole("button").count()).toBe(9); expect(fake.requests.length).toBe(before);
+  });
 
   test("on failure the helpers still work (diagnose does not throw)", async () => {
     expect(await diagnose(page, home)).toContain("daemon stderr tail");

@@ -71,4 +71,20 @@ maybe("CDP proxy (spec 17.3)", () => {
       await b.closeTab(id);
     } finally { b.disconnect(); }
   }, 30_000);
+
+  test("session capabilities isolate targets on one port and revoke independently", async () => {
+    const target = (id: string) => ({ id, title: () => id, url: () => "about:blank", active: () => true, attach() {}, detach() {}, send: async () => ({}), onEvent: () => () => {} });
+    const host = (id: string) => ({ targets: () => [target(id)], createTab: async () => target(id), closeTab: async () => {}, activateTab() {} });
+    const a = proxy.registerHost(host("first")), b = proxy.registerHost(host("second"));
+    const ca = await CdpConnection.connect(a.url), cb = await CdpConnection.connect(b.url);
+    try {
+      expect(validateCdpUrl(a.url, proxy.port)).toBe(a.url); expect(a.url).not.toBe(b.url);
+      expect((await ca.send<any>("Target.getTargets")).targetInfos.map((t: any) => t.targetId)).toEqual(["first"]);
+      expect((await cb.send<any>("Target.getTargets")).targetInfos.map((t: any) => t.targetId)).toEqual(["second"]);
+      let rejected: unknown;
+      try { await ca.send("Target.attachToTarget", { targetId: "second", flatten: true }); } catch (e) { rejected = e; }
+      expect(String(rejected)).toContain("No target"); a.close();
+      expect((await cb.send<any>("Target.getTargets")).targetInfos[0].targetId).toBe("second");
+    } finally { ca.close(); cb.close(); a.close(); b.close(); }
+  });
 });

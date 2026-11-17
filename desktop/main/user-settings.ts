@@ -6,6 +6,9 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { parseSpendLimits } from "../../src/spend/config.ts";
+import { parseFallbackModels } from "../../src/agent/fallback-config.ts";
+import { parseFeatures } from "../../src/features/config.ts";
 
 export const MASK_PREFIX = "****";
 type Json = Record<string, any>;
@@ -17,6 +20,17 @@ export function maskSecret(v: unknown): unknown {
   return MASK_PREFIX + v.slice(-4);
 }
 export const isMasked = (v: unknown) => typeof v === "string" && v.startsWith(MASK_PREFIX);
+const CLOUD_SECRETS = ["awsBearerToken", "awsAccessKeyId", "awsSecretAccessKey", "awsSessionToken", "awsCredentialExport", "awsAuthRefresh"];
+function maskFields(value: unknown, keys: string[]) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  for (const key of keys) if (key in value) (value as Json)[key] = maskSecret((value as Json)[key]);
+}
+function restoreFields(next: Json | undefined, before: Json | undefined, keys: string[]) {
+  if (!next || typeof next !== "object" || Array.isArray(next)) return;
+  for (const key of keys) if (isMasked(next[key])) {
+    if (before?.[key] !== undefined) next[key] = before[key]; else delete next[key];
+  }
+}
 
 export function maskSettings(s: Json): Json {
   const out = structuredClone(s);
@@ -24,9 +38,13 @@ export function maskSettings(s: Json): Json {
     for (const m of out.customModels) {
       if (!m || typeof m !== "object") continue;
       if (m.apiKey !== undefined) m.apiKey = maskSecret(m.apiKey);
+      if (m.apiKeyHelper !== undefined) m.apiKeyHelper = maskSecret(m.apiKeyHelper);
+      maskFields(m.bedrock, CLOUD_SECRETS);
       if (m.extraHeaders && typeof m.extraHeaders === "object") for (const k of Object.keys(m.extraHeaders)) m.extraHeaders[k] = maskSecret(m.extraHeaders[k]);
     }
   }
+  if (out.oauthProviders && typeof out.oauthProviders === "object")
+    for (const provider of Object.values(out.oauthProviders)) maskFields(provider, ["clientSecret"]);
   return out;
 }
 
@@ -54,6 +72,8 @@ function restoreSecrets(next: Json[], old: Json[]) {
     if (!m || typeof m !== "object") continue;
     const before = old.find((o) => o && o.model === m.model && o.baseUrl === m.baseUrl) ?? old.find((o) => o && o.model === m.model);
     if (isMasked(m.apiKey)) { if (before?.apiKey !== undefined) m.apiKey = before.apiKey; else delete m.apiKey; }
+    restoreFields(m, before, ["apiKeyHelper"]);
+    restoreFields(m.bedrock, before?.bedrock, CLOUD_SECRETS);
     if (m.extraHeaders && typeof m.extraHeaders === "object") {
       for (const k of Object.keys(m.extraHeaders)) {
         if (!isMasked(m.extraHeaders[k])) continue;
@@ -68,6 +88,9 @@ const BLOCKED = new Set(["__proto__", "constructor", "prototype"]);
 /** Top-level keys in `patch` replace the file's keys; `null` removes a key. Returns the masked result. */
 export function updateUserSettings(home: string, patch: unknown): Json {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new Error("patch must be an object");
+  if (Object.hasOwn(patch, "spendLimits")) parseSpendLimits((patch as Json).spendLimits);
+  if (Object.hasOwn(patch, "fallbackModels")) parseFallbackModels((patch as Json).fallbackModels);
+  if (Object.hasOwn(patch, "features")) parseFeatures((patch as Json).features);
   const cur = readRawSettings(home);
   for (const [k, v] of Object.entries(patch as Json)) {
     if (BLOCKED.has(k)) continue;
@@ -76,6 +99,12 @@ export function updateUserSettings(home: string, patch: unknown): Json {
       const next = structuredClone(v) as Json[];
       restoreSecrets(next, Array.isArray(cur.customModels) ? cur.customModels : []);
       cur.customModels = next;
+      continue;
+    }
+    if (k === "oauthProviders" && v && typeof v === "object" && !Array.isArray(v)) {
+      const next = structuredClone(v) as Json;
+      for (const name of Object.keys(next)) restoreFields(next[name], cur.oauthProviders?.[name], ["clientSecret"]);
+      cur[k] = next;
       continue;
     }
     cur[k] = v;

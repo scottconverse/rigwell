@@ -1,9 +1,10 @@
 // Local webhook receiver (spec §16.5): POST /hooks/<automationId> on 127.0.0.1. Auth is checked by the manager.
 import type { AutomationManager } from "./manager.ts";
+import type { Automation } from "./store.ts";
 
 export interface WebhookServer { port: number; host: string; stop(): void }
 
-export function startWebhookServer(mgr: AutomationManager, opts: { port?: number; host?: string } = {}): WebhookServer {
+export function startWebhookServer(mgr: AutomationManager, opts: { port?: number; host?: string; external?: (a: Automation, body: string, headers: { signature?: string | null; event?: string | null; delivery?: string | null }) => { httpStatus: number; body: Record<string, unknown> } } = {}): WebhookServer {
   const host = opts.host ?? "127.0.0.1";
   const server = Bun.serve({
     port: opts.port ?? 0,
@@ -16,9 +17,15 @@ export function startWebhookServer(mgr: AutomationManager, opts: { port?: number
       const cap = mgr.limits.maxBodyBytes;
       const declared = Number(req.headers.get("content-length") ?? 0);
       if (declared > cap) return json(413, { error: "body too large" });
-      const buf = new Uint8Array(await req.arrayBuffer());
-      if (buf.length > cap) return json(413, { error: "body too large" });
-      const r = mgr.receiveWebhook(decodeURIComponent(m[1]), new TextDecoder().decode(buf), {
+      const reader = req.body?.getReader(), chunks: Uint8Array[] = []; let size = 0;
+      try { if (reader) for (;;) { const part = await reader.read(); if (part.done) break; size += part.value.length; if (size > cap) return json(413, { error: "body too large" }); chunks.push(part.value); } }
+      finally { await reader?.cancel().catch(() => {}); }
+      let id: string; try { id = decodeURIComponent(m[1]); } catch { return json(400, { error: "invalid path" }); }
+      const raw = Buffer.concat(chunks).toString("utf8"), automation = mgr.list().find((a) => a.id === id && a.isValid);
+      if (automation && ["github", "ci"].includes(automation.fm.trigger!) && opts.external) {
+        const r = opts.external(automation, raw, { signature: req.headers.get("x-hub-signature-256"), event: req.headers.get("x-github-event"), delivery: req.headers.get("x-github-delivery") }); return json(r.httpStatus, r.body);
+      }
+      const r = mgr.receiveWebhook(id, raw, {
         authorization: req.headers.get("authorization"),
         signature: req.headers.get("x-rigwell-signature"),
       });

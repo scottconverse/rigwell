@@ -1,0 +1,144 @@
+{
+  "csv-quoted-fields": {
+    "lib.js": "export function parseCsvLine(line) {\n const out=[]; let value=\"\", quoted=false;\n for(let i=0;i<line.length;i++) { const c=line[i];\n if(c==='\"') { if(quoted && line[i+1]==='\"') {value+='\"';i++;} else quoted=!quoted; }\n else if(c===','&&!quoted){out.push(value);value=\"\";} else value+=c;\n }\n if(quoted)throw new Error(\"Unterminated quote\");return [...out,value];\n}"
+  },
+  "numeric-version-sort": {
+    "lib.js": "export function compareVersion(a,b){const parse=v=>{if(!/^\\d+(\\.\\d+)*$/.test(v))throw Error(\"Invalid version\");return v.split('.').map(BigInt);};const x=parse(a),y=parse(b);for(let i=0;i<Math.max(x.length,y.length);i++){if((x[i]??0n)<(y[i]??0n))return -1;if((x[i]??0n)>(y[i]??0n))return 1;}return 0;}"
+  },
+  "json-pointer-escaping": {
+    "lib.js": "export function getPointer(doc,p){if(p==='')return doc;if(!p.startsWith('/')||/~(?![01])/u.test(p))throw Error(\"Invalid pointer\");return p.slice(1).split('/').reduce((v,k)=>{k=k.replace(/~1/g,'/').replace(/~0/g,'~');return v!=null&&Object.hasOwn(v,k)?v[k]:undefined;},doc);}"
+  },
+  "lru-read-refresh": {
+    "lib.js": "export class LruCache{constructor(capacity){if(!Number.isInteger(capacity)||capacity<1)throw Error('Invalid capacity');this.capacity=capacity;this.items=new Map();}get(k){if(!this.items.has(k))return undefined;const v=this.items.get(k);this.items.delete(k);this.items.set(k,v);return v;}set(k,v){this.items.delete(k);this.items.set(k,v);if(this.items.size>this.capacity)this.items.delete(this.items.keys().next().value);}}"
+  },
+  "rate-window-boundary": {
+    "lib.js": "export class WindowLimiter{constructor(limit,windowMs){if(!Number.isInteger(limit)||limit<1||!Number.isInteger(windowMs)||windowMs<1)throw Error('Invalid limits');this.limit=limit;this.windowMs=windowMs;this.events=[];this.last=-Infinity;}allow(now){if(!Number.isFinite(now)||now<this.last)throw Error('Invalid clock');this.last=now;this.events=this.events.filter(t=>t>now-this.windowMs);if(this.events.length>=this.limit)return false;this.events.push(now);return true;}}"
+  },
+  "deep-merge-own-keys": {
+    "lib.js": "export function mergeConfig(a,b){const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);const clone=v=>{if(Array.isArray(v))return v.map(clone);if(plain(v))return mergeConfig({},v);return v;};if(!plain(b))return clone(b);const out=plain(a)?cloneBase(a):{};for(const k of Object.keys(b)){if(['__proto__','constructor','prototype'].includes(k))throw Error('Unsafe key');out[k]=plain(b[k])?mergeConfig(out[k],b[k]):clone(b[k]);}return out;function cloneBase(v){const o={};for(const k of Object.keys(v)){if(['__proto__','constructor','prototype'].includes(k))throw Error('Unsafe key');o[k]=clone(v[k]);}return o;}}"
+  },
+  "query-repeat-encoding": {
+    "lib.js": "export function parseQuery(s){const out=Object.create(null),decode=x=>decodeURIComponent(x.replace(/\\+/g,' '));s=s.replace(/^\\?/,'');for(const part of s?s.split('&'):[]){if(!part)continue;const i=part.indexOf('='),k=decode(i<0?part:part.slice(0,i)),v=decode(i<0?'':part.slice(i+1));if(Object.hasOwn(out,k))out[k]=Array.isArray(out[k])?[...out[k],v]:[out[k],v];else out[k]=v;}return out;}"
+  },
+  "money-integer-cents": {
+    "lib.js": "export function totalCents(lines){let total=0;for(const {price,quantity} of lines){if(typeof price!=='string'||!/^\\d+(\\.\\d{1,2})?$/.test(price)||!Number.isSafeInteger(quantity)||quantity<0)throw Error('Invalid line');const [a,b='']=price.split('.');const cents=Number(a)*100+Number(b.padEnd(2,'0'));if(!Number.isSafeInteger(cents))throw Error('Overflow');total+=cents*quantity;if(!Number.isSafeInteger(total))throw Error('Overflow');}return total;}"
+  },
+  "async-map-limit": {
+    "lib.js": "export async function mapLimit(items,limit,fn){if(!Number.isInteger(limit)||limit<1)throw Error('Invalid limit');const out=new Array(items.length);let next=0,failed=false;await Promise.all(Array.from({length:Math.min(limit,items.length)},async()=>{while(!failed){const i=next++;if(i>=items.length)return;try{out[i]=await fn(items[i],i);}catch(e){failed=true;throw e;}}}));return out;}"
+  },
+  "dependency-topological-sort": {
+    "lib.js": "export function topologicalSort(graph){const out=[],state=new Map();function visit(n){if(state.get(n)===1)throw Error('Cycle');if(state.get(n)===2)return;state.set(n,1);for(const d of Object.hasOwn(graph,n)?graph[n]:[])visit(d);state.set(n,2);out.push(n);}for(const n of Object.keys(graph))visit(n);return out;}"
+  },
+  "abortable-retry": {
+    "lib.js": "export async function retry(fn,{attempts,signal}={}){if(!Number.isInteger(attempts)||attempts<1)throw Error('Invalid attempts');for(let i=0;i<attempts;i++){if(signal?.aborted)throw signal.reason??Error('Aborted');try{return await fn(i);}catch(e){if(signal?.aborted)throw signal.reason??Error('Aborted');if(i===attempts-1)throw e;}}}"
+  },
+  "stream-event-decoder": {
+    "lib.js": "export class EventDecoder{constructor(){this.buffer='';this.event='message';this.data=[];this.id='';}line(s,out){if(s===''){if(this.data.length)out.push({event:this.event,data:this.data.join('\\n'),id:this.id});this.event='message';this.data=[];return;}if(s.startsWith(':'))return;const i=s.indexOf(':'),k=i<0?s:s.slice(0,i);let v=i<0?'':s.slice(i+1);if(v.startsWith(' '))v=v.slice(1);if(k==='data')this.data.push(v);else if(k==='event')this.event=v;else if(k==='id'&&!v.includes('\\0'))this.id=v;}push(s){this.buffer+=s;const out=[];let i;while((i=this.buffer.indexOf('\\n'))>=0){this.line(this.buffer.slice(0,i).replace(/\\r$/,''),out);this.buffer=this.buffer.slice(i+1);}return out;}finish(){const out=[];if(this.buffer)this.line(this.buffer.replace(/\\r$/,''),out);this.buffer='';this.line('',out);return out;}}"
+  },
+  "canonical-json-key": {
+    "lib.js": "export function canonicalKey(value){const seen=new Set();function encode(v){if(v===null||typeof v==='string'||typeof v==='boolean')return JSON.stringify(v);if(typeof v==='number'&&Number.isFinite(v))return JSON.stringify(v);if(typeof v!=='object'||v===null)throw Error('Unsupported value');if(seen.has(v))throw Error('Cycle');seen.add(v);let out;if(Array.isArray(v)){out='['+Array.from(v,encode).join(',')+']';}else out='{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+encode(v[k])).join(',')+'}';seen.delete(v);return out;}return encode(value);}"
+  },
+  "interval-union": {
+    "lib.js": "export function mergeIntervals(intervals){const sorted=intervals.map(v=>{if(!Array.isArray(v)||v.length!==2||!v.every(Number.isFinite)||v[0]>v[1])throw Error('Invalid interval');return [...v];}).sort((a,b)=>a[0]-b[0]||a[1]-b[1]);const out=[];for(const v of sorted){const last=out.at(-1);if(last&&v[0]<=last[1])last[1]=Math.max(last[1],v[1]);else out.push(v);}return out;}"
+  },
+  "recursive-secret-redaction": {
+    "lib.js": "export function redact(value,keys){const names=new Set(keys.map(k=>k.toLowerCase()));const visit=v=>Array.isArray(v)?v.map(visit):v!==null&&typeof v==='object'?Object.fromEntries(Object.entries(v).map(([k,x])=>[k,names.has(k.toLowerCase())?'[redacted]':visit(x)])):v;return visit(value);}"
+  },
+  "stable-priority-queue": {
+    "lib.js": "export class PriorityQueue{constructor(){this.values=[];this.next=0;}push(value,priority){if(!Number.isFinite(priority))throw Error('Invalid priority');this.values.push({value,priority,order:this.next++});}pop(){this.values.sort((a,b)=>a.priority-b.priority||a.order-b.order);return this.values.shift()?.value;}get size(){return this.values.length;}}"
+  },
+  "extract-invoice-format": {
+    "format.js": "export function formatCents(n){if(!Number.isSafeInteger(n))throw Error('Invalid cents');return (n<0?'-':'')+'$'+(Math.abs(n)/100).toFixed(2);}",
+    "lib.js": "import {formatCents} from './format.js';export const invoice=r=>r.name+': '+formatCents(r.cents);"
+  },
+  "inject-config-environment": {
+    "config.js": "export function parseConfig(env){const raw=env.PORT??'8080';if(!/^\\d+$/.test(raw)||Number(raw)<1||Number(raw)>65535)throw Error('Invalid port');return {port:Number(raw),debug:env.DEBUG==='1'||env.DEBUG==='true'};}",
+    "lib.js": "import {parseConfig} from './config.js';export const loadConfig=()=>parseConfig(process.env);"
+  },
+  "immutable-ranking": {
+    "lib.js": "export function rank(rows){return rows.map((r,i)=>({r,i})).sort((a,b)=>b.r.score-a.r.score||a.i-b.i).map(({r},i)=>({...r,rank:i+1}));}"
+  },
+  "streaming-file-digest": {
+    "lib.js": "import {createReadStream} from 'node:fs';import {createHash} from 'node:crypto';export async function digest(p){const hash=createHash('sha256');for await(const chunk of createReadStream(p))hash.update(chunk);return hash.digest('hex');}"
+  },
+  "tests-range-boundaries": {
+    "checks.cjs": "const test=require('node:test');const assert=require('node:assert/strict');test('contract',async()=>{const m=await import('./lib.js');assert.equal(m.inRange(1,1,3),true);assert.equal(m.inRange(3,1,3),true);assert.equal(m.inRange(0,1,3),false);assert.equal(m.inRange(4,1,3),false);assert.equal(m.inRange(2,2,2),true);assert.equal(m.inRange(-2,-3,-1),true);});"
+  },
+  "tests-case-normalization": {
+    "checks.cjs": "const test=require('node:test');const assert=require('node:assert/strict');test('contract',async()=>{const m=await import('./lib.js');assert.equal(m.normalizeTag('  HELLO  '),'hello');assert.equal(m.normalizeTag('A B'),'a b');assert.equal(m.normalizeTag('   '),'');assert.equal(m.normalizeTag(''),'');});"
+  },
+  "tests-unique-order": {
+    "checks.cjs": "const test=require('node:test');const assert=require('node:assert/strict');test('contract',async()=>{const m=await import('./lib.js');const a=[3,1,3,2,1];assert.deepEqual(m.unique(a),[3,1,2]);assert.deepEqual(a,[3,1,3,2,1]);assert.notEqual(m.unique(a),a);assert.deepEqual(m.unique([NaN,NaN]),[NaN]);assert.deepEqual(m.unique([]),[]);});"
+  },
+  "tests-page-offset": {
+    "checks.cjs": "const test=require('node:test');const assert=require('node:assert/strict');test('contract',async()=>{const m=await import('./lib.js');assert.equal(m.pageOffset(1,10),0);assert.equal(m.pageOffset(3,5),10);for(const args of [[0,5],[2,0],[1.5,3],[3,1.2],[Number.MAX_SAFE_INTEGER,3]])assert.throws(()=>m.pageOffset(...args));});"
+  },
+  "tests-object-pick": {
+    "checks.cjs": "const test=require('node:test');const assert=require('node:assert/strict');test('contract',async()=>{const m=await import('./lib.js');const o=Object.assign(Object.create({inherited:3}),{a:1,b:undefined,c:2});assert.deepEqual(m.pick(o,['a','b','missing','inherited']),{a:1,b:undefined});assert.deepEqual(m.pick(o,[]),{});assert.equal(o.c,2);});"
+  },
+  "tests-date-leap-years": {
+    "checks.cjs": "const test=require('node:test');const assert=require('node:assert/strict');test('contract',async()=>{const m=await import('./lib.js');for(const [y,want] of [[2024,true],[2023,false],[1900,false],[2000,true],[-4,true],[-100,false],[-400,true]])assert.equal(m.isLeapYear(y),want);});"
+  },
+  "cli-jsonl-validation": {
+    "cli.js": "import fs from 'node:fs';try{const rows=fs.readFileSync(0,'utf8').split(/\\r?\\n/).filter(s=>s.trim()).map(s=>JSON.parse(s));for(const r of rows)if(r.active===true)console.log(JSON.stringify(r));}catch(e){console.error('Invalid JSON');process.exitCode=2;}"
+  },
+  "cli-file-summary": {
+    "cli.js": "import fs from 'node:fs';import path from 'node:path';try{const root=process.argv[2];if(!root||!fs.statSync(root).isDirectory())throw Error('Invalid directory');const rows=[];function walk(dir,prefix=''){for(const e of fs.readdirSync(dir,{withFileTypes:true})){const rel=prefix+e.name,abs=path.join(dir,e.name);if(e.isDirectory())walk(abs,rel+'/');else if(e.isFile())rows.push([rel,fs.statSync(abs).size]);}}walk(root);rows.sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0);for(const [p,n]of rows)console.log(p+'\\t'+n);}catch(e){console.error(e.message);process.exitCode=2;}"
+  },
+  "cli-atomic-copy": {
+    "cli.js": "import fs from 'node:fs';import path from 'node:path';const args=process.argv.slice(2),force=args.includes('--force'),files=args.filter(v=>v!=='--force');let temp;try{if(files.length!==2)throw Error('source and target required');const [src,dest]=files;if(path.resolve(src)===path.resolve(dest))throw Error('Same file');const data=fs.readFileSync(src);if(fs.existsSync(dest)&&!force)throw Error('Target exists');fs.mkdirSync(path.dirname(dest),{recursive:true});temp=dest+'.tmp-'+process.pid;fs.writeFileSync(temp,data,{flag:'wx'});fs.renameSync(temp,dest);}catch(e){console.error(e.message);process.exitCode=2;}finally{if(temp&&fs.existsSync(temp))fs.unlinkSync(temp);}"
+  },
+  "cli-argument-parser": {
+    "cli.js": "let name='world',count=1;try{const a=process.argv.slice(2);for(let i=0;i<a.length;i++){const k=a[i];if(k==='--'){if(i!==a.length-1)throw Error('Unexpected positional');break;}const eq=k.indexOf('='),key=eq<0?k:k.slice(0,eq);if(!['--name','--count'].includes(key))throw Error('Unknown option');const v=eq<0?a[++i]:k.slice(eq+1);if(v===undefined||v.startsWith('--'))throw Error('Missing value');if(key==='--name')name=v;else{if(!/^\\d+$/.test(v)||!Number.isSafeInteger(Number(v))||Number(v)<1)throw Error('Invalid count');count=Number(v);}}for(let i=0;i<count;i++)console.log('Hello, '+name+'!');}catch(e){console.error(e.message);process.exitCode=2;}"
+  },
+  "cli-search-exit-status": {
+    "cli.js": "import fs from 'node:fs';if(process.argv[2]===undefined){console.error('Pattern required');process.exitCode=2;}else{const text=fs.readFileSync(0,'utf8'),rows=text.split(/\\r?\\n/);if(rows.at(-1)==='')rows.pop();const matches=rows.filter(s=>s.includes(process.argv[2]));for(const s of matches)console.log(s);process.exitCode=matches.length?0:1;}"
+  },
+  "cli-json-config-migration": {
+    "cli.js": "import fs from 'node:fs';try{const [input,output]=process.argv.slice(2);if(!input||!output)throw Error('Paths required');const data=JSON.parse(fs.readFileSync(input,'utf8'));let result;if(data.schemaVersion===2)result=data;else if(data.schemaVersion===1&&Array.isArray(data.users))result={schemaVersion:2,accounts:data.users.map(u=>({displayName:u.name,active:u.enabled??true}))};else throw Error('Unsupported schema');fs.writeFileSync(output,JSON.stringify(result,null,2)+'\\n');}catch(e){console.error(e.message);process.exitCode=2;}"
+  },
+  "rename-user-contract": {
+    "store.js": "const rows=[];export function insert(displayName){const row={id:rows.length+1,displayName};rows.push(row);return row;}export const find=id=>{const r=rows.find(r=>r.id===id);if(!r)throw Error('Unknown ID');return r;};",
+    "lib.js": "import {insert,find} from './store.js';export const createUser=insert;export const getUser=find;export const formatUser=id=>{const r=find(id);return r.id+': '+r.displayName;};"
+  },
+  "typed-service-errors": {
+    "errors.js": "export class ValidationError extends Error{};export class NotFoundError extends Error{};",
+    "repository.js": "import {NotFoundError} from './errors.js';export const get=id=>{if(id===1)return 'one';throw new NotFoundError('missing');};",
+    "lib.js": "import {get} from './repository.js';import {ValidationError,NotFoundError} from './errors.js';export function handle(id){try{if(!Number.isInteger(id)||id<1)throw new ValidationError('Invalid ID');return {status:200,value:get(id)};}catch(e){if(e instanceof ValidationError)return {status:400};if(e instanceof NotFoundError)return {status:404};throw e;}}"
+  },
+  "clock-injected-ttl": {
+    "cache.js": "export function createCache(clock){const rows=new Map();const prune=()=>{for(const [k,r]of rows)if(clock()>=r.expires)rows.delete(k);};return {set(k,value,ttl){if(!Number.isFinite(ttl)||ttl<0)throw Error('Invalid TTL');rows.set(k,{value,expires:clock()+ttl});},get(k){prune();return rows.get(k);},size(){prune();return rows.size;}};}",
+    "lib.js": "import {createCache} from './cache.js';export function makeService(clock){const c=createCache(clock);return {remember(k,fn,ttl){const row=c.get(k);if(row)return row.value;const v=fn();c.set(k,v,ttl);return v;}};}"
+  },
+  "repository-page-contract": {
+    "repository.js": "export const rows=[{id:8},{id:2},{id:5},{id:1}];export const list=(afterId,limit)=>rows.filter(r=>r.id>afterId).sort((a,b)=>a.id-b.id).slice(0,limit);",
+    "lib.js": "import {list} from './repository.js';export function page(afterId,limit){if(!Number.isInteger(afterId)||afterId<0||!Number.isInteger(limit)||limit<1)throw Error('Invalid page');const rows=list(afterId,limit+1);return {items:rows.slice(0,limit),nextCursor:rows.length>limit?rows[limit-1].id:null};}"
+  },
+  "idempotent-order-service": {
+    "store.js": "export const createStore=()=>{const m=new Map();return {get:k=>m.get(k),put:(k,v)=>m.set(k,v),size:()=>m.size};};",
+    "lib.js": "export function createService(store){let id=0;return {place(key,order){if(typeof key!=='string'||!key||!order||!Number.isInteger(order.quantity)||order.quantity<1)throw Error('Invalid order');const canonical=o=>JSON.stringify(Object.keys(o).sort().map(k=>[k,o[k]]));const previous=store.get(key);if(previous){if(canonical(previous.order)!==canonical(order))throw Error('Conflict');return previous;}const result={id:++id,order:{...order}};store.put(key,result);return result;}};}"
+  },
+  "layered-settings-nullish": {
+    "defaults.js": "export const defaults={theme:'dark',retries:3,enabled:true};",
+    "lib.js": "import {defaults} from './defaults.js';export function resolveSettings(u={},p={}){const out={};for(const k of Object.keys(defaults))out[k]=p[k]!==undefined?p[k]:u[k]!==undefined?u[k]:defaults[k];if(!['light','dark'].includes(out.theme)||!Number.isInteger(out.retries)||out.retries<0||typeof out.enabled!=='boolean')throw Error('Invalid settings');return out;}"
+  },
+  "abortable-import-pipeline": {
+    "parser.js": "export function parseRow(row){if(typeof row!=='string'||!row.trim()||!Number.isFinite(Number(row)))throw Error('Invalid row');return Number(row);}",
+    "lib.js": "import {parseRow} from './parser.js';export async function importRows(rows,save,signal){const out=[];const check=()=>{if(signal?.aborted)throw signal.reason??Error('Aborted');};for(const row of rows){check();const value=parseRow(row);check();out.push(await save(value,signal));check();}return out;}"
+  },
+  "metrics-counter-labels": {
+    "counter.js": "export class Counter{constructor(){this.rows=new Map();}inc(labels,amount=1){if(!Number.isFinite(amount)||amount<0)throw Error('Invalid amount');const sorted=Object.fromEntries(Object.keys(labels).sort().map(k=>[k,labels[k]])),key=JSON.stringify(sorted),row=this.rows.get(key);this.rows.set(key,{labels:sorted,value:(row?.value??0)+amount});}snapshot(){return [...this.rows].sort(([a],[b])=>a<b?-1:a>b?1:0).map(([,r])=>({labels:{...r.labels},value:r.value}));}}",
+    "lib.js": "import {Counter} from './counter.js';export function makeMetrics(){const c=new Counter();return {record:s=>c.inc({status:String(s)}),snapshot:()=>c.snapshot()};}"
+  },
+  "add-clamp": {
+    "util.js": "export function double(n) { return n * 2; }\nexport function clamp(n,lo,hi){return Math.min(hi,Math.max(lo,n));}\n"
+  },
+  "fix-greeting-typo": {
+    "greet.js": "export function greet(name) { return \"Hello, \" + name + \"!\"; }\n"
+  },
+  "rename-constant": {
+    "config.js": "export const MAX_ATTEMPTS = 3;\n",
+    "main.js": "import { attempts } from \"./retry.js\";\nimport { MAX_ATTEMPTS } from \"./config.js\";\nconsole.log(attempts() === MAX_ATTEMPTS ? \"ok \" + MAX_ATTEMPTS : \"mismatch\");\n",
+    "retry.js": "import { MAX_ATTEMPTS } from \"./config.js\";\nexport function attempts() {\n  let n = 0;\n  while (n < MAX_ATTEMPTS) n++;\n  return n;\n}\n"
+  }
+}

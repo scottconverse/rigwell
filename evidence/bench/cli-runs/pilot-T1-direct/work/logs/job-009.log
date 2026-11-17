@@ -1,0 +1,21 @@
+job job-009 started on runner-4
+step 0: warning: FAILED to fetch optional mirror, using default
+step 1: tests: 41 passed
+step 2: tests: 41 passed
+step 3: warning: FAILED to fetch optional mirror, using default
+step 4: lint ok
+step 5: lint ok
+step 6: download 12MB
+step 7: warning: FAILED to fetch optional mirror, using default
+step 8: warning: FAILED to fetch optional mirror, using default
+step 9: cache hit
+step 10: cache hit
+step 11: tests: 41 passed
+step 12: cache hit
+step 13: tests: 41 passed
+step 14: cache hit
+step 15: lint ok
+STATUS: PASSED
+retrying (attempt 2)
+STATUS: PASSED
+summary: see artifacts

@@ -11,6 +11,7 @@ import { parseFrontmatter } from "../config/frontmatter.ts";
 import { projectRoot } from "../config/levels.ts";
 import { SkillRegistry } from "../skills/index.ts";
 import { rigwellHome } from "../storage/paths.ts";
+import { pluginComponents } from "../plugins/store.ts";
 import { COMMANDS } from "./commands.ts";
 import type { CustomEntry } from "./types.ts";
 
@@ -43,7 +44,7 @@ function scan(dir: string, origin: string): CustomEntry[] {
 
 export function loadCustomCommands(cwd: string, homeDir?: string): CustomEntry[] {
   const root = projectRoot(cwd, homeDir);
-  return [...(root ? scan(path.join(root, ".rigwell", "commands"), "project") : []), ...scan(path.join(rigwellHome(), "commands"), "user")];
+  return [...(root ? scan(path.join(root, ".rigwell", "commands"), "project") : []), ...scan(path.join(rigwellHome(), "commands"), "user"), ...pluginComponents("commands").flatMap((p) => scan(p.path, `plugin:${p.record.name}`))];
 }
 
 /** Custom commands plus user-invocable skills, minus anything that clashes with a built-in command or an earlier entry. */

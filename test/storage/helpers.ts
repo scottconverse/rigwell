@@ -13,7 +13,10 @@ export function tmpEnv() {
   return {
     root, home, rigwellHome: rh,
     cleanup() {
-      if (prev === undefined) delete process.env.RIGWELL_HOME; else process.env.RIGWELL_HOME = prev;
+      // A timed-out fixture may finish cleanup after a newer fixture selected its own home.
+      if (process.env.RIGWELL_HOME === rh) {
+        if (prev === undefined) delete process.env.RIGWELL_HOME; else process.env.RIGWELL_HOME = prev;
+      }
       rmSync(root, { recursive: true, force: true });
     },
   };

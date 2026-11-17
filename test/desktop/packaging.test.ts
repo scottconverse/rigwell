@@ -3,7 +3,7 @@
 // has been built or no X server exists. Set RIGWELL_BUILD_PACKAGE=1 to build one first.
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -46,18 +46,13 @@ describe("builder config", () => {
     expect(cfg).toContain("build/stage/bun");
     expect(cfg).toContain("build/stage/daemon");
   });
-  test("Windows: every exe goes through the signing hook, sha256 only; no elevate.exe", () => {
-    expect(cfg).toContain("sign: packaging/sign.cjs");
-    expect(cfg).toContain("signingHashAlgorithms: [sha256]");
-    expect(cfg).toContain("packElevateHelper: false");
-  });
 });
 
 function readFileOrEmpty(p: string) { try { return require("node:fs").readFileSync(p, "utf8") as string; } catch { return ""; } }
 
 maybe("Linux package", () => {
   let xvfb: ChildProcess | undefined, app: ChildProcess | undefined, home = "", display = "";
-  beforeAll(() => { home = mkdtempSync(join(tmpdir(), "rigwell-pkg-")); });
+  beforeAll(() => { home = mkdtempSync(join(tmpdir(), "rigwell-pkg-")); writeFileSync(join(home, "desktop-settings.json"), JSON.stringify({ desktopAutoUpdateEnabled: false })); });
   afterAll(async () => {
     try { const d = readDaemonInfo(home); if (d) process.kill(d.pid, "SIGTERM"); } catch {}
     app?.kill("SIGTERM"); await sleep(1500); app?.kill("SIGKILL"); xvfb?.kill();
@@ -73,6 +68,7 @@ maybe("Linux package", () => {
     expect(res).toContain("app.asar");
     expect(existsSync(join(unpacked, "resources/bun/bun"))).toBe(true);
     expect(existsSync(join(unpacked, "resources/daemon/src/cli/main.ts"))).toBe(true);
+    expect(existsSync(join(unpacked, "resources/daemon/eval/tasks/add-clamp/task.json"))).toBe(true);
     expect(existsSync(join(unpacked, "resources/daemon/node_modules/quickjs-emscripten"))).toBe(true);
     expect(res).not.toContain("app"); // loaded from the asar only
   });

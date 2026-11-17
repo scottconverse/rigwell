@@ -1,0 +1,11 @@
+job job-173 started on runner-5
+step 0: cache hit
+step 1: lint ok
+step 2: cache hit
+step 3: compile ok
+step 4: warning: FAILED to fetch optional mirror, using default
+step 5: cache hit
+step 6: cache hit
+step 7: lint ok
+STATUS: PASSED
+summary: see artifacts

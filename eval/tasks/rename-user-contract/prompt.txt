@@ -1,0 +1,3 @@
+Rename user.name to displayName throughout the store, service and public formatter. createUser(displayName) and getUser(id) return {id,displayName}; formatUser(id) returns ID: DisplayName. Retain sequential IDs and throw on unknown ID. No legacy .name access remains.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

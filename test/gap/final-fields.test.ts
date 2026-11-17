@@ -1,6 +1,6 @@
 // Final gap wave, small fields: SessionStart ids, model_content, streaming_input, backgroundWork, Responses profile fields.
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildOpenAIBody, isOpenAIBaseUrl } from "../../src/adapters/openai.ts";
@@ -14,6 +14,7 @@ import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer, FakeTurn } from "../fakes/types.ts";
 import { makeHome, makeRepo } from "../e2e/helpers.ts";
 import { call, makeStubSession, text } from "../agent/helpers.ts";
+import { jsCommand } from "../platform.ts";
 import { driver } from "./helpers.ts";
 
 const servers: FakeServer[] = [];
@@ -30,7 +31,7 @@ describe("SessionStart hook input", () => {
   test("previous_session_id and calling_session_id reach the hook's stdin", async () => {
     const out = join(mkdtempSync(join(tmpdir(), "rigwell-ss-")), "stdin.json");
     const hooks = (a: any) => new HookRunner({
-      config: loadHooksConfig({ cwd: a.cwd ?? process.cwd(), extra: { SessionStart: [{ hooks: [{ type: "command", command: `cat > ${out}` }] }] } }),
+      config: loadHooksConfig({ cwd: a.cwd ?? process.cwd(), extra: { SessionStart: [{ hooks: [{ type: "command", command: jsCommand(tmpdir(), `require("fs").writeFileSync(${JSON.stringify(out)}, require("fs").readFileSync(0))`) }] }] } }),
       sessionId: a.sessionId, transcriptPath: a.transcriptPath, cwd: process.cwd(), permissionMode: a.permissionMode, notify: a.notify,
     });
     const { session } = makeStubSession(() => text("ok"), { hooksFor: hooks, previousSessionId: "prev-1", callingSessionId: "call-1" });
@@ -42,7 +43,7 @@ describe("SessionStart hook input", () => {
 
     const plain = join(mkdtempSync(join(tmpdir(), "rigwell-ss-")), "stdin.json");
     const hooks2 = (a: any) => new HookRunner({
-      config: loadHooksConfig({ cwd: a.cwd ?? process.cwd(), extra: { SessionStart: [{ hooks: [{ type: "command", command: `cat > ${plain}` }] }] } }),
+      config: loadHooksConfig({ cwd: a.cwd ?? process.cwd(), extra: { SessionStart: [{ hooks: [{ type: "command", command: jsCommand(tmpdir(), `require("fs").writeFileSync(${JSON.stringify(plain)}, require("fs").readFileSync(0))`) }] }] } }),
       sessionId: a.sessionId, transcriptPath: a.transcriptPath, cwd: process.cwd(), permissionMode: a.permissionMode, notify: a.notify,
     });
     const b = makeStubSession(() => text("ok"), { hooksFor: hooks2 });
@@ -59,8 +60,8 @@ describe("SessionStart hook input", () => {
     const { model, repo } = await setup([{ text: "a" }]);
     const dumps = join(mkdtempSync(join(tmpdir(), "rigwell-ss-")), "in.json");
     const proj = join(repo, ".rigwell");
-    Bun.spawnSync(["mkdir", "-p", proj]);
-    writeFileSync(join(proj, "hooks.json"), JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command: `cat > ${dumps}` }] }] } }));
+    mkdirSync(proj, { recursive: true });
+    writeFileSync(join(proj, "hooks.json"), JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command: jsCommand(tmpdir(), `require("fs").writeFileSync(${JSON.stringify(dumps)}, require("fs").readFileSync(0))`) }] }] } }));
     const prevTrust = process.env.RIGWELL_TRUST_CWD;
     process.env.RIGWELL_TRUST_CWD = "1";
     try {

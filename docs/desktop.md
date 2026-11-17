@@ -1,6 +1,8 @@
-# Desktop app (Phase 8)
+# Desktop app
 
 An Electron app in `desktop/` that is one more client of the daemon. Everything that does agent work stays in the daemon.
+
+The current Windows package is [0.4.1](release-0.4.1.md); Linux/macOS packages remain at 0.4.0. For installation and ordinary use, start with the [user manual](user-manual.md) or [installation guide](install.md).
 
 ## Run it
 
@@ -41,9 +43,29 @@ Routes: `#/missions`, `#/missions/<sessionId>`, `#/automations`, `#/automations/
 `custom-models`, `worktrees`, `connectors`, `session-management`, `usage`. The sidebar lists Mission Control and Automations, shows pinned
 sessions first and hides archived ones, and has an Add folder button that runs the trust prompt. The session header menu has Pin, Rename and
 Archive (`rigwell.pin_session`, `rename_session`, `archive_session`; `list_sessions` falls back to `daemon.list_sessions` on older daemons).
-The composer has a searchable model picker, a Normal / Spec / Mission mode menu, and Connectors and Skills dialogs. The Skills dialog searches skills, filters them by source (Built-in, User, Project) and has a Create skill form (`skills:create` in the main process). Attached images and images in sent messages open a preview with a toolbar (zoom, Fit, Rotate, Copy, Remove, Close). A fenced `email` block renders as a card with Copy and Open in mail app (`mailto:`). Copy buttons use `clipboard:writeText` and `clipboard:writeImage` in the main process, because the page has no clipboard permission. Home has a Worktree toggle
+The composer has a searchable model picker, a Normal / Spec / Mission mode menu, and Connectors and Skills dialogs. Home has a Worktree toggle
 (defaults to the `runInWorktree` setting). The browser pane can reopen closed tabs, move tabs, step to the next or previous tab and take a screenshot.
 Main process helpers: `desktop/main/user-settings.ts` (masked settings file, trusted folders, setup profiles) and `desktop/main/skills.ts`.
+
+## Pull requests
+
+Settings > Worktrees has Create PR and Refresh PR controls for each managed worktree. Enter the title,
+body, optional base and draft state, then review the branch push and PR content in the permission panel.
+Cancel leaves the remote untouched. The daemon checks that the checkout and origin have not changed
+while approval was open, pushes to origin, and creates the PR. It never merges.
+
+GitHub uses a signed-in `gh`, GitLab a signed-in `glab`. Without the corresponding CLI, the daemon uses
+the provider API and the `github` or `gitlab` token in Rigwell's credential store. Public GitHub and
+GitLab origins are supported. A failed provider operation after the push explicitly reports that the
+branch was pushed so the user can check status before retrying.
+
+The TUI command `/pr` shows status and checks; `/pr create "Title" "Body" [base] [--draft]` starts the
+same approval flow. Protocol methods are `rigwell.create_pr {worktreePath, title?, body?, base?, draft?}`
+and `rigwell.get_pr_status {worktreePath}`. Creation returns `{url, number}`; status returns
+`{state: "none" | "open" | "merged" | "closed", url?, number?, checks: [{name, state}]}`.
+Headless connections without an approver refuse creation. Automatic cleanup retains branches with an
+open PR, and retains worktrees when provider status cannot be checked. Merged and closed PRs do not
+prevent cleanup when the other safety checks pass.
 
 ## Packaging, fuses and updates
 
@@ -100,7 +122,7 @@ By default nothing is configured, and the microphone button explains how to enab
 
 ### Signed Linux updates (spec 14.5)
 
-Linux updates are installed only if their Ed25519 signature verifies against a public key you configure. No key ships with the app, so out of the box Linux updates are refused with a message saying so.
+Linux updates are installed only if their Ed25519 signature verifies against the embedded release public key. Settings or the environment can select a different release key. The private signing key never ships in the app. An explicitly empty saved key refuses updates.
 
 ```
 bun desktop/packaging/sign-update.ts keygen ~/rigwell-keys        # writes update-private.pem, prints the public key
@@ -120,3 +142,7 @@ Browser tab > Import cookies. Pick a Chrome or Chromium profile, press Show site
 ### Tests for these features
 
 `bun test test/desktop/electron-wave4.test.ts` drives the real app: dictation with a fake speech-to-text program, secrets, OAuth against `test/fakes/fake-oauth.ts`, org labels, templates, overview and guided setup, tray (through the `RIGWELL_TEST_HOOKS=1` hook), spec handoff and cookie import with a synthetic database. Unit tests: `chrome-cookies`, `update-verify`, `dictation`, `tray`, `wave4-lib` in `test/desktop`, `test/tui/login.test.ts`.
+
+### Branch and PR review
+
+See [Review](review.md) for branch/PR loading, semantic changes, line comments, confirmed posting and `/review` in the TUI.

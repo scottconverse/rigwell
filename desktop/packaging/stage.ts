@@ -21,6 +21,8 @@ if (!win) chmodSync(bunDest, 0o755);
 
 // Daemon sources: src/ plus a package.json for module resolution and the runtime dependencies.
 cpSync(join(repo, "src"), join(stage, "daemon", "src"), { recursive: true, filter: (p) => !/\.test\.ts$/.test(p) });
+// The bundled CLI resolves its built-in task suite relative to src/eval/tasks.ts.
+cpSync(join(repo, "eval", "tasks"), join(stage, "daemon", "eval", "tasks"), { recursive: true });
 const rootPkg = JSON.parse(readFileSync(join(repo, "package.json"), "utf8"));
 writeFileSync(join(stage, "daemon", "package.json"), JSON.stringify({ name: "rigwell-daemon", version: rootPkg.version, type: "module", dependencies: rootPkg.dependencies }, null, 2) + "\n");
 // Runtime node_modules (staged as node_modules_staged because electron-builder drops folders named node_modules from extraResources; the afterPack hook renames it): everything installed in the repo root except dev-only packages.

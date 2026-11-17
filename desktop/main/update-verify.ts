@@ -2,14 +2,15 @@
 //
 // The release signature is Ed25519 over the exact bytes of the artifact (AppImage, tarball...). The feed carries it as
 // `files[0].signature` (base64) or serves it next to the artifact as `<artifact url>.sig` (base64 text). The public key is
-// set by whoever builds or deploys the app, because this repository ships no key:
+// embedded for official releases, or overridden by whoever builds or deploys the app:
 //   - desktop setting `updatePublicKey` (Settings > General), or the environment variable RIGWELL_UPDATE_PUBLIC_KEY
 //   - accepted forms: a PEM public key ("-----BEGIN PUBLIC KEY-----"), base64 of the 32 raw key bytes, or base64 of the DER SPKI
 // An artifact is installed only after its signature verifies. No key, no signature, a bad signature, a wrong size or a
 // wrong sha512 all refuse the update and nothing is left on disk.
-import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, createPublicKey, randomUUID, verify, type KeyObject } from "node:crypto";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { readLinuxReleaseTarball } from "./linux-release.ts";
 
 export class UpdateRefused extends Error {
   constructor(message: string, readonly reason: "no-key" | "bad-key" | "unsigned" | "bad-signature" | "bad-hash" | "download") { super(message); }
@@ -90,9 +91,41 @@ export async function downloadAndVerify(o: DownloadOptions): Promise<{ path: str
 
 /** Replaces a running AppImage with a verified file (same folder, atomic rename). */
 export function installAppImage(verified: string, appImagePath: string): string {
-  const staged = appImagePath + ".new";
-  writeFileSync(staged, readFileSync(verified), { mode: 0o755 });
-  chmodSync(staged, 0o755);
-  renameSync(staged, appImagePath);
+  regular(verified); regular(appImagePath);
+  const backup = appImagePath + ".previous";
+  if (existsSync(backup)) regular(backup);
+  replaceFile(appImagePath, backup, true);
+  replaceFile(verified, appImagePath);
   return appImagePath;
+}
+
+/** Verified release tarballs carry exactly one regular AppImage and never extract paths. */
+export function installLinuxUpdate(verified: string, appImagePath: string): string {
+  if (!verified.endsWith(".tar.gz")) return installAppImage(verified, appImagePath);
+  regular(verified);
+  const payload = readLinuxReleaseTarball(readFileSync(verified));
+  const staged = verified + ".image-" + randomUUID();
+  try { writeFileSync(staged, payload, { flag: "wx", mode: 0o755 }); return installAppImage(staged, appImagePath); }
+  finally { rmSync(staged, { force: true }); }
+}
+
+/** Local rollback uses the previous installed bytes, never a lower version from a remote feed. */
+export function rollbackAppImage(appImagePath: string): string {
+  regular(appImagePath); regular(appImagePath + ".previous");
+  replaceFile(appImagePath + ".previous", appImagePath);
+  return appImagePath;
+}
+
+function regular(file: string) {
+  const s = lstatSync(file);
+  if (!s.isFile() || s.isSymbolicLink()) throw new Error("The update path must be a regular file without a link");
+}
+function replaceFile(source: string, target: string, allowNew = false) {
+  const staged = target + ".new-" + randomUUID();
+  try {
+    try { regular(target); } catch (e) { if (!allowNew || (e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
+    writeFileSync(staged, readFileSync(source), { flag: "wx", mode: 0o755 });
+    chmodSync(staged, 0o755);
+    renameSync(staged, target);
+  } finally { rmSync(staged, { force: true }); }
 }

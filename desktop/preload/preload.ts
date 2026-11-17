@@ -18,6 +18,12 @@ function readBoot(): unknown {
 const api = {
   boot: readBoot(),
   platform: process.platform,
+  localProfiles: {
+    list: (): Promise<{ active: string; profiles: import("../../src/storage/local-profiles.ts").LocalProfile[] }> => ipcRenderer.invoke("localProfiles:list"),
+    create: (id: string, name: string, role: string): Promise<unknown> => ipcRenderer.invoke("localProfiles:create", id, name, role),
+    update: (id: string, name: string, role: string): Promise<unknown> => ipcRenderer.invoke("localProfiles:update", id, name, role),
+    switch: (id: string, confirmed: boolean): Promise<{ restarting: boolean }> => ipcRenderer.invoke("localProfiles:switch", id, confirmed),
+  },
   daemon: {
     isIpcAvailable: (): Promise<boolean> => ipcRenderer.invoke("daemon:isIpcAvailable"),
     getTransportMode: (): Promise<string> => ipcRenderer.invoke("daemon:getTransportMode"),
@@ -33,6 +39,13 @@ const api = {
     onStatus: (cb: Cb<{ state: string; error?: string }>) => on("daemon:status", cb),
   },
   view: { set: (sessionId: string | null): Promise<void> => ipcRenderer.invoke("view:set", sessionId) },
+  remoteView: {
+    open: (machine: string, port: number, kind: "browser" | "desktop"): Promise<{ id: string; url?: string }> => ipcRenderer.invoke("remoteView:open", machine, port, kind),
+    receive: (id: string): Promise<void> => ipcRenderer.invoke("remoteView:receive", id),
+    send: (id: string, data: Uint8Array): Promise<void> => ipcRenderer.invoke("remoteView:send", id, data),
+    close: (id: string): Promise<void> => ipcRenderer.invoke("remoteView:close", id),
+    onData: (cb: Cb<{ id: string; data?: Uint8Array; closed?: boolean; error?: string }>) => on("remoteView:data", cb),
+  },
   settings: {
     get: (): Promise<unknown> => ipcRenderer.invoke("settings:get"),
     update: (patch: unknown): Promise<unknown> => ipcRenderer.invoke("settings:update", patch),
@@ -48,15 +61,11 @@ const api = {
     save: (folder: string, profile: unknown): Promise<string> => ipcRenderer.invoke("profiles:save", folder, profile),
     remove: (folder: string, id: string): Promise<void> => ipcRenderer.invoke("profiles:delete", folder, id),
   },
-  clipboard: {
-    writeText: (text: string): Promise<void> => ipcRenderer.invoke("clipboard:writeText", text),
-    writeImage: (dataUrl: string): Promise<void> => ipcRenderer.invoke("clipboard:writeImage", dataUrl),
-  },
-  skills: {
-    list: (cwd: string): Promise<any[]> => ipcRenderer.invoke("skills:list", cwd),
-    create: (cwd: string, input: { name: string; description: string; body: string; scope: "user" | "project"; overwrite?: boolean }): Promise<{ ok: true; filePath: string } | { ok: false; error: string; exists?: boolean }> => ipcRenderer.invoke("skills:create", cwd, input),
-  },
+  skills: { list: (cwd: string): Promise<any[]> => ipcRenderer.invoke("skills:list", cwd) },
   dialog: {
+    saveEvalExport: (format: "csv" | "jsonl", content: string): Promise<string | null> => ipcRenderer.invoke("dialog:saveEvalExport", format, content),
+    saveAnalyticsExport: (content: string): Promise<string | null> => ipcRenderer.invoke("dialog:saveAnalyticsExport", content),
+    saveSessionExport: (format: "html" | "markdown", content: string): Promise<string | null> => ipcRenderer.invoke("dialog:saveSessionExport", format, content),
     pickFolder: (): Promise<string | null> => ipcRenderer.invoke("dialog:pickFolder"),
     pickFile: (filters?: { name: string; extensions: string[] }[]): Promise<string | null> => ipcRenderer.invoke("dialog:pickFile", filters),
   },
@@ -65,6 +74,7 @@ const api = {
     openPath: (p: string): Promise<string> => ipcRenderer.invoke("shell:openPath", p),
   },
   app: { info: (): Promise<any> => ipcRenderer.invoke("app:info"), testSound: (kind: "awaiting" | "completion"): Promise<boolean> => ipcRenderer.invoke("alerts:test", kind) },
+  diagnostics: { rendererCrash: (value: { kind: string; detail: string }): Promise<boolean> => ipcRenderer.invoke("diagnostics:rendererCrash", value) },
   audio: { onPlay: (cb: Cb<{ kind: string; url?: string; volume: number }>) => on("audio:play", cb) },
   nav: { onGo: (cb: Cb<string>) => on("nav:go", cb) },
   deeplink: { claim: (state: string): Promise<void> => ipcRenderer.invoke("deeplink:claim", state), onMcpCallback: (cb: Cb<{ code: string; state: string }>) => on("deeplink:mcp-callback", cb) },
@@ -75,18 +85,17 @@ const api = {
     transcribe: (audio: Uint8Array): Promise<{ text?: string; error?: string; code?: string }> => ipcRenderer.invoke("dictation:transcribe", audio),
   },
   cookies: {
-    blocked: (): Promise<string | null> => ipcRenderer.invoke("cookies:blocked"),
     profiles: (): Promise<{ key: string; browser: string; name: string; dir: string }[]> => ipcRenderer.invoke("cookies:profiles"),
     domains: (key: string): Promise<{ domain: string; count: number }[]> => ipcRenderer.invoke("cookies:domains", key),
     import: (key: string, domains: string[]): Promise<{ imported: number; skipped: number; keySource: string }> => ipcRenderer.invoke("cookies:import", key, domains),
   },
   zoom: { get: () => webFrame.getZoomLevel(), set: (l: number) => webFrame.setZoomLevel(l) },
   browser: {
-    cdpUrl: (): Promise<string | null> => ipcRenderer.invoke("browser:cdpUrl"),
-    register: (webContentsId: number, requestId?: string): Promise<boolean> => ipcRenderer.invoke("browser:register", webContentsId, requestId),
+    cdpUrl: (sessionId?: string): Promise<string | null> => ipcRenderer.invoke("browser:cdpUrl", sessionId),
+    register: (webContentsId: number, requestId?: string, sessionId?: string, active?: boolean): Promise<boolean> => ipcRenderer.invoke("browser:register", webContentsId, requestId, sessionId, active),
     clearData: (): Promise<void> => ipcRenderer.invoke("browser:clearData"),
     screenshot: (webContentsId: number): Promise<string> => ipcRenderer.invoke("browser:screenshot", webContentsId),
-    onNewTab: (cb: Cb<{ requestId: string; url: string }>) => on("browser:new-tab", cb),
+    onNewTab: (cb: Cb<{ requestId: string; url: string; sessionId?: string }>) => on("browser:new-tab", cb),
     onCloseTab: (cb: Cb<{ webContentsId: number }>) => on("browser:close-tab", cb),
     onActivateTab: (cb: Cb<{ webContentsId: number }>) => on("browser:activate-tab", cb),
     onOpenUrl: (cb: Cb<{ url: string }>) => on("browser:open-url", cb),

@@ -1,6 +1,6 @@
 {
   "name": "rigwell",
-  "version": "0.3.3",
+  "version": "0.4.1",
   "private": true,
   "type": "module",
   "bin": {
@@ -8,14 +8,22 @@
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "site:build": "bun website/build.ts",
+    "site:preview": "bun website/serve.ts",
+    "site:dev": "bun run site:build && bun --watch website/serve.ts"
   },
   "devDependencies": {
     "@types/bun": "1.2.20",
+    "@types/qrcode": "1.5.6",
     "typescript": "5.8.3"
   },
   "dependencies": {
-    "quickjs-emscripten": "0.31.0"
+    "@vscode/tree-sitter-wasm": "0.3.1",
+    "nodemailer": "10.5.0",
+    "qrcode": "1.5.4",
+    "quickjs-emscripten": "0.31.0",
+    "selfsigned": "5.5.0"
   },
   "license": "AGPL-3.0-only"
 }

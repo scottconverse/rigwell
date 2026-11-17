@@ -1,0 +1,9 @@
+job job-131 started on runner-8
+step 0: download 12MB
+step 1: download 12MB
+step 2: lint ok
+step 3: cache hit
+step 4: compile ok
+step 5: compile ok
+STATUS: FAILED
+summary: see artifacts

@@ -1,0 +1,3 @@
+Implement redact(value,keys): return a deep JSON copy replacing values of case-insensitive matching object keys with [redacted], including objects inside arrays. Do not change input or treat substring matches as keys.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

@@ -1,0 +1,7 @@
+{
+  "connectors": [
+    { "name": "linear", "description": "Work with issues and projects in Linear.", "category": "Project management", "transport": "http", "url": "https://mcp.linear.app/mcp", "auth": "oauth", "docs": "https://linear.app/docs/mcp" },
+    { "name": "notion", "description": "Find and update pages in a Notion workspace.", "category": "Knowledge", "transport": "http", "url": "https://mcp.notion.com/mcp", "auth": "oauth", "docs": "https://developers.notion.com/guides/mcp/get-started-with-mcp" },
+    { "name": "sentry", "description": "Investigate application errors and performance in Sentry.", "category": "Development", "transport": "http", "url": "https://mcp.sentry.dev/mcp", "auth": "oauth", "docs": "https://mcp.sentry.dev/" }
+  ]
+}

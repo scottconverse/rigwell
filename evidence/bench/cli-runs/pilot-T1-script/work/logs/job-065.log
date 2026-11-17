@@ -1,0 +1,10 @@
+job job-065 started on runner-3
+step 0: lint ok
+step 1: compile ok
+step 2: warning: FAILED to fetch optional mirror, using default
+step 3: tests: 41 passed
+step 4: compile ok
+step 5: warning: FAILED to fetch optional mirror, using default
+step 6: tests: 41 passed
+STATUS: PASSED
+summary: see artifacts

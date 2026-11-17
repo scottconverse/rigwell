@@ -1,5 +1,5 @@
 // Layered settings loader (spec §12.2).
-// Precedence, highest -> lowest: org (no-op slot) > runtime (--settings) > folder (nearer wins)
+// Precedence, highest -> lowest: local/system policy and managed settings > runtime (--settings) > folder (nearer wins)
 // > project > user > builtin. Within a level `settings.local.json` wins over `settings.json`.
 // Merge: plain objects deep-merge; arrays and scalars REPLACE (command lists included: the
 // higher level's list is the whole list; no concatenation).
@@ -17,6 +17,8 @@ export interface CustomModelEntry {
   displayName?: string;
   provider?: string;
   baseUrl?: string;
+  executionBackend?: "claude-cli" | "codex-cli";
+  cliExecutable?: string;
   /** AWS settings (spec 12.2), checked in models.ts. */
   bedrock?: unknown;
   apiKey?: string;
@@ -61,6 +63,8 @@ export interface RigwellSettings {
   loopGuards?: Record<string, number>;
   /** Candidates for the "auto" model id: { classifierModel, candidates: [{ model, description, inputCost }], threshold?, timeoutMs? }. */
   autoRouter?: { classifierModel: string; candidates: { model: string; description: string; inputCost: number }[]; threshold?: number; timeoutMs?: number };
+  fallbackModels?: string[];
+  features?: Record<string, boolean>;
   compactionThresholdCheckEnabled?: boolean;
   /** "current-model": compaction summaries use the active model; "default" (or unset): `compactionModel` when set. */
   compactionModelMode?: "current-model" | "default";
@@ -216,7 +220,7 @@ export function loadSettings(opts: {
       const r = applyOrg(settings as Record<string, unknown>, org.settings, DEFAULT_COMMAND_LISTS, mergeSettings);
       settings = r.settings as RigwellSettings;
       managedKeys = r.managedKeys;
-      used.push({ level: "org", path: org.path });
+      for (const file of org.paths ?? [org.path]) used.push({ level: "org", path: file });
     }
   }
   const sources = [...used.reverse(), { level: "builtin" as const, path: "" }];

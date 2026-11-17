@@ -1,5 +1,9 @@
 // One agent session: holds the transcript, runs turns, emits notifications (spec §3.1.7, §4).
 import { homedir } from "node:os";
+import { fleetIsStopping, registerLiveSession } from "../machines/live-sessions.ts";
+import { rigwellHome } from "../storage/paths.ts";
+import { configuredSessionLease, type SessionLease } from "../sync/lease.ts";
+import { readSyncConfig } from "../sync/config.ts";
 import { basename, join, resolve } from "node:path";
 import type {
   AutonomyLevel, CommandLists, ContentBlock, InteractionMode, Message, ModelAdapter, ModelConfig,
@@ -9,6 +13,7 @@ import type {
 import type { ModelRequest, ToolContext, ToolExecutionMode, ToolOutput } from "../core/types.ts";
 import { SnapshotRecorder } from "../snapshots/index.ts";
 import { ModelError, zeroUsage } from "../core/types.ts";
+import { assertSpend, readSpendStatus, spendWarnings, SpendLimitError } from "../spend/spend.ts";
 import { JobManager, type Job } from "../jobs/manager.ts";
 import { ToolCallError } from "../script/bindings.ts";
 import { ScriptService, type ScriptLimits } from "../script/service.ts";
@@ -21,8 +26,10 @@ import {
 } from "./compaction.ts";
 import { AUTO_MODEL_ID, route, type RouteChoice, type RouterConfig } from "./router.ts";
 import type { CompactionRecord } from "../storage/transcript.ts";
+import type { AnalyticsMetric } from "../storage/analytics-records.ts";
 import { DeferredRegistry, type DeferredState } from "./deferred.ts";
 import { RequestBuilder } from "./request.ts";
+import { COORDINATION_TOOLS } from "../adapters/coordination-bridge.ts";
 import { contextBreakdown } from "./context-stats.ts";
 import { estimateTokens } from "./budget.ts";
 import type { HookRunner } from "../hooks/index.ts";
@@ -30,6 +37,7 @@ import type { PermissionModeName } from "../hooks/runner.ts";
 import { InstructionLoader } from "../instructions/index.ts";
 import { renderAdditionalSkills, SkillRegistry } from "../skills/skills.ts";
 import { McpManager, isMcpAllowed, mcpTool, rememberMcp, type McpServerConfig } from "../mcp/index.ts";
+import { closeSessionBrowsers } from "../browser/tools.ts";
 import { isStarted, runTask, TaskError, type ChildOptions, type ChildOutcome, type ParentContext, type TaskInput, type TaskLimits } from "../subagents/task.ts";
 import { agentCatalog, type CustomAgent } from "../subagents/agents.ts";
 import { exitSpecModeTool, recommendMissionTool, upgradeModelTool, saveSpec, skillTool, specFileName, specSaveFolder, taskTool } from "./extra-tools.ts";
@@ -109,6 +117,7 @@ export interface SessionPersistence {
   appendMessage(msg: Message, parentId: string | null): Promise<void>;
   appendTurnOutcome(o: { turnId: string; reason: string; resultKind: "text" | "structured" | null }): Promise<void>;
   appendCompaction?(rec: CompactionRecord): Promise<void>;
+  appendAnalyticsMetric?(metric: AnalyticsMetric): Promise<void>;
   /** todo_state record (spec 12.1). */
   appendTodoState?(todos: TodoItem[], messageIndex: number): Promise<void>;
   /** Stores a new session title (a record in the transcript plus the settings file). */
@@ -153,6 +162,11 @@ export interface HooksFactoryArgs {
 }
 
 export interface SessionDeps {
+  /** Immutable owner tool ceiling, also applied inside Scripts and descendant tasks. */
+  maxToolIds?: string[];
+  /** Admission applies to every ordinary turn, including message and background wakes. */
+  beforeTurn?: (signal: AbortSignal) => Promise<() => void>;
+  onUsage?: (modelId: string, usage: TokenUsage) => void | Promise<void>;
   id: string;
   cwd: string;
   settings: SessionSettings;
@@ -169,6 +183,8 @@ export interface SessionDeps {
   persistence: SessionPersistence;
   shell: string;
   retryBaseDelayMs?: number;
+  /** Explicit user/managed pool, never discovered from available provider credentials. */
+  fallbackModels?: string[];
   /** Models (ids or API names) that run script_only; every other model runs direct_only (spec §4.1). */
   scriptToolModels?: string[];
   /** Per-session override from initialize_session. */
@@ -352,6 +368,7 @@ export class Session {
   private lastCallContext?: { tokens: number; count: number };
   /** The model "auto" routing picked for the latest request. */
   private routed?: RouteChoice;
+  private requestModel?: ModelConfig;
   // ---- Phase 5 wiring ----
   readonly hooks?: HookRunner;
   readonly instructions: InstructionLoader;
@@ -369,6 +386,9 @@ export class Session {
   private halt?: { kind: "stop" | "abort"; message: string };
   private readonly startedAt = Date.now();
   private ended = false;
+  private fleetStopping = false;
+  private readonly fleetHome = rigwellHome();
+  private unregisterLive?: () => void;
   private toolCalls = 0;
   /** Outcome of the latest finished turn (a subagent's report is its final text). */
   lastTurn?: { reason: TurnReason; text: string; structured?: unknown };
@@ -444,10 +464,11 @@ export class Session {
       },
     });
     this.jobs.onFinished(() => { if (!this.running) this.kick(); });
+    this.unregisterLive = registerLiveSession(this);
   }
 
   /** Effective tool mode: the per-session override, else the model allowlist (spec §4.1). */
-  effectiveMode(modelId: string = this.activeModelId()): ToolExecutionMode {
+  effectiveMode(modelId: string = this.currentModel()?.id ?? this.activeModelId()): ToolExecutionMode {
     if (this.deps.toolExecutionModeOverride) return this.deps.toolExecutionModeOverride;
     const list = this.deps.scriptToolModels ?? [];
     const model = this.deps.resolveModel(modelId);
@@ -521,6 +542,7 @@ export class Session {
 
   /** initialize_session tool id lists: restrictToolIds is a hard allowlist; disabledToolIds removes tools. */
   private byIds(tools: Tool[]): Tool[] {
+    if (this.deps.maxToolIds) tools = tools.filter((t) => this.deps.maxToolIds!.includes(t.name));
     const ids = this.deps.toolIds;
     if (!ids) return tools;
     let t = tools;
@@ -564,9 +586,13 @@ export class Session {
     return this.byIds([...this.baseTools(), ...this.sessionTools(), ...task, ...exit, this.deferred.loadToolsTool(), this.deferred.callToolTool(), ...script]);
   }
 
+  private notificationViews = new Set<(n: Record<string, unknown>) => void>();
+  subscribeNotifications(view: (n: Record<string, unknown>) => void) { this.notificationViews.add(view); return () => { this.notificationViews.delete(view); }; }
   private notify(n: Record<string, unknown>) {
     const redact = this.deps.redact;
-    this.host.notify(redact ? (redactDeep(n, redact) as Record<string, unknown>) : n);
+    const value = redact ? (redactDeep(n, redact) as Record<string, unknown>) : n;
+    this.host.notify(value);
+    for (const view of this.notificationViews) try { view(value); } catch (e) { this.deps.log?.(`[session view] ${(e as Error).message}`); }
   }
 
   private setState(s: WorkingState) {
@@ -581,6 +607,7 @@ export class Session {
   settingsSnapshot(): Record<string, unknown> {
     return {
       ...this.settings, toolExecutionMode: this.effectiveMode(), availableAutonomyLevels: ["off", "low", "medium", "high"],
+      ...(this.requestModel && this.activeModelId() !== AUTO_MODEL_ID && this.requestModel.id !== this.activeModelId() ? { effectiveFallbackModel: this.requestModel.id } : {}),
       sandbox: sandboxStatus(this.id, this.cwd),
       ...(this.routed ? { effectiveRouterModel: this.routedSettings(), routedModelId: this.routed.modelId, routedReasoningEffort: this.activeEffort() } : {}),
       ...(this.deps.toolIds?.restrict ? { restrictToolIds: this.deps.toolIds.restrict } : {}),
@@ -601,7 +628,7 @@ export class Session {
     if (p.autonomyLevel !== undefined && this.deps.maxAutonomy) p = { ...p, autonomyLevel: clampAutonomy(p.autonomyLevel, this.deps.maxAutonomy) };
     if (p.autonomyLevel !== undefined && p.autonomyLevel !== this.settings.autonomyLevel) causes.push("autonomy changed (tool list)");
     Object.assign(this.settings, Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined)));
-    if (this.activeModelId() !== modelBefore) causes.push("model changed");
+    if (this.activeModelId() !== modelBefore) { this.requestModel = undefined; causes.push("model changed"); }
     if (this.settings.interactionMode !== modeBefore) {
       causes.push("interaction mode changed (tool list)");
       if (!o.quietModeChange) this.pendingNotices.push(this.specMode ? specOnNotice(this.interactive) : SPEC_OFF_NOTICE);
@@ -727,6 +754,11 @@ export class Session {
    * (turn 1 waits for them, at most 60 s). Call once after construction.
    */
   start(source: "startup" | "resume" = "startup") {
+    if (readSyncConfig(this.fleetHome)?.kinds.includes("session")) { this.syncStart = source; return; }
+    this.startOwned(source);
+  }
+  private syncStart?: "startup" | "resume";
+  private startOwned(source: "startup" | "resume") {
     if (this.mcp) {
       try { this.mcp.startFromConfig(this.deps.mcp!.servers).catch((e) => this.deps.log?.(`[mcp] start failed: ${(e as Error)?.message ?? e}`)); }
       catch (e) { this.deps.log?.(`[mcp] start failed: ${(e as Error)?.message ?? e}`); }
@@ -750,11 +782,17 @@ export class Session {
   async end(reason = "other") {
     if (this.ended) return;
     this.ended = true;
-    if (this.hooks?.hasHooks() && !this.deps.isChild) {
+    this.unregisterLive?.();
+    await closeSessionBrowsers(this.id).catch((e) => this.deps.log?.(`[browser] cleanup failed: ${(e as Error).message}`));
+    if (this.hooks?.hasHooks() && !this.deps.isChild && this.syncStart === undefined && (!this.syncLease || this.syncLease.owned)) {
       await this.hooks.sessionEnd(reason, Date.now() - this.startedAt, this.messages.length).catch(() => {});
     }
     await this.mcp?.shutdown().catch(() => {});
     await detachSandbox(this.id).catch(() => {});
+    if (this.syncLease) {
+      this.interrupt(true); await this.stopBackgroundJobs(); await this.idle();
+      await this.syncLease.release().catch((e) => this.deps.log?.(`[sync] release failed: ${e.message}`));
+    }
   }
 
   /** A note for the user only (hook system messages, notices): stored and sent as create_message, never shown to the model. */
@@ -767,13 +805,15 @@ export class Session {
   /** Accepts a user message. Returns at once; the turn runs in the background. */
   addUserMessage(
     text: string, messageId: string = crypto.randomUUID(), source?: string,
-    opts: { content?: ContentBlock[]; placement?: "end_of_turn" | "end_of_loop"; outputFormat?: OutputFormat | null } = {},
+    opts: { content?: ContentBlock[]; placement?: "end_of_turn" | "end_of_loop" | "now"; outputFormat?: OutputFormat | null } = {},
   ) {
+    if (this.fleetStopping || fleetIsStopping(this.fleetHome)) throw new Error("This machine is stopping its sessions; try again after it finishes.");
     const entry: QueuedUserMessage = {
       text, messageId, ...(source ? { source } : {}), ...(opts.content?.length ? { content: opts.content } : {}), ...(opts.outputFormat !== undefined ? { outputFormat: opts.outputFormat } : {}),
     };
     // end_of_loop while a turn runs is steering: it is delivered after the next tool call batch (spec 13.3).
-    if (opts.placement === "end_of_loop" && this.running) this.steer.push(entry);
+    if (opts.placement === "now") { this.interrupt(); this.queue.unshift(entry); }
+    else if (opts.placement === "end_of_loop" && this.running) this.steer.push(entry);
     else this.queue.push(entry);
     this.kick();
   }
@@ -783,6 +823,25 @@ export class Session {
 
   /** Prompts the client has not answered (load_session pendingPermissions / pendingAskUserRequests). */
   pendingPrompts(): PendingPrompt[] { return [...this.prompts.values()]; }
+
+  /** Service-owned approvals use the same reconnectable registry as native tools. */
+  async requestServicePermission(params: Record<string, unknown>, send: () => Promise<any>, signal?: AbortSignal): Promise<any> {
+    const requestId = String(params.requestId);
+    const fallback = { selectedOption: "cancel" };
+    if (signal?.aborted) return fallback;
+    const cancel = () => this.answerPrompt(requestId, fallback);
+    signal?.addEventListener("abort", cancel, { once: true });
+    const previousState = this.workingState;
+    this.asking("start");
+    this.setState("waiting_for_tool_confirmation");
+    try { return await this.prompt("permission", requestId, params, send, fallback); }
+    finally {
+      signal?.removeEventListener("abort", cancel);
+      this.asking("end");
+      this.notify({ type: "permission_resolved", requestId });
+      if (!signal?.aborted) this.setState(previousState);
+    }
+  }
 
   /** An answer from a reconnected client resolves the original wait (keyed by requestId). */
   answerPrompt(requestId: string, answer: unknown): boolean {
@@ -797,6 +856,7 @@ export class Session {
     return new Promise<T>((resolve) => {
       if (!send) return resolve(fallback);
       this.prompts.set(requestId, { requestId, kind, params, fallback, resolve: (a) => { this.prompts.delete(requestId); resolve(a as T); } });
+      this.notify({ type: "user_prompt_requested", kind, requestId, summary: kind === "ask_user" ? String((params.questions as AskQuestion[] | undefined)?.[0]?.question ?? "The agent has a question").slice(0, 500) : "Open the source to review the complete permission request." });
       send().then(
         (a) => this.prompts.get(requestId)?.resolve(a),
         (e) => { if ((e as { code?: number })?.code !== DISCONNECTED) this.prompts.get(requestId)?.resolve(fallback); },
@@ -806,7 +866,7 @@ export class Session {
 
   /** Starts the turn loop unless it is already running. */
   private kick() {
-    if (this.currentRun) return;
+    if (this.currentRun || this.fleetStopping) return;
     const p = this.drain();
     this.currentRun = p;
     // A message queued after drain() made its last queue check but before currentRun was cleared would be stranded
@@ -820,7 +880,9 @@ export class Session {
   /** Resolves when no turn is running. */
   async idle() { while (this.currentRun) await this.currentRun; }
 
-  interrupt() {
+  interrupt(clearQueued = false) {
+    if (clearQueued) { this.queue.length = 0; this.steer.length = 0; }
+    this.admissionAbort?.abort();
     this.abort?.abort();
     // An interrupted turn stops waiting on the client.
     for (const p of [...this.prompts.values()]) p.resolve(p.fallback);
@@ -835,9 +897,11 @@ export class Session {
         while (this.queue.length) {
           const next = this.queue.shift()!;
           await this.runTurn(next.text, next.messageId, undefined, next);
+          if (this.fleetStopping) break;
           if (this.steer.length) this.queue.push(...this.steer.splice(0));
         }
         // A background job finished while the model was asleep: wake it with a reminder (spec §4.3).
+        if (this.fleetStopping) break;
         const wake = this.takeWake();
         if (!wake) break;
         await this.runTurn(wake, `wake-${crypto.randomUUID()}`, "llm_only");
@@ -879,6 +943,19 @@ export class Session {
 
   async stopBackgroundJobs() { await this.jobs.stopAll(); }
 
+  /** Stop current work without deleting the transcript or waking on cancelled job results. */
+  async stopForFleet() {
+    this.fleetStopping = true;
+    try {
+      this.interrupt(true);
+      await this.stopBackgroundJobs();
+      this.interrupt(true);
+      await this.idle();
+      for (const job of this.jobs.unreported()) job.reported = true;
+      this.interrupt(true);
+    } finally { this.fleetStopping = false; }
+  }
+
   private lastId(): string | null {
     const last = this.messages.at(-1);
     // The preamble after a compaction is not a transcript message: chain from the message the summary ends at.
@@ -892,7 +969,40 @@ export class Session {
     await this.deps.persistence.appendMessage(msg, parent);
   }
 
+  private admissionAbort?: AbortController;
+  private syncLease?: SessionLease;
+  private async claimSyncOwnership() {
+    this.syncLease ??= configuredSessionLease(this.id, () => {
+      this.interrupt(true);
+      void this.stopBackgroundJobs();
+      this.notify({ type: "error", message: "Session sync ownership was lost. Work stopped; close and reload this session before continuing.", errorType: "SessionError", timestamp: new Date().toISOString(), error: { name: "SessionOwnershipLost", message: "Session lease expired or renewal failed" } });
+    }, this.fleetHome);
+    await this.syncLease?.acquire();
+    if (this.syncStart !== undefined) { const source = this.syncStart; this.syncStart = undefined; this.startOwned(source); }
+  }
   private async runTurn(text: string, turnId: string, visibility?: "llm_only", entry?: QueuedUserMessage) {
+    const admission = new AbortController();
+    this.admissionAbort = admission;
+    let release: (() => void) | undefined;
+    let admitted = false;
+    try {
+      const spend = assertSpend(this.activeModelId() === AUTO_MODEL_ID || this.deps.fallbackModels?.length ? undefined : this.activeModelId());
+      release = await this.deps.beforeTurn?.(admission.signal);
+      if (!admission.signal.aborted) await this.claimSyncOwnership();
+      if (!admission.signal.aborted) { admitted = true; await this.warnSpend(spend, this.activeModelId()); await this.runAdmittedTurn(text, turnId, visibility, entry); }
+    } catch (e) {
+      if (admitted) throw e;
+      const reason = admission.signal.aborted ? "cancelled" : "error";
+      this.lastTurn = { reason, text: "" };
+      if (!admission.signal.aborted) this.notify({ type: "error", message: String((e as Error).message ?? e), errorType: "SessionError", timestamp: new Date().toISOString(), error: { name: "TurnAdmissionDenied", message: String((e as Error).message ?? e) } });
+      // Admission failed before taking transcript ownership. Notify without writing to another engine's files.
+      this.notify({ type: "agent_turn_completed", reason, turnId, tokenUsage: zeroUsage(), cumulativeTokenUsage: this.inclusiveUsage(), durationMs: 0 });
+      this.setState("idle");
+    }
+    finally { release?.(); if (this.admissionAbort === admission) this.admissionAbort = undefined; }
+  }
+
+  private async runAdmittedTurn(text: string, turnId: string, visibility?: "llm_only", entry?: QueuedUserMessage) {
     const started = Date.now();
     this.abort = new AbortController();
     const signal = this.abort.signal;
@@ -983,7 +1093,7 @@ export class Session {
         const content: ContentBlock[] = done.content;
         this.builder.monitor.recordUsage(done.usage);
         turnUsage = addUsage(turnUsage, done.usage);
-        this.tokenUsage = addUsage(this.tokenUsage, done.usage);
+        await this.accountUsage(model.id, done.usage, "answer");
         this.lastCallTokenUsage = { inputTokens: done.usage.inputTokens, cacheReadTokens: done.usage.cacheReadTokens, outputTokens: done.usage.outputTokens };
         this.providerLock ??= model.provider;
         await this.push({
@@ -1003,6 +1113,7 @@ export class Session {
         if (texts) lastText = texts;
 
         const calls = content.filter((b): b is ToolUseBlock => b.type === "tool_use");
+        if (signal.aborted && !calls.length) { reason = "cancelled"; break; }
         if (!calls.length && texts.trim() === "") {
           // No visible output (empty or thinking only): a one-word nudge each time, stop after emptyTurnStop in a row (spec 4.2).
           emptyStreak++;
@@ -1111,6 +1222,7 @@ export class Session {
     if (reason === "cancelled" && !this.deps.isChild) void this.hooks?.notification("idle_prompt", "The user stopped the agent.", turnId);
 
     const durationMs = Date.now() - started;
+    await this.deps.persistence.appendAnalyticsMetric?.({ kind: "turn", id: turnId, durationMs, reason });
     this.activeTimeMs += durationMs;
     const answer = this.structured as { value: unknown } | undefined;
     this.lastStructured = answer?.value;
@@ -1136,6 +1248,7 @@ export class Session {
 
   /** The model a request would go to now: the session model, or for "auto" the routed pick (else the first candidate). */
   private currentModel(): ModelConfig | undefined {
+    if (this.requestModel) return this.requestModel;
     const id = this.activeModelId();
     if (id === AUTO_MODEL_ID && this.deps.router) {
       return this.deps.resolveModel(this.routed?.modelId ?? this.deps.router.candidates[0]?.model ?? "");
@@ -1153,12 +1266,34 @@ export class Session {
 
   // ---------- model choice (auto routing, spec 4.5) ----------
 
+  private async accountUsage(model: string, usage: TokenUsage, purpose: string) {
+    this.tokenUsage = addUsage(this.tokenUsage, usage);
+    await this.deps.persistence.appendAnalyticsMetric?.({ kind: "usage", model, usage, purpose });
+    await this.deps.onUsage?.(model, usage);
+    try { await this.warnSpend(readSpendStatus(), model); } catch (e) { this.deps.log?.(`[spend] Cannot refresh spending coverage: ${(e as Error).message}`); }
+  }
+
+  private spendWarned = new Set<string>();
+  private async warnSpend(status: ReturnType<typeof readSpendStatus>, model: string) {
+    for (const warning of spendWarnings(status, model)) {
+      const key = `${status.day}:${warning.key}`;
+      if (!this.spendWarned.has(key)) { this.spendWarned.add(key); await this.userNote(warning.text); }
+    }
+  }
+  private spendAdapter(model: ModelConfig): ModelAdapter { assertSpend(model.id); return this.deps.createAdapter(model); }
+
   private async chooseModels(signal: AbortSignal): Promise<{ primary: ModelConfig; fallbacks: ModelConfig[] }> {
     const id = this.activeModelId();
     if (id === AUTO_MODEL_ID && this.deps.router) {
+      const self = this;
       const choice = await route(this.deps.router, this.messages, {
         resolveModel: this.deps.resolveModel,
-        stream: (m, r) => this.deps.streamWithRetry(this.deps.createAdapter(m), r, { strategy: "no_retry" }),
+        stream: async function* (m, r) {
+          for await (const event of self.deps.streamWithRetry(self.spendAdapter(m), r, { strategy: "no_retry" })) {
+            if (event.type === "message_done") await self.accountUsage(m.id, event.usage, "router");
+            yield event;
+          }
+        },
       }, signal);
       const primary = this.deps.resolveModel(choice.modelId);
       if (!primary) throw new ModelError("rejected", `Auto routing picked an unknown model: ${choice.modelId}`);
@@ -1173,24 +1308,53 @@ export class Session {
     return { primary: model, fallbacks: [] };
   }
 
-  /** Streams one answer from the chosen model; when the provider fails for good, the next fallback (routing only). */
-  private async callWithFallbacks(messageId: string, signal: AbortSignal): Promise<{ model: ModelConfig; done: any }> {
-    const { primary, fallbacks } = await this.chooseModels(signal);
-    const order = [primary, ...fallbacks];
+  private fallbackOrder(models: ModelConfig[]): ModelConfig[] {
+    const order = [...models];
+    for (const id of this.deps.fallbackModels ?? []) {
+      const model = this.deps.resolveModel(id);
+      if (model && !order.some((m) => m.id === model.id)) order.push(model);
+      else if (!model) this.deps.log?.(`[fallback] Skipping unavailable or policy-blocked profile ${id}`);
+    }
+    return order;
+  }
+
+  private async tryModels<T>(order: ModelConfig[], signal: AbortSignal | undefined, run: (model: ModelConfig) => Promise<T>): Promise<{ model: ModelConfig; result: T }> {
     for (let i = 0; i < order.length; i++) {
+      if (signal?.aborted) throw new ModelError("unknown", "Request aborted", { retryable: false });
       const model = order[i]!;
-      if (i > 0) this.builder.monitor.expectBreak(`router fallback to ${model.id}`);
-      try {
-        return { model, done: await this.streamOnce(model, messageId, signal) };
-      } catch (e) {
-        if (signal.aborted || !(e instanceof ModelError) || i === order.length - 1) throw e;
-        this.deps.log?.(`[router] ${model.id} failed (${e.message}); trying ${order[i + 1]!.id}`);
+      try { return { model, result: await run(model) }; }
+      catch (e) {
+        if (signal?.aborted || !(e instanceof ModelError) || (e instanceof SpendLimitError && e.scope === "overall") || i === order.length - 1) throw e;
+        const next = order[i + 1]!;
+        this.deps.log?.(`[fallback] ${model.id} failed (${e.message}); trying ${next.id}`);
+        await this.userNote(`Model ${model.id} failed (${e instanceof SpendLimitError ? "profile spend limit" : e.kind}); trying configured fallback ${next.id}.`);
+        this.notify({ type: "llm_retry", attempt: i + 1, reason: "fallback" });
+        this.builder.monitor.expectBreak(`fallback to ${next.id}`);
       }
     }
-    throw new ModelError("unknown", "no model could be called");
+    throw new ModelError("unknown", "No eligible model could be called");
+  }
+
+  /** Same-model retries finish before moving through the explicit ordered pool. */
+  private async callWithFallbacks(messageId: string, signal: AbortSignal): Promise<{ model: ModelConfig; done: any }> {
+    const { primary, fallbacks } = await this.chooseModels(signal);
+    const { model, result } = await this.tryModels(this.fallbackOrder([primary, ...fallbacks]), signal, async (candidate) => {
+      const previousMode = this.effectiveMode();
+      this.requestModel = candidate;
+      const nextMode = this.effectiveMode();
+      if (nextMode !== previousMode) {
+        this.lastMode = nextMode;
+        await this.push({ id: `notice-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: modeNotice(nextMode) }] });
+      }
+      const done = await this.streamOnce(candidate, messageId, signal);
+      this.notify({ type: "settings_updated", settings: this.settingsSnapshot() });
+      return done;
+    });
+    return { model, done: result };
   }
 
   private async streamOnce(model: ModelConfig, messageId: string, signal: AbortSignal): Promise<any> {
+    this.syncLease?.assertOwned();
     const g = this.guards(model);
     const req = { ...this.builder.build(this.buildInput(model, signal)), limits: { idleTimeoutMs: g.streamIdleTimeoutMs, hardLimitMs: g.hardResponseLimitMs } };
     this.setState("thinking");
@@ -1200,7 +1364,7 @@ export class Session {
     let streamText = "";
     let checked = 0;
     let done: any;
-    for await (const ev of this.deps.streamWithRetry(this.deps.createAdapter(model), req, {
+    for await (const ev of this.deps.streamWithRetry(this.spendAdapter(model), req, {
       strategy: "non_interactive", baseDelayMs: this.deps.retryBaseDelayMs, passEmpty: true,
       onRetry: (attempt: number, why: string) => {
         // A retried stream starts over: what the failed attempt streamed is discarded (spec 4.2).
@@ -1209,6 +1373,9 @@ export class Session {
       },
     })) {
       switch (ev.type) {
+        case "native_tool_metric":
+          await this.deps.persistence.appendAnalyticsMetric?.({ kind: "tool", id: ev.id, name: ev.name, status: ev.status, source: "native", model: model.id });
+          break;
         case "text_delta": {
           this.setState("streaming_assistant_message");
           textBlocks.add(ev.index);
@@ -1304,6 +1471,8 @@ export class Session {
     this.running = true;
     this.abort = new AbortController();
     try {
+      await this.claimSyncOwnership();
+      await this.startup; this.startup = undefined;
       const r = await this.compact({ reason: "manual", customInstructions: o.customInstructions, mode: o.mode, signal: this.abort.signal });
       return { newSessionId: this.id, removedCount: r.removedCount };
     } finally {
@@ -1343,21 +1512,25 @@ export class Session {
       const removed = this.messages.slice(0, cut);
       const real = removed.filter((m) => !m.id.startsWith("context-compact-"));
       if (!real.length) throw new Error("Nothing to compact yet.");
-      const model = this.compactionModel();
-      const g = this.guards(model);
-      const built = buildSummarizerRequest({
-        model, sessionId: this.id, messages: removed, cfg, customInstructions: o.customInstructions,
-        limits: { idleTimeoutMs: g.streamIdleTimeoutMs, hardLimitMs: g.hardResponseLimitMs },
+      const { model, result: { text, usage } } = await this.tryModels(this.fallbackOrder([this.compactionModel()]), o.signal, async (model) => {
+        const g = this.guards(model);
+        const built = buildSummarizerRequest({
+          model, sessionId: this.id, messages: removed, cfg, customInstructions: o.customInstructions,
+          limits: { idleTimeoutMs: g.streamIdleTimeoutMs, hardLimitMs: g.hardResponseLimitMs },
+        });
+        this.deps.log?.(`[compaction] ${o.reason}: summarizing ${real.length} messages (${built.transcriptChars} chars) with ${model.id}; summarizer limit ${built.limit} tokens, max_tokens ${built.req.maxOutputTokens}`);
+        const stream = this.deps.streamWithRetry(this.spendAdapter(model), { ...built.req, signal: o.signal,
+          ...(model.executionBackend ? { nativeExecution: { cwd: this.cwd, readOnly: true, skipPermissions: false, synthesis: true } } : {}),
+        }, {
+          strategy: "non_interactive", baseDelayMs: this.deps.retryBaseDelayMs,
+          onRetry: (attempt: number, why: string) => this.notify({ type: "llm_retry", attempt, reason: why }),
+        });
+        const result = await collectSummary(stream);
+        if (!result.text) throw new ModelError("empty_response", "The summarizer returned no text.");
+        return result;
       });
-      this.deps.log?.(`[compaction] ${o.reason}: summarizing ${real.length} messages (${built.transcriptChars} chars) with ${model.id}; summarizer limit ${built.limit} tokens, max_tokens ${built.req.maxOutputTokens}`);
-      const stream = this.deps.streamWithRetry(this.deps.createAdapter(model), { ...built.req, signal: o.signal }, {
-        strategy: "non_interactive", baseDelayMs: this.deps.retryBaseDelayMs,
-        onRetry: (attempt: number, why: string) => this.notify({ type: "llm_retry", attempt, reason: why }),
-      });
-      const { text, usage } = await collectSummary(stream);
-      if (!text) throw new ModelError("empty_response", "The summarizer returned no text.");
       if (usage) {
-        this.tokenUsage = addUsage(this.tokenUsage, usage);
+        await this.accountUsage(model.id, usage, "compaction");
         this.notifyUsage();
       }
 
@@ -1410,8 +1583,57 @@ export class Session {
 
   private buildInput(model: ModelConfig, signal?: AbortSignal) {
     const prof = resolveProfile(model, this.deps.profileSettings);
+    if (model.executionBackend && (sandboxStatus(this.id, this.cwd).enabled || this.deps.enableSecretScan || this.deps.toolFilter?.length || this.deps.toolIds?.restrict?.length)) {
+      throw new ModelError("rejected", "The signed-in client cannot enforce this session's Rigwell sandbox, commit scan or restricted tool policy. Use a direct adapter for this session.", { retryable: false });
+    }
     return {
-      model, sessionId: this.id, mode: this.effectiveMode(), tools: this.tools(), messages: this.messages,
+      ...(model.executionBackend ? { nativeExecution: {
+        cwd: this.cwd, readOnly: this.specMode || this.settings.autonomyLevel === "off", skipPermissions: this.deps.skipPermissions,
+        coordination: {
+          requestNativePermission: async (name: string, input: Record<string, unknown>, callSignal: AbortSignal): Promise<{ behavior: "allow" } | { behavior: "deny"; message: string }> => {
+            const denied = { behavior: "deny" as const, message: "The native action was not approved. Ask the user to approve it in Rigwell before retrying." };
+            const readOnly = () => this.specMode || this.settings.autonomyLevel === "off";
+            if (callSignal.aborted || signal?.aborted || readOnly()) return denied;
+            const id = `native-permission-${crypto.randomUUID()}`;
+            const cancel = () => {
+              for (const p of this.prompts.values()) {
+                const uses = p.params.toolUses as { toolUse?: { id?: string } }[] | undefined;
+                if (uses?.some((u) => u.toolUse?.id === id)) p.resolve(p.fallback);
+              }
+            };
+            callSignal.addEventListener("abort", cancel, { once: true });
+            this.asking("start");
+            try {
+              const answer = await this.askRaw({ type: "tool_use", id, name, input }, {
+                decision: "ask", confirmationType: "exec", impactLevel: "high", alwaysLevel: null,
+                details: { fullCommand: `Native ${name} in ${this.cwd}\n${typeof input.command === "string" ? input.command : JSON.stringify(input, null, 2)}` },
+                options: [{ label: "Yes, allow once", value: "proceed_once" }, { label: "No, cancel", value: "cancel" }],
+              });
+              return answer.option === "proceed_once" && !callSignal.aborted && !signal?.aborted && !readOnly() ? { behavior: "allow" } : denied;
+            } finally {
+              callSignal.removeEventListener("abort", cancel);
+              this.asking("end");
+              if (!callSignal.aborted && !signal?.aborted) this.setState("executing_tool");
+            }
+          },
+          tools: () => this.scriptTools().filter((t) => COORDINATION_TOOLS.has(t.name)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+          call: async (name: string, input: Record<string, unknown>, callSignal: AbortSignal) => {
+            if (callSignal.aborted || signal?.aborted || !COORDINATION_TOOLS.has(name)) throw new Error("Coordination call is no longer available");
+            const runId = `native-${crypto.randomUUID()}`, id = `${runId}-1`;
+            const cancel = () => {
+              for (const p of this.prompts.values()) {
+                const uses = p.params.toolUses as { toolUse?: { id?: string } }[] | undefined;
+                if (p.params.toolCallId === id || uses?.some((u) => u.toolUse?.id === id)) p.resolve(p.fallback);
+              }
+            };
+            callSignal.addEventListener("abort", cancel, { once: true });
+            try { return await this.callInner(name, input, { runId, n: 1, outerId: "", signal: callSignal, foreground: true, native: true }); }
+            finally { callSignal.removeEventListener("abort", cancel); }
+          },
+        },
+      } } : {}),
+      model, sessionId: this.id, mode: this.effectiveMode(), tools: this.tools(),
+      messages: model.executionBackend ? this.messages.map((m) => /^repl-tool-(call|result):native-/.test(m.id) ? { ...m, visibility: undefined } : m) : this.messages,
       reasoningEffort: this.activeEffort(), signal,
       extraSystem: [...(prof.promptVariant ? [prof.promptVariant] : []), ...(this.deps.extraSystem ?? [])],
       systemPrompt: this.deps.systemPrompt, toolDescriptions: prof.toolDescriptionOverrides, cacheStrategy: prof.cache.strategy, openai: openaiFields(prof),
@@ -1438,16 +1660,16 @@ export class Session {
   async warmupCache(): Promise<void> {
     if (this.running) return;
     const model = this.currentModel();
-    if (!model) return;
+    if (!model || model.executionBackend) return;
     try {
       const input = this.buildInput(model);
       const req = this.builder.buildWarmup(input);
       if (!req.messages.length) {
         req.messages = [{ id: "warmup", role: "user", content: [{ type: "text", text: "<system-reminder>Cache warm-up. Reply with one word.</system-reminder>" }] }];
       }
-      for await (const ev of this.deps.streamWithRetry(this.deps.createAdapter(model), req, { strategy: "non_interactive", baseDelayMs: this.deps.retryBaseDelayMs })) {
+      for await (const ev of this.deps.streamWithRetry(this.spendAdapter(model), req, { strategy: "non_interactive", baseDelayMs: this.deps.retryBaseDelayMs })) {
         if (ev.type === "message_done") {
-          this.tokenUsage = addUsage(this.tokenUsage, ev.usage);
+          await this.accountUsage(model.id, ev.usage, "warmup");
           this.deps.log?.(`[cache] warmup: read ${ev.usage.cacheReadTokens}, created ${ev.usage.cacheCreationTokens}, uncached ${ev.usage.inputTokens}`);
         }
       }
@@ -1458,11 +1680,12 @@ export class Session {
   }
 
   private async runTools(calls: ToolUseBlock[], signal: AbortSignal): Promise<{ results: ToolResultBlock[]; stop?: TurnReason; extras: string[] }> {
+    this.syncLease?.assertOwned();
     const results: ToolResultBlock[] = [];
     const extras: string[] = [];
     const tools = new Map(this.tools().map((t) => [t.name, t]));
     // Several calls that need approval get one prompt for the whole batch (spec 5.5.5).
-    const batch = await this.askBatch(calls, tools);
+    const batch = signal.aborted ? undefined : await this.askBatch(calls, tools);
     let stop: TurnReason | undefined = batch?.cancelled ? "permission_rejected" : undefined;
     for (const call of calls) {
       const phase = (p: string) => this.notify({ type: "tool_execution_phase_changed", toolUseId: call.id, toolName: call.name, phase: p });
@@ -1543,7 +1766,7 @@ export class Session {
           stop = "no_approver_available";
           this.notify({
             type: "error", errorType: "SessionError", timestamp: new Date().toISOString(),
-            message: `Tool call ${call.name} needs approval at autonomy "${this.settings.autonomyLevel}". Re-run with a higher --auto level (low, medium, high) or with --skip-permissions-unsafe.`,
+            message: `Tool call ${call.name} needs approval at autonomy "${this.settings.autonomyLevel}". ${call.name === "browser_evaluate" || call.name === "Browser" && input.action === "evaluate" ? "Page JavaScript requires an interactive approver." : "Re-run with a higher --auto level (low, medium, high) or with --skip-permissions-unsafe."}`,
           });
           continue;
         }
@@ -1619,6 +1842,12 @@ export class Session {
     } else if (!this.scriptTools().some((t) => t.name === name) && this.deferred.get(name)) {
       target = this.deferred.get(name);
     }
+    const pctx = {
+      autonomy: this.settings.autonomyLevel, interactionMode: this.settings.interactionMode,
+      skipPermissions: this.deps.skipPermissions, lists: this.deps.lists, cwd: this.cwd,
+    };
+    const effective = target?.name ?? name;
+    if (effective === "browser_evaluate" || effective === "Browser" && args.action === "evaluate") return this.deps.decide(effective, args, pctx);
     if (target) {
       if (this.deps.skipPermissions) return { decision: "allow" };
       const info = this.mcp?.findTool(target.name);
@@ -1643,10 +1872,6 @@ export class Session {
         details: { toolName: target.name, input: args }, reason: `Deferred tool ${target.name}`,
       };
     }
-    const pctx = {
-      autonomy: this.settings.autonomyLevel, interactionMode: this.settings.interactionMode,
-      skipPermissions: this.deps.skipPermissions, lists: this.deps.lists, cwd: this.cwd,
-    };
     if (unrated && name === "Execute") {
       const note = "A hook rewrote this command, so the model's risk rating no longer applies.";
       const d = this.deps.decide(name, { ...input, riskLevel: "high", riskReason: note }, pctx);
@@ -1667,11 +1892,11 @@ export class Session {
    */
   private async callInner(
     name: string, inputIn: Record<string, unknown>,
-    meta: { runId: string; n: number; outerId: string; signal: AbortSignal; foreground: boolean },
+    meta: { runId: string; n: number; outerId: string; signal: AbortSignal; foreground: boolean; native?: boolean },
   ): Promise<ToolOutput> {
     const id = `${meta.runId}-${meta.n}`;
     let input = inputIn;
-    const use: ToolUseBlock = { type: "tool_use", id, name, input, scriptExecution: { runId: meta.runId, outerToolUseId: meta.outerId } };
+    const use: ToolUseBlock = { type: "tool_use", id, name, input, ...(meta.native ? {} : { scriptExecution: { runId: meta.runId, outerToolUseId: meta.outerId } }) };
     this.notify({ type: "tool_call", toolUse: use });
     await this.push({ id: `repl-tool-call:${id}`, role: "assistant", visibility: "user_only", content: [use] });
     const finish = async (content: string, isError: boolean) => {
@@ -1683,6 +1908,11 @@ export class Session {
       throw new ToolCallError(message, errName);
     };
     let tool = this.scriptTools().find((t) => t.name === name);
+    if (meta.native && (!tool || !COORDINATION_TOOLS.has(name))) return refuse("Coordination tool is not available in this session", "PermissionDenied");
+    if (meta.native && tool) {
+      const errors = validate(input, tool.inputSchema);
+      if (errors.length) return refuse(`Invalid coordination arguments: ${errors.join("; ")}`);
+    }
     if (!tool) {
       // A deferred tool: callable once loaded (tools.server.tool is the name server__tool).
       if (!this.deferred.get(name) && !this.deferred.isLoaded(name)) {
@@ -1745,6 +1975,7 @@ export class Session {
     const scanned = await this.secretScanGate(use, input);
     if (scanned) return refuse(scanned, "PermissionDenied");
     try {
+      if (meta.native && meta.signal.aborted) return refuse("Coordination request cancelled", "PermissionDenied");
       this.toolCalls++;
       const out = await tool.run(input, { ...this.toolContext(meta.signal), toolUseId: id, snapshots: this.snapshotHooks(id) });
       await finish(out.content, !!out.isError);
@@ -1916,6 +2147,7 @@ export class Session {
     this.asking("start");
     void this.hooks?.notification("elicitation_dialog", p.questions[0]?.question ?? "The agent has a question for you");
     const raw = await this.prompt<AskUserAnswer>("ask_user", requestId, params, () => send(params), { cancelled: true, answers: [] });
+    this.notify({ type: "ask_user_resolved", requestId });
     this.asking("end");
     this.setState("executing_tool");
     const answers = Array.isArray(raw?.answers)
@@ -1959,6 +2191,7 @@ export class Session {
   private async generateTitle(firstMessage: string) {
     this.title.asked = true;
     const model = this.compactionModel();
+    if (model.executionBackend) return; // Native execution is not an incidental title-generation request.
     try {
       const cfg = this.compactionCfg();
       const max = Math.min(32 + cfg.textHeadroom, model.maxOutputTokens ?? Infinity);
@@ -1967,8 +2200,8 @@ export class Session {
         system: ["Write a title for a coding session from the user's first message. Answer with the title only: at most six words, no quotes, no trailing period."],
         messages: [{ id: "title-request", role: "user" as const, content: [{ type: "text" as const, text: firstMessage.slice(0, 2000) }] }],
       };
-      const { text, usage } = await collectSummary(this.deps.streamWithRetry(this.deps.createAdapter(model), req, { strategy: "no_retry" }));
-      if (usage) { this.tokenUsage = addUsage(this.tokenUsage, usage); this.notifyUsage(); }
+      const { text, usage } = await collectSummary(this.deps.streamWithRetry(this.spendAdapter(model), req, { strategy: "no_retry" }));
+      if (usage) { await this.accountUsage(model.id, usage, "title"); this.notifyUsage(); }
       const clean = text.split("\n")[0]!.replace(/^["'`#*\s]+|["'`.*\s]+$/g, "").slice(0, 80);
       if (!clean || this.title.manual) return;
       await this.setTitle(clean, false);
@@ -2009,10 +2242,14 @@ export class Session {
     return this.mcp;
   }
   listMcpServers() { return this.needMcp().listServers(); }
+  listMcpCatalog(sources?: unknown) { return this.needMcp().listCatalog(sources); }
+  addMcpCatalog(key: string, values?: Record<string, string>, name?: string) { return this.needMcp().addCatalog(key, values, name); }
+  signInMcp(name: string) { return this.needMcp().signIn(name); }
+  signOutMcp(name: string) { return this.needMcp().signOut(name); }
+  mcpLoginStatus(name: string, id: string) { return this.needMcp().loginStatus(name, id); }
+  cancelMcpLogin(name: string, id: string) { return this.needMcp().cancelLogin(name, id); }
   addMcpServer(p: Parameters<McpManager["addServer"]>[0]) { return this.needMcp().addServer(p); }
   removeMcpServer(name: string, level: "user" = "user") { return this.needMcp().removeServer(name, level); }
-  mcpLogin(name: string) { return this.needMcp().login(name); }
-  mcpLogout(name: string) { return this.needMcp().logout(name); }
 
   // ---------- spec mode (spec 5.5.7) ----------
 
@@ -2211,6 +2448,7 @@ export class Session {
     const headless = this.deps.autoRejectPermissionRequests || !this.host.requestPermission;
     child = new Session({
       ...this.deps,
+      beforeTurn: undefined,
       id: childId, cwd: opts.cwd, settings,
       messages: undefined, tokenUsage: undefined, deferred: undefined, archived: undefined, compactionAnchorId: undefined,
       persistence: store.persistence, transcriptPath: store.transcriptPath,

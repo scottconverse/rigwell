@@ -4,7 +4,7 @@ import { expandEntry, parseLoop } from "./customcmd.ts";
 import { plainStyler, transcriptLines, transcriptOpts } from "./transcript.ts";
 import { diffBody } from "./diff.ts";
 import { managedLabel } from "../storage/org.ts";
-import { familyTree, groupSessions, sessionLabel } from "./sessiontree.ts";
+import { workstreamAttention } from "../sidepane/attention.ts";
 import { formatContext, type ContextStats } from "./context.ts";
 import { DEFAULT_DISPLAY, OTHER_LABEL, OTHER_VALUE, type DisplaySettings, type Effect, type Item, type Key, type Panel, type Step, type TuiEvent, type TuiState } from "./types.ts";
 
@@ -19,7 +19,7 @@ const zeroUsage = () => ({ inputTokens: 0, outputTokens: 0, cacheCreationTokens:
 
 export function initialState(o: InitOptions): TuiState {
   return {
-    version: o.version ?? "0.3.3", cwd: o.cwd, homeDir: o.homeDir ?? "~/.rigwell", idPrefix: o.idPrefix ?? "tui", counter: 0,
+    version: o.version ?? "0.1.0", cwd: o.cwd, homeDir: o.homeDir ?? "~/.rigwell", idPrefix: o.idPrefix ?? "tui", counter: 0,
     header: { agentsMd: o.agentsMd ?? false, skills: 0, mcps: 0, issues: 0 }, rows: 24, cols: 80, scroll: 0, custom: [],
     modelId: o.modelId ?? "", reasoning: o.reasoning ?? "high", autonomy: o.autonomy ?? "off", mode: o.mode ?? "auto", models: [],
     working: "idle", running: false, now: 0, contextUsed: 0, contextLimit: 0, tokenUsage: zeroUsage(), turns: 0,
@@ -122,6 +122,10 @@ export function permissionPanel(id: string, params: any, display: DisplaySetting
   const u = uses[0] ?? {};
   const d = u.details ?? {};
   switch (u.confirmationType) {
+    case "share_session": return { ...base, kind: "permission", title: "Share session as an unlisted gist?", body: [`Title: ${d.title}`, `Destination: ${d.destination}`, `Size: ${d.bytes} bytes`, "", String(d.warning)], options: opts };
+    case "propose_workstream": return { ...base, kind: "exit_spec", title: `Workstream for approval: ${d.title}`, body: [`Goal: ${d.goal}`, ...(d.budget ? [`Budget: ${JSON.stringify(d.budget)}`] : []), ...(d.agents?.length ? [`Members: ${JSON.stringify(d.agents)}`] : []), "", ...String(d.plan ?? "").split("\n")], planText: String(d.plan ?? ""), options: opts };
+    case "create_pr": return { ...base, kind: "permission", title: "Push branch and create PR?", body: [`Repository: ${d.repository}`, `Branch: ${d.branch}`, `Base: ${d.base}`, `Title: ${d.title}`, `Draft: ${d.draft ? "yes" : "no"}`, "", String(d.body)], options: opts };
+    case "code_review": return { ...base, kind: "permission", title: "Post review to the PR?", body: [`Repository: ${d.repository}`, `PR: #${d.number}`, `Head: ${d.head}`, `Action: ${d.event}`, "", String(d.body), ...(d.comments ?? []).map((c: any) => `${c.path}:${c.line} (${c.side})\n${c.body}`)], options: opts };
     case "exec": {
       const body = [String(d.fullCommand ?? d.command ?? "")];
       if (d.impactLevel) body.push("", `${d.impactLevel} risk`);
@@ -146,11 +150,6 @@ export function permissionPanel(id: string, params: any, display: DisplaySetting
       const saved = typeof d.contextSavingsPercent === "number" ? ` (${d.contextSavingsPercent}% context saved)` : "";
       const options = opts.map((o) => (o.value.startsWith("proceed_new_session") ? { ...o, label: o.label + saved } : o));
       return { ...base, kind: "exit_spec", title: d.title ? `Specification for approval: ${d.title}` : "Specification for approval", body: plan.split("\n"), savePath: d.filePath ?? d.path, options };
-    }
-    case "create_pr": {
-      const body = [`Branch: ${d.branch} into ${d.base}${d.remote ? ` on ${d.remote}` : ""}${d.draft ? " (draft)" : ""}`, `Title:  ${d.title ?? ""}`];
-      if (d.body) body.push("", ...String(d.body).split("\n"));
-      return { ...base, kind: "permission", title: "Push and create a pull request", body, options: opts };
     }
     case "secret_scan_violation": {
       // Secret-scan prompt (spec 13.4): the command, then what was found where. The secret itself is never shown.
@@ -227,6 +226,7 @@ function finishPanel(s: TuiState, panel: Panel, picked: number[]): Step {
   if (a.type === "confirm") return { state, effects: picked.length && panel.options[picked[0]].value === "yes" ? a.effects : [] };
   if (a.type === "model") return { state: { ...state, hint: `Model: ${panel.options[picked[0]]?.label}` }, effects: [{ type: "settings", patch: { modelId: panel.options[picked[0]].value } }] };
   if (a.type === "resume") return { state, effects: [{ type: "resume", sessionId: panel.options[picked[0]].value }] };
+  if (a.type === "workstream") return { state, effects: [{ type: "view", name: "workstreams", args: panel.options[picked[0]].value }] };
   if (a.type === "rewind_pick") {
     const id = panel.options[picked[0]].value;
     const text = panel.rows?.find((r) => r.id === id)?.detail ?? "";
@@ -248,7 +248,7 @@ function finishPanel(s: TuiState, panel: Panel, picked: number[]): Step {
     // The comment box (Tab) rides along with whatever option is chosen; Ctrl+G's edited plan goes with proceed_edit (spec 5.5.7, 13.4).
     if (panel.kind === "exit_spec" && value[0] === "proceed_edit" && panel.editedSpec === undefined) {
       // Nothing edited yet: open the plan in $EDITOR first; the panel stays until the edit comes back.
-      return { state: s, effects: [{ type: "editor", text: panel.body.join("\n"), target: "spec" }] };
+      return { state: s, effects: [{ type: "editor", text: panel.planText ?? panel.body.join("\n"), target: "spec" }] };
     }
     const comment = panel.comment?.trim();
     const edited = panel.kind === "exit_spec" && value[0] === "proceed_edit" ? panel.editedSpec : undefined;
@@ -312,7 +312,7 @@ function panelKey(s: TuiState, k: Key): Step {
     return t === null ? { state: s, effects: [] } : { state: setPanel(s, panel, { comment: t }), effects: [] };
   }
   if (k.name === "tab" && commentKinds.has(panel.kind)) return { state: setPanel(s, panel, { commentMode: true }), effects: [] };
-  if (k.name === "ctrl+g" && panel.kind === "exit_spec") return { state: s, effects: [{ type: "editor", text: panel.editedSpec ?? panel.body.join("\n"), target: "spec" }] };
+  if (k.name === "ctrl+g" && panel.kind === "exit_spec") return { state: s, effects: [{ type: "editor", text: panel.editedSpec ?? panel.planText ?? panel.body.join("\n"), target: "spec" }] };
   const setSel = (sel: number): Step => ({ state: { ...s, panels: [{ ...panel, selected: (sel + n) % Math.max(1, n) }, ...s.panels.slice(1)] }, effects: [] });
   const toggle = (i: number): Step => ({
     state: { ...s, panels: [{ ...panel, checked: panel.checked.includes(i) ? panel.checked.filter((x) => x !== i) : [...panel.checked, i].sort((a, b) => a - b) }, ...s.panels.slice(1)] }, effects: [],
@@ -373,6 +373,20 @@ function upsertTool(items: Item[], id: string, patch: Partial<Extract<Item, { ki
 }
 
 function notification(s: TuiState, n: { type: string; [k: string]: any }): Step {
+  if (n.type === "workstream_prompt_resolved" || (n.type === "workstream_member_notification" && ["permission_resolved", "agent_turn_completed"].includes(n.notification?.type))) {
+    const inner = n.notification ?? n;
+    const dead = s.panels.filter((p) => p.workstreamId === n.workstreamId && p.agentId === n.agentId && (inner.type === "agent_turn_completed" || p.id === n.requestId || p.id === inner.requestId));
+    const effects: Effect[] = dead.map((p) => ({ type: "answer", requestId: (p.action as any).requestId, method: (p.action as any).method, result: n.type === "workstream_prompt_resolved" ? n.answer : cancelResult(p)!.result }));
+    if (s.overlay?.workstreamId === n.workstreamId) effects.push({ type: "view", name: "workstreams", args: n.workstreamId, refresh: true });
+    return { state: { ...s, panels: s.panels.filter((p) => !dead.includes(p)) }, effects };
+  }
+  if (String(n.type).startsWith("workstream_") && typeof n.workstreamId === "string") {
+    const next = workstreamAttention(s.workstreamAttention ?? {}, s.sessionId ?? "", n, s.now);
+    const requested = next.events.filter((ev) => ev.kind === "attention_requested");
+    const effects: Effect[] = requested.length ? [{ type: "attention", kind: "awaiting" }] : [];
+    if (s.overlay?.workstreamId === n.workstreamId) effects.push({ type: "view", name: "workstreams", args: n.workstreamId, refresh: true });
+    return { state: { ...s, workstreamAttention: next.states, items: [...s.items, ...requested.map((ev): Item => ({ kind: "info", text: ev.summary, level: ev.failed ? "error" : "info" }))] }, effects };
+  }
   switch (n.type) {
     case "settings_updated": {
       const st = n.settings ?? {};
@@ -438,12 +452,12 @@ function notification(s: TuiState, n: { type: string; [k: string]: any }): Step 
       return { state: { ...s, items: [...s.items, info(String(n.message ?? "error"), "error")] }, effects: [] };
     case "agent_turn_completed": {
       // Requests still on screen belong to the finished turn: the harness settled them as cancelled.
-      const dead = s.panels.filter((p) => p.action.type === "request");
+      const dead = s.panels.filter((p) => p.action.type === "request" && !p.workstreamId);
       const effects: Effect[] = dead.map((p) => ({ type: "answer", requestId: (p.action as any).requestId, method: (p.action as any).method, result: cancelResult(p)!.result }));
       // Steering messages the harness did not deliver mid-turn run as the next turn on its side: show them in the transcript.
       const flushed: Item[] = n.reason === "cancelled" ? [] : s.pending.steer.map((text): Item => ({ kind: "user", text }));
       let state: TuiState = {
-        ...s, running: false, working: "idle", runStartedAt: undefined, turns: s.turns + 1, panels: s.panels.filter((p) => p.action.type !== "request"),
+        ...s, running: false, working: "idle", runStartedAt: undefined, turns: s.turns + 1, panels: s.panels.filter((p) => !dead.includes(p)),
         items: [...s.items, ...flushed, ...(n.reason === "completed" || n.reason === "spec_handoff" ? [] : [info(`Turn ended: ${n.reason}`, n.reason === "cancelled" ? "info" : "error")])],
         pending: n.reason === "cancelled" ? s.pending : { ...s.pending, steer: [] },
       };
@@ -528,13 +542,14 @@ function runCommand(s0: TuiState, line: string): Step {
   switch (cmd.name) {
     case "help": return overlay(s, "Help", [
       "Keys", ...KEY_HELP.map(([k, d]) => `  ${k.padEnd(26)} ${d}`), "", "Autonomy levels (Ctrl+L)", ...AUTONOMY_HELP.map(([k, d]) => `  ${k.padEnd(8)} ${d}`),
-      "", "Modes: auto, spec (Shift+Tab). In spec mode the agent researches and plans first.", "", "Commands", ...COMMANDS.map((c) => `  /${c.name}${c.args ? " " + c.args : ""}`.padEnd(30) + c.desc + (c.aliases?.length ? ` (alias: ${c.aliases.map((a) => "/" + a).join(", ")})` : "")),
+      "", "Modes: auto, spec (Shift+Tab). In spec mode the agent researches and plans first.", "", "Commands", ...COMMANDS.map((c) => `  /${c.name}${c.args ? " " + c.args : ""}`.padEnd(30) + c.desc),
     ]);
     case "new": return guard([{ type: "new_session" }], "starts a new session");
     case "sessions":
       if (args) return guard([{ type: "resume", sessionId: args }], `resumes ${args}`);
       return { state: s, effects: [{ type: "list_sessions" }] };
-    case "tree": return guard([{ type: "list_sessions", tree: true }], "shows the session tree");
+    case "missions": return { state: s, effects: [{ type: "list_missions" }] };
+    case "workstreams": return { state: s, effects: [{ type: "view", name: "workstreams", args }] };
     case "model": {
       if (!s.models.length) return { state: { ...s, items: [...s.items, info("No models are configured.", "error")] }, effects: [] };
       const panel: Panel = {
@@ -577,9 +592,6 @@ function runCommand(s0: TuiState, line: string): Step {
     case "rename":
       if (!args) return { state: { ...s, items: [...s.items, info("Usage: /rename <title>", "error")] }, effects: [] };
       return { state: s, effects: [{ type: "rpc", method: "rename_session", params: { title: args }, label: "rename" }] };
-    case "pr":
-      if (args === "status") return { state: s, effects: [{ type: "rpc", method: "get_pr_status", params: {}, label: "pr status", after: "show_pr" }] };
-      return { state: s, effects: [{ type: "rpc", method: "create_pr", params: args ? { title: args } : {}, label: "pr", after: "show_pr" }] };
     case "btw":
       if (!args) return { state: { ...s, items: [...s.items, info("Usage: /btw <question>", "error")] }, effects: [] };
       return { state: s, effects: [{ type: "btw", question: args }] };
@@ -591,7 +603,7 @@ function runCommand(s0: TuiState, line: string): Step {
     case "cwd":
       if (!args) return { state: { ...s, items: [...s.items, info(`Folder: ${s.cwd}. Usage: /cwd <dir>`)] }, effects: [] };
       return guard([{ type: "new_session", cwd: args }], `moves to ${args} in a new session`);
-    case "mcp": case "hooks": case "skills": case "commands": case "agents": case "diagnostics": case "statusline": case "automations": case "loop": case "login": case "logout":
+    case "pr": case "review": case "mcp": case "hooks": case "skills": case "commands": case "agents": case "diagnostics": case "statusline": case "automations": case "loop": case "login": case "logout":
       return view(cmd.name as any);
     case "vim": return { state: { ...s, vim: !s.vim, vimMode: "insert", hint: `Vim keys ${s.vim ? "off" : "on"}` }, effects: [] };
     case "themes": {
@@ -633,11 +645,6 @@ function submit(s0: TuiState, queueOnly: boolean): Step {
   const text = raw.trim();
   if (!text) return { state: s0, effects: [] };
   const cleared: TuiState = { ...remember(s0, raw), input: { text: "", cursor: 0 }, menuDismissed: false, atMenu: null, hint: undefined };
-  if (s0.starting) {
-    // Typeahead during startup: keep the message and send it once the session is ready (see session_ready).
-    const queued = s0.shellMode ? "!" + text : text;
-    return { state: { ...cleared, shellMode: false, hint: "Will send when ready", pending: { ...cleared.pending, queue: [...cleared.pending.queue, queued] } }, effects: [] };
-  }
   if (s0.shellMode) return { state: { ...cleared, shellMode: false, items: [...cleared.items, { kind: "user", text: "! " + text }] }, effects: [{ type: "shell", command: text }] };
   if (text.startsWith("/")) return runCommand(cleared, text);
   return sendText(cleared, text, undefined, queueOnly);
@@ -844,6 +851,11 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
     case "request": {
       const panel = e.method === "request_permission" ? permissionPanel(e.id, e.params, s.display) : e.method === "ask_user" ? askPanel(e.id, e.params)
         : e.method === "request_trust" ? trustPanel(e.id, e.params) : pickPanel(e.id, e.params);
+      if (typeof e.params.workstreamId === "string" && typeof e.params.agentId === "string") {
+        panel.workstreamId = e.params.workstreamId; panel.agentId = e.params.agentId; panel.title = `${e.params.workstreamTitle} / ${e.params.agentName}: ${panel.title}`;
+        const next = notification(s, { type: "workstream_agent_status", workstreamId: panel.workstreamId, agent: { agentId: panel.agentId, name: e.params.agentName, status: "waiting_input" } });
+        return { state: { ...next.state, panels: [...s.panels, panel], working: "waiting_for_tool_confirmation" }, effects: next.effects };
+      }
       return { state: { ...s, panels: [...s.panels, panel], working: "waiting_for_tool_confirmation" }, effects: [{ type: "attention", kind: "awaiting" }] };
     }
     case "session_ready": {
@@ -861,22 +873,6 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
         ...(r.pendingAskUserRequests ?? []).filter((x: any) => typeof x?.requestId === "string").map((x: any) => askPanel(x.requestId, x)),
       ];
       const busy = r.isAgentLoopInProgress === true || reshown.length > 0;
-      if (s.starting) {
-        // Text typed and queued while starting: keep the half-typed input and send the queued messages now.
-        const queued = s.pending.queue;
-        const typed = s.input;
-        let cur: TuiState = {
-          ...base, starting: false, hint: undefined, items: messagesToItems(r.session?.messages ?? []), tokenUsage: r.tokenUsage ?? zeroUsage(), contextUsed: 0,
-          running: busy, runStartedAt: busy ? s.now : undefined, working: reshown.length ? "waiting_for_tool_confirmation" : busy ? (r.workingState ?? "streaming_assistant_message") : "idle",
-          pending: { steer: [], queue: [] }, panels: reshown, overlay: null, turns: 0, atMenu: null, scroll: 0,
-        };
-        const effects: Effect[] = [{ type: "fetch_context", show: false }, { type: "status_line" }, ...(reshown.length ? [{ type: "attention" as const, kind: "awaiting" as const }] : [])];
-        for (const q of queued) {
-          const step = q.startsWith("!") ? submit({ ...cur, input: { text: q.slice(1), cursor: q.length - 1 }, shellMode: true }, false) : submit({ ...cur, input: { text: q, cursor: q.length } }, false);
-          cur = step.state; effects.push(...step.effects);
-        }
-        return { state: { ...cur, input: typed }, effects };
-      }
       return {
         state: {
           ...base, items: messagesToItems(r.session?.messages ?? []), tokenUsage: r.tokenUsage ?? zeroUsage(), contextUsed: 0,
@@ -892,7 +888,12 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
       if (!e.show) return { state, effects: [] };
       return { state: { ...state, overlay: { title: "Context", lines: formatContext(st as ContextStats, modelName(s)) } }, effects: [] };
     }
-    case "overlay": return { state: { ...s, overlay: { title: e.title, lines: e.lines } }, effects: [] };
+    case "workstreams": {
+      if (!e.rows.length) return { state: { ...s, overlay: { title: "Workstreams", lines: ["No workstreams yet. Ask a lead to propose one."] } }, effects: [] };
+      const panel: Panel = { id: "workstreams", kind: "select", action: { type: "workstream" }, title: "Workstreams", body: [], options: e.rows.map((r) => ({ label: `${r.title} [${r.state}] ${r.agentCount} agents`, value: r.id })), selected: 0, checked: [] };
+      return { state: { ...s, panels: [...s.panels, panel] }, effects: [] };
+    }
+    case "overlay": return { state: { ...s, ...(e.workstreamId ? { workstreamId: e.workstreamId } : {}), overlay: { title: e.title, lines: e.lines, ...(e.workstreamId ? { workstreamId: e.workstreamId } : {}) } }, effects: [] };
     case "display":
       return { state: { ...s, display: { ...DEFAULT_DISPLAY, ...e.display }, managed: e.managed, maxAutonomy: e.maxAutonomy, ...(e.showThinking !== undefined ? { showThinking: e.showThinking } : {}) }, effects: [] };
     case "extras": return { state: { ...s, custom: e.custom, header: { ...s.header, skills: e.skills, mcps: e.mcps ?? s.header.mcps, issues: e.issues ?? s.header.issues } }, effects: [] };
@@ -911,11 +912,9 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
     case "info": return { state: { ...s, items: [...s.items, info(e.text, e.level ?? "info")] }, effects: [] };
     case "sessions": {
       if (!e.sessions.length) return { state: { ...s, items: [...s.items, info("No saved sessions in this folder.")] }, effects: [] };
-      const rows = e.tree ? familyTree(e.sessions.map((x) => ({ ...x })), s.sessionId) : groupSessions(e.sessions.map((x) => ({ ...x })));
-      if (!rows.length) return { state: { ...s, items: [...s.items, info("This session is not saved yet, so it has no tree.")] }, effects: [] };
       const panel: Panel = {
-        id: "resume", kind: "select", action: { type: "resume" }, title: e.tree ? "Session tree" : "Resume a session", body: [], selected: Math.max(0, rows.findIndex((r) => r.row.id === s.sessionId && e.tree)), checked: [],
-        options: rows.slice(0, 20).map((r) => ({ label: sessionLabel(r, e.tree ? s.sessionId : undefined), value: r.row.id })),
+        id: "resume", kind: "select", action: { type: "resume" }, title: e.title ?? "Resume a session", body: [], selected: 0, checked: [],
+        options: e.sessions.slice(0, 20).map((x) => ({ label: `${x.id.slice(0, 8)}  ${x.pinned ? "* " : ""}${x.title ?? "(untitled)"}${x.updatedAt ? "  " + x.updatedAt.slice(0, 16).replace("T", " ") : ""}`, value: x.id })),
       };
       return { state: { ...s, panels: [...s.panels, panel] }, effects: [] };
     }
@@ -929,11 +928,12 @@ export function reduce(s: TuiState, e: TuiEvent): Step {
     case "spec_edited": {
       const i = s.panels.findIndex((p) => p.kind === "exit_spec");
       if (i < 0) return { state: s, effects: [] };
-      if (!e.text.trim()) return { state: { ...s, hint: "The edited spec is empty, so it was ignored" }, effects: [] };
       const p = s.panels[i];
+      if (!e.text.trim()) return { state: { ...s, hint: p.planText !== undefined ? "The edited plan is empty, so it was ignored" : "The edited spec is empty, so it was ignored" }, effects: [] };
       const at = p.options.findIndex((o) => o.value === "proceed_edit");
-      const panels = s.panels.map((x, j) => (j === i ? { ...p, editedSpec: e.text, body: e.text.split("\n"), selected: at >= 0 ? at : p.selected } : x));
-      return { state: { ...s, panels, hint: "Spec edited: Enter approves your version" }, effects: [] };
+      const details = p.planText !== undefined ? p.body.slice(0, -p.planText.split("\n").length) : [];
+      const panels = s.panels.map((x, j) => (j === i ? { ...p, editedSpec: e.text, ...(p.planText !== undefined ? { planText: e.text } : {}), body: [...details, ...e.text.split("\n")], selected: at >= 0 ? at : p.selected } : x));
+      return { state: { ...s, panels, hint: p.planText !== undefined ? "Workstream plan edited: Enter approves your version" : "Spec edited: Enter approves your version" }, effects: [] };
     }
     case "editor_result": return { state: { ...s, input: { text: e.text, cursor: e.text.length } }, effects: [] };
     case "disconnected": return { state: { ...s, running: false, working: "idle", items: [...s.items, info(e.message, "error")] }, effects: [] };

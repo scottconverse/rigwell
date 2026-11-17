@@ -1,0 +1,8 @@
+{
+  "category": "terminal",
+  "grader": "node \"$EVAL_TASK_DIR/grade.cjs\"",
+  "budget": {
+    "timeoutMs": 300000,
+    "maxRequests": 30
+  }
+}

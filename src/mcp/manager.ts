@@ -1,8 +1,10 @@
 // MCP manager: parallel server startup, status tracking, tool naming, drop suppression (spec §5.7, §6.2).
 import { McpClient } from "./client.ts";
+import { ConnectorCatalog } from "./catalog.ts";
+import { hasMcpTokens, McpAuthRequired, signInMcp, signOutMcp } from "./auth.ts";
+import { authManager } from "../auth/oauth.ts";
+import { assertMcpPolicy } from "../storage/policy.ts";
 import { fromAddParams, loadMcpConfig, removeUserServer, saveUserServer } from "./config.ts";
-import { authManager, type LoginStatus } from "../auth/oauth.ts";
-import { McpAuthRequiredError, mcpHasToken, mcpLoginStart, mcpLogout, oauthEnabled } from "./oauth.ts";
 import type {
   AddMcpServerParams, McpCallResult, McpServerConfig, McpServerStatusInfo, McpStatus, McpStatusSummary, McpToolDef, McpToolInfo,
 } from "./types.ts";
@@ -23,18 +25,13 @@ interface Entry {
   cfg: McpServerConfig;
   status: McpStatus;
   error?: string;
+  requiresAuth?: boolean;
   client?: McpClient;
   defs: McpToolDef[];
   drops: number;
   /** Bumped on remove/restart so stale async work is ignored. */
   epoch: number;
   reconnectTimer?: ReturnType<typeof setTimeout>;
-  /** The last connect failed with a 401: the user must sign in. */
-  needsAuth?: boolean;
-  /** WWW-Authenticate of that 401 (points discovery at the resource metadata). */
-  wwwAuthenticate?: string;
-  /** A sign-in token is stored (read once per connect, not per status call). */
-  hasToken?: boolean;
 }
 
 export interface McpManagerOptions {
@@ -52,10 +49,10 @@ export interface McpManagerOptions {
 }
 
 export class McpManager {
+  private catalog = new ConnectorCatalog();
   private entries = new Map<string, Entry>();
   private pendingStarts: Promise<unknown>[] = [];
-  /** Flattened tool list and lookup maps, rebuilt only after a server's tools or status changed (listToolInfo asks per tool). */
-  private toolCache?: { list: McpToolInfo[]; byName: Map<string, McpToolInfo> };
+  private logins = new Map<string, string>();
   configError?: { path: string; message: string };
   warnings: string[] = [];
 
@@ -86,36 +83,36 @@ export class McpManager {
   async settled(): Promise<void> { await Promise.all(this.pendingStarts); }
 
   private emit(e: Entry) { this.o.onStatusChanged?.(this.info(e)); }
-  private set(e: Entry, status: McpStatus, error?: string) { e.status = status; e.error = error; this.toolCache = undefined; this.emit(e); }
+  private set(e: Entry, status: McpStatus, error?: string) { e.status = status; e.error = error; this.emit(e); }
 
   private async startOne(cfg: McpServerConfig): Promise<void> {
     const prev = this.entries.get(cfg.name);
     if (prev) await this.stopEntry(prev);
     const e: Entry = { cfg, status: cfg.disabled ? "disabled" : "connecting", defs: [], drops: 0, epoch: (prev?.epoch ?? 0) + 1 };
     this.entries.set(cfg.name, e);
-    this.toolCache = undefined;
     this.emit(e);
     if (cfg.disabled) return;
+    try { assertMcpPolicy(cfg); } catch (error) { this.set(e, "failed", (error as Error).message); return; }
     await this.connect(e);
   }
 
   private async connect(e: Entry): Promise<void> {
+    try { assertMcpPolicy(e.cfg); } catch (error) { this.set(e, "failed", (error as Error).message); return; }
     const epoch = e.epoch;
     const client = this.o.clientCtor ? this.o.clientCtor(e.cfg, this.o.cwd) : new McpClient(e.cfg, { cwd: this.o.cwd });
-    e.hasToken = oauthEnabled(e.cfg) ? mcpHasToken(e.cfg) : undefined;
     try {
       await client.connect(this.o.connectTimeoutMs ?? 30000);
       const defs = await client.listTools(this.o.connectTimeoutMs ?? 30000);
       if (e.epoch !== epoch) { void client.close(); return; }
-      e.client = client; e.defs = defs; e.needsAuth = false; e.wwwAuthenticate = undefined;
+      e.client = client; e.defs = defs;
+      e.requiresAuth = false;
       client.onClose = (reason) => this.onDrop(e, epoch, reason);
       this.set(e, "connected");
     } catch (err) {
       void client.close().catch(() => {});
       if (e.epoch !== epoch) return;
       e.defs = [];
-      e.needsAuth = err instanceof McpAuthRequiredError;
-      e.wwwAuthenticate = err instanceof McpAuthRequiredError ? err.wwwAuthenticate : undefined;
+      e.requiresAuth = err instanceof McpAuthRequired;
       this.set(e, "failed", (err as Error).message);
     }
   }
@@ -124,7 +121,6 @@ export class McpManager {
     if (e.epoch !== epoch) return;
     e.drops++;
     e.client = undefined; e.defs = [];
-    this.toolCache = undefined;
     const max = this.o.maxDrops ?? MAX_DROPS;
     if (e.drops >= max) {
       this.set(e, "failed", `suppressed: connected and dropped ${e.drops} times (last: ${reason})`);
@@ -140,7 +136,6 @@ export class McpManager {
 
   private async stopEntry(e: Entry) {
     e.epoch++;
-    this.toolCache = undefined;
     if (e.reconnectTimer) clearTimeout(e.reconnectTimer);
     const c = e.client; e.client = undefined; e.defs = [];
     if (c) { c.onClose = undefined; await c.close().catch(() => {}); }
@@ -152,8 +147,8 @@ export class McpManager {
       name: e.cfg.name, status: e.status, source: e.cfg.source, isManaged: false, serverType: e.cfg.type,
     };
     if (e.error) i.error = e.error;
+    if (e.cfg.type !== "stdio") { i.requiresAuth = !!e.requiresAuth; i.hasAuthTokens = hasMcpTokens(e.cfg); }
     if (e.status === "connected") i.toolCount = e.defs.length;
-    if (oauthEnabled(e.cfg)) { i.requiresAuth = !!e.needsAuth; i.hasAuthTokens = !!e.hasToken; }
     return i;
   }
 
@@ -171,32 +166,22 @@ export class McpManager {
 
   // ---------------------------------------------------------------- tools
   /** Tools of connected servers (suppressed/failed servers contribute none). */
-  tools(): McpToolInfo[] { return [...this.toolIndex().list]; }
-
-  private toolIndex(): { list: McpToolInfo[]; byName: Map<string, McpToolInfo> } {
-    if (this.toolCache) return this.toolCache;
-    const list: McpToolInfo[] = [];
-    const byName = new Map<string, McpToolInfo>();
+  tools(): McpToolInfo[] {
+    const out: McpToolInfo[] = [];
     for (const e of this.entries.values()) {
       if (e.status !== "connected") continue;
       for (const d of e.defs) {
-        const info: McpToolInfo = {
+        out.push({
           server: e.cfg.name, tool: d.name, llmName: mcpLlmName(e.cfg.name, d.name), bindingName: mcpBindingName(e.cfg.name, d.name),
           description: d.description ?? "", inputSchema: (d.inputSchema as Record<string, unknown>) ?? { type: "object", properties: {} },
-        };
-        list.push(info);
+        });
       }
     }
-    // First tool wins for each spelling, so a lookup returns what a linear find over the list would.
-    for (const t of list) {
-      if (!byName.has(t.llmName)) byName.set(t.llmName, t);
-      if (!byName.has(t.bindingName)) byName.set(t.bindingName, t);
-    }
-    return (this.toolCache = { list, byName });
+    return out;
   }
 
   findTool(llmNameOrBinding: string): McpToolInfo | undefined {
-    return this.toolIndex().byName.get(llmNameOrBinding);
+    return this.tools().find((t) => t.llmName === llmNameOrBinding || t.bindingName === llmNameOrBinding);
   }
 
   /** Call by `server__tool` or `server.tool`. Throws when unknown or the server is not connected. */
@@ -205,13 +190,72 @@ export class McpManager {
     if (!t) throw new Error(`MCP tool not available: ${name}`);
     const e = this.entries.get(t.server);
     if (!e?.client || e.status !== "connected") throw new Error(`MCP server "${t.server}" is not connected`);
-    return e.client.callTool(t.tool, args, opts);
+    assertMcpPolicy(e.cfg);
+    try { return await e.client.callTool(t.tool, args, opts); }
+    catch (err) {
+      if (err instanceof McpAuthRequired) {
+        await this.stopEntry(e); e.requiresAuth = true; this.set(e, "failed", err.message);
+      }
+      throw err;
+    }
+  }
+
+  private named(name: string) {
+    const e = this.entries.get(name);
+    if (!e) throw new Error("Unknown MCP server");
+    return e;
+  }
+
+  async signIn(name: string) {
+    const e = this.named(name);
+    assertMcpPolicy(e.cfg);
+    if (e.cfg.disabled) throw new Error("This MCP server is disabled");
+    const epoch = e.epoch;
+    const st = await signInMcp(e.cfg);
+    if (this.entries.get(name) !== e || e.epoch !== epoch) { authManager().cancelLogin(st.loginId); throw new Error("MCP server changed during sign-in"); }
+    this.logins.set(st.loginId, name);
+    void authManager().waitLogin(st.loginId).then(async (done) => {
+      if (done.state !== "complete" || this.entries.get(name) !== e || e.epoch !== epoch) return;
+      await this.stopEntry(e); this.set(e, "connecting"); await this.connect(e);
+    }).catch(() => {});
+    return { ...st, name };
+  }
+
+  loginStatus(name: string, loginId: string) {
+    this.named(name);
+    if (this.logins.get(loginId) !== name) throw new Error("Unknown MCP login");
+    const st = authManager().loginStatus(loginId);
+    if (!st) throw new Error("Unknown MCP login");
+    return { ...st, name };
+  }
+
+  cancelLogin(name: string, loginId: string) {
+    this.loginStatus(name, loginId);
+    return { cancelled: authManager().cancelLogin(loginId) };
+  }
+
+  async signOut(name: string) {
+    const e = this.named(name);
+    if (e.cfg.type === "stdio") throw new Error("OAuth is unavailable for this MCP server");
+    await this.stopEntry(e);
+    const loggedOut = signOutMcp(e.cfg);
+    e.requiresAuth = true;
+    this.set(e, "disconnected", "Signed out");
+    return { loggedOut };
   }
 
   // ---------------------------------------------------------------- add / remove
+  listCatalog(sources?: unknown) { return this.catalog.list(sources); }
+  async addCatalog(key: string, values?: Record<string, string>, name?: string) {
+    const cfg = this.catalog.prepare(key, values, name, (n) => this.entries.has(n) || loadMcpConfig({ cwd: this.o.cwd ?? process.cwd(), trustProject: this.o.projectTrusted }).servers.some((s) => s.name === n));
+    await this.addServer(cfg);
+    const login = cfg.oauth ? await this.signIn(cfg.name) : undefined;
+    return { name: cfg.name, login };
+  }
   /** add_mcp_server: validate, persist to the user mcp.json, start it. */
   async addServer(p: AddMcpServerParams): Promise<{ success: boolean }> {
     const cfg = fromAddParams(p);
+    assertMcpPolicy(cfg);
     saveUserServer(cfg);
     await this.start([cfg]);
     return { success: true };
@@ -221,32 +265,15 @@ export class McpManager {
   async removeServer(serverName: string, settingsLevel: "user" = "user"): Promise<{ success: boolean }> {
     if (settingsLevel !== "user") throw new Error('only settingsLevel "user" is supported');
     const e = this.entries.get(serverName);
+    for (const [id, name] of this.logins) if (name === serverName) { authManager().cancelLogin(id); this.logins.delete(id); }
     const existed = removeUserServer(serverName);
     if (e) { await this.stopEntry(e); this.entries.delete(serverName); }
     return { success: existed || !!e };
   }
 
-  // ---------------------------------------------------------------- OAuth sign-in (mcp_auth_start, mcp_auth_logout)
-  /** Start the browser sign-in for a server. When it completes, the server reconnects with the new token. */
-  async login(serverName: string): Promise<LoginStatus> {
-    const e = this.entries.get(serverName);
-    if (!e) throw new Error(`No MCP server named ${JSON.stringify(serverName)}`);
-    const st = await mcpLoginStart(e.cfg, { wwwAuthenticate: e.wwwAuthenticate });
-    void authManager().waitLogin(st.loginId).then((end) => {
-      if (end.state === "complete" && this.entries.get(serverName) === e) void this.startOne(e.cfg);
-    }).catch(() => {});
-    return st;
-  }
-
-  /** Remove the stored sign-in and reconnect (the server then reports that sign-in is needed). */
-  async logout(serverName: string): Promise<{ success: boolean }> {
-    const e = this.entries.get(serverName);
-    const removed = mcpLogout(serverName);
-    if (e && !e.cfg.disabled) await this.startOne(e.cfg);
-    return { success: removed };
-  }
-
   async shutdown(): Promise<void> {
+    for (const id of this.logins.keys()) authManager().cancelLogin(id);
+    this.logins.clear();
     await Promise.all([...this.entries.values()].map((e) => this.stopEntry(e)));
     this.entries.clear();
   }

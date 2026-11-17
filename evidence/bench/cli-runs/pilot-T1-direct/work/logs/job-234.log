@@ -1,0 +1,11 @@
+job job-234 started on runner-1
+step 0: download 12MB
+step 1: compile ok
+step 2: tests: 41 passed
+step 3: download 12MB
+step 4: download 12MB
+step 5: compile ok
+step 6: lint ok
+step 7: compile ok
+STATUS: PASSED
+summary: see artifacts

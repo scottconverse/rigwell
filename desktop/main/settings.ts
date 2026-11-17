@@ -3,6 +3,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DEFAULT_DICTATION, type DictationSettings } from "./dictation.ts";
+import { LINUX_UPDATE_PUBLIC_KEY, RELEASE_FEED_URL } from "./release-config.ts";
 
 export type ThemePref = "system" | "light" | "dark";
 export type SoundValue = "off" | "bell" | "ok" | "ack" | { file: string };
@@ -62,8 +63,8 @@ export const DEFAULT_STARTUP_BACKGROUND = { dark: "#161413", light: "#f2f0f0" };
 export const DEFAULT_SETTINGS: DesktopSettings = {
   keepAwakeEnabled: false,
   desktopAutoUpdateEnabled: true,
-  updateFeedUrl: "",
-  updatePublicKey: "",
+  updateFeedUrl: RELEASE_FEED_URL,
+  updatePublicKey: LINUX_UPDATE_PUBLIC_KEY,
   menuBarEnabled: true,
   dictation: { ...DEFAULT_DICTATION },
   locale: "en",

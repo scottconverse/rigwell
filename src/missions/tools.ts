@@ -5,6 +5,8 @@ import { writeFileSync } from "node:fs";
 import type { Tool, ToolOutput } from "../core/types.ts";
 import { MissionStore, hasUndoneWork, checkHandoff, needsAttention, type Handoff, type HandoffRecord } from "./store.ts";
 import type { MissionRunner, MissionSettings, RunInput } from "./runner.ts";
+import { effectivePolicy } from "../storage/policy.ts";
+import { checkReadiness } from "./readiness.ts";
 
 const ok = (content: string, data?: unknown): ToolOutput => ({ content, ...(data !== undefined ? { data } : {}) });
 const fail = (content: string): ToolOutput => ({ content, isError: true });
@@ -30,6 +32,7 @@ export function orchestratorTools(env: OrchestratorEnv): Tool[] {
     description: `Submit the mission plan to the user for approval. The proposal is markdown and should cover: ${PROPOSAL_SECTIONS}. On approval the mission folder is created. Returns accepted, missionDir, isEdited and any guidance the user added.`,
     inputSchema: { type: "object", properties: { title: { type: "string" }, proposal: { type: "string", description: "Markdown proposal." }, workingDirectory: { type: "string", description: "Repository folder workers run in (default: the session folder)." } }, required: ["title", "proposal"] },
     async run(input) {
+      if (effectivePolicy().missions?.enabled === false) return fail("Missions are disabled by policy.");
       const title = typeof input.title === "string" ? input.title.trim() : "";
       const proposal = typeof input.proposal === "string" ? input.proposal : "";
       if (!title || !proposal.trim()) return fail("title and proposal are required.");
@@ -58,7 +61,8 @@ export function orchestratorTools(env: OrchestratorEnv): Tool[] {
       const s = env.store();
       if (!s.exists()) return fail("No mission folder exists yet: call ProposeMission first.");
       const running = env.runningMissions();
-      const a = await env.confirm({ type: "start_mission_run", runningMissionCount: running.length, runningMissionSessionIds: running });
+      const readiness = checkReadiness(s.readState()?.workingDirectory || env.cwd);
+      const a = await env.confirm({ type: "start_mission_run", runningMissionCount: running.length, runningMissionSessionIds: running, readiness });
       if (!a.accepted) return ok(JSON.stringify({ started: false, message: "The user did not approve starting the run." }), { started: false });
       const runner = env.runner();
       const r = await runner.run(input as RunInput, ctx.signal);
@@ -97,6 +101,7 @@ export interface WorkerEnv {
   sessionId: string;
   store: MissionStore;
   workingDirectory(): string;
+  verifyCommit?(repo: string, commit: string): Promise<boolean>;
 }
 
 function commitExists(repo: string, commit: string): boolean {
@@ -130,7 +135,7 @@ export function workerTools(env: WorkerEnv): Tool[] {
       if ("error" in h) return fail(h.error);
       const repo = typeof input.repoPath === "string" && input.repoPath ? input.repoPath : env.workingDirectory();
       if (typeof input.commitId === "string" && input.commitId) {
-        if (!commitExists(repo, input.commitId)) return fail(`commitId ${input.commitId} was not found in ${repo}. Give the right repoPath, or omit commitId.`);
+        if (!(env.verifyCommit ? await env.verifyCommit(repo, input.commitId) : commitExists(repo, input.commitId))) return fail(`commitId ${input.commitId} was not found in ${repo}. Give the right repoPath, or omit commitId.`);
       }
       if (st === "success" && input.validatorsPassed !== true) return fail("success requires validatorsPassed: true. Run the validators (tests, checks) and fix failures first, or report partial or failure.");
       const rec: HandoffRecord = {

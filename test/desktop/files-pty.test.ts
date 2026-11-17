@@ -2,12 +2,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { isWin } from "../platform.ts";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
 import type { FakeServer } from "../fakes/types.ts";
 import { makeRepo } from "../e2e/helpers.ts";
-import { buildEnv, pipeLineEnds, resolveShell, stripAnsi } from "../../src/sidepane/pty.ts";
+import { buildEnv, resolveShell, stripAnsi } from "../../src/sidepane/pty.ts";
 import { connect, sleep, startTestDaemon, type TestClient } from "./helpers.ts";
 
 let fake: FakeServer;
@@ -85,8 +85,10 @@ describe("Files (spec 17.1)", () => {
     }
     const w: any = await c.call("daemon.write_workspace_file_content", { filePath: outside, content: "x" }).catch((x) => x);
     expect(w.code).toBe(-32602);
-    symlinkSync(outside, join(repo, "link.txt"));
-    const l: any = await c.call("daemon.write_workspace_file_content", { filePath: "link.txt", content: "x" }).catch((x) => x);
+    const linkPath = isWin ? join(repo, "outside-link") : join(repo, "link.txt");
+    if (isWin) symlinkSync(dirname(outside), linkPath, "junction"); // directory junctions need no symlink privilege
+    else symlinkSync(outside, linkPath);
+    const l: any = await c.call("daemon.write_workspace_file_content", { filePath: isWin ? "outside-link/outside.txt" : "link.txt", content: "x" }).catch((x) => x);
     expect(l.code).toBe(-32602);
     writeFileSync(join(repo, "bin.dat"), Buffer.from([1, 2, 0, 3]));
     const b = await c.call("daemon.get_workspace_file_content", { filePath: "bin.dat" });
@@ -130,7 +132,7 @@ describe("Terminal (spec 17.2)", () => {
     const bad: any = await c.call("daemon.create_terminal", { terminalId: "t2", cwd: join(repo, "nope") }).catch((e) => e);
     expect(bad.code).toBe(-32602);
     expect(bad.data?.reason).toBe("not_found");
-    await c.call("daemon.write_terminal_data", { terminalId: "t1", data: isWin ? "echo marker-42\r\n" : "echo marker-$((6*7)); pwd\n" });
+    await c.call("daemon.write_terminal_data", { terminalId: "t1", data: isWin ? "echo marker-42\r" : "echo marker-$((6*7)); pwd\n" });
     await c.waitFor((n) => n.type === "daemon.terminal_data" && n.terminalId === "t1" && n.data.includes("marker-42"));
     const out = c.notes.filter((n) => n.type === "daemon.terminal_data").map((n) => n.data).join("");
     expect(out).toContain("marker-42");
@@ -144,19 +146,6 @@ describe("Terminal (spec 17.2)", () => {
     const exit = await c.waitFor((n) => n.type === "daemon.terminal_exit");
     expect(exit.exitCode).toBe(3);
     expect((await c.call("daemon.list_terminals", {})).terminals).toEqual([]);
-    await c.close();
-  });
-
-  test("the Enter key (a lone CR, what xterm.js sends) runs the typed line", async () => {
-    // On Windows the shell reads a pipe and waits for a LF; a PTY turns CR into a line end by itself.
-    expect(pipeLineEnds("dir\r")).toBe("dir\r\n");
-    expect(pipeLineEnds("a\r\nb\rc")).toBe("a\r\nb\r\nc");
-    expect(pipeLineEnds("plain")).toBe("plain");
-    const { c } = await session();
-    await c.call("daemon.create_terminal", { terminalId: "cr" });
-    await c.call("daemon.write_terminal_data", { terminalId: "cr", data: isWin ? "echo enter-4^2\r" : "echo enter-$((40+2))\r" });
-    await c.waitFor((n) => n.type === "daemon.terminal_data" && n.terminalId === "cr" && n.data.includes("enter-42"));
-    await c.call("daemon.close_terminal", { terminalId: "cr" });
     await c.close();
   });
 

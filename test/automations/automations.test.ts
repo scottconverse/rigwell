@@ -228,7 +228,7 @@ describe("folder format", () => {
     const bad = mgr.list().find((a) => a.folder === "bad-state")!;
     expect(bad).toMatchObject({ isValid: false, broken: true });
 
-    symlinkSync(work, join(root, "linked"));
+    symlinkSync(work, join(root, "linked"), process.platform === "win32" ? "junction" : "dir");
     expect(mgr.list().some((a) => a.folder === "linked")).toBe(false);
     mkdirSync(join(root, "nofile"));
     expect(mgr.list().find((a) => a.folder === "nofile")).toMatchObject({ isValid: false, invalidReason: "missing_file" });

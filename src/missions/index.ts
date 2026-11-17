@@ -21,6 +21,10 @@ import { MissionStore, missionDirFor, missionsRoot, type Feature } from "./store
 import { orchestratorTools, workerTools } from "./tools.ts";
 import { spawnWorkerSession, type WorkerSpawner } from "./worker.ts";
 import { WakeLock, systemLockSpawner, type LockSpawner } from "./wakelock.ts";
+import { RemoteSessionStore } from "../machines/sessions.ts";
+import { effectivePolicy } from "../storage/policy.ts";
+import { generateReadinessReport, readReadinessReport, readinessPlan, readinessRoot } from "./readiness-report.ts";
+import { abortable } from "../core/abort.ts";
 
 export * from "./store.ts";
 export { MissionRunner, DEFAULT_LIMITS } from "./runner.ts";
@@ -89,7 +93,7 @@ export function createMissionService(opts: MissionServiceOptions = {}) {
     };
     const savedSettings = (s: Session): MissionSettings => {
       const f = findSession(s.id, s.cwd);
-      return ((f && readSessionSettings(f)?.missionSettings) as MissionSettings | undefined) ?? {};
+      return { ...(loadSettings({ cwd: s.cwd }).settings.missions as MissionSettings ?? {}), ...((f && readSessionSettings(f)?.missionSettings) as MissionSettings | undefined) };
     };
     const modelExists = (s: Session, id: string) => !!findModel(resolveModels(loadSettings({ cwd: s.cwd }).settings), id);
 
@@ -103,9 +107,9 @@ export function createMissionService(opts: MissionServiceOptions = {}) {
           settings: () => savedSettings(s), tokenUsage: () => s.tokenUsage,
         },
         spawn, modelExists: (id) => modelExists(s, id),
-        workerWrap: (workerId) => (tools) => {
+        workerWrap: (workerId) => (tools, services) => {
           const wd = () => st.readState()?.workingDirectory || s.cwd;
-          return [...protectTools(tools, { role: "worker" }), ...workerTools({ sessionId: workerId, store: st, workingDirectory: wd })];
+          return [...protectTools(tools, { role: "worker" }), ...workerTools({ sessionId: workerId, store: st, workingDirectory: wd, ...services })];
         },
         // The store already reports state changes; the runner's own copies are dropped.
         notify: (n) => { if (n.type !== "mission_state_changed") conn.notify(n); },
@@ -115,13 +119,17 @@ export function createMissionService(opts: MissionServiceOptions = {}) {
           const wd = st.readState()?.workingDirectory || s.cwd;
           for (const id of ids) {
             const f = findSession(id, wd);
-            const u = f && (readSessionSettings(f)?.tokenUsage as TokenUsage | undefined);
+            const u = f ? readSessionSettings(f)?.tokenUsage as TokenUsage | undefined : new RemoteSessionStore().get(id)?.tokenUsage;
             if (u) for (const k of Object.keys(t) as (keyof TokenUsage)[]) t[k] += u[k] ?? 0;
           }
           return t;
         },
         onProgress: (snap) => sink?.(snap),
-        register: (h) => handles.set(h.sessionId, h),
+        register: (h) => {
+          const cap = effectivePolicy().missions?.maxConcurrentRuns;
+          if (handles.has(h.sessionId) || (cap !== undefined && handles.size >= cap)) throw new Error("Mission concurrency is blocked by policy or this mission is already running");
+          handles.set(h.sessionId, h);
+        },
         unregister: (h) => { if (handles.get(h.sessionId) === h) handles.delete(h.sessionId); },
       });
       return runner;
@@ -140,6 +148,19 @@ export function createMissionService(opts: MissionServiceOptions = {}) {
 
     function wrapTools(tools: Tool[]): Tool[] {
       const s = conn.session();
+      if (s) tools = [...tools, {
+        name: "ReadinessReport", category: "other", description: "Run explicitly approved local build/test commands and check tool presence, then save a point-in-time mission readiness report. Always asks the user; no unattended execution. Missing commands stay not checked. Uses Execute's shell, timeout and cancellation. No model or cloud calls.",
+        inputSchema: { type: "object", properties: { buildCommand: { type: "string" }, testCommand: { type: "string" }, tools: { type: "array", items: { type: "string" } }, timeoutMs: { type: "integer" } } },
+        async run(input, ctx) {
+          const plan = readinessPlan(input);
+          if (!conn.request) return { content: "Readiness commands require an approver. Use the CLI with --run for explicit local approval.", isError: true };
+          const id = crypto.randomUUID();
+          const answer = ctx.signal.aborted ? null : await abortable(conn.request("request_permission", { requestId: id, toolUses: [{ toolUse: { type: "tool_use", id, name: "ReadinessReport", input: { cwd: readinessRoot(s.cwd), ...plan } } }], options: [{ label: "Run these readiness checks", value: "proceed_once" }, { label: "Cancel", value: "cancel" }] }), ctx.signal).catch(() => null);
+          if (answer?.selectedOption !== "proceed_once" || ctx.signal.aborted) return { content: "Readiness checks cancelled; no commands or report writes.", data: { cancelled: true } };
+          const report = await generateReadinessReport(s.cwd, plan, ctx);
+          return { content: JSON.stringify(report), data: report };
+        },
+      }];
       const mission = s?.settings.interactionMode === "mission";
       if (!s || !mission) return protectTools(tools, { role: "other" });
       const st = storeOf(s);
@@ -167,6 +188,7 @@ export function createMissionService(opts: MissionServiceOptions = {}) {
     }
 
     const methods: Record<string, (p: Params) => unknown> = {
+      mission_readiness_report() { return { ...readReadinessReport(sess().cwd), readiness: checkReadiness(sess().cwd, opts.git) }; },
       async enter_mission_mode(p) {
         const s = sess();
         const readiness = checkReadiness(s.cwd, opts.git);

@@ -32,4 +32,6 @@ await build({
 cpSync(join(root, "node_modules/katex/dist/katex.min.css"), join(dist, "renderer/katex.min.css"));
 cpSync(join(root, "node_modules/katex/dist/fonts"), join(dist, "renderer/fonts"), { recursive: true });
 cpSync(join(root, "renderer/index.html"), join(dist, "renderer/index.html"));
+// Redistribute the unmodified viewer source and its notices alongside the bundle (MPL source availability).
+cpSync(join(root, "node_modules/@novnc/novnc"), join(dist, "third-party/novnc"), { recursive: true });
 console.log("built", dist);

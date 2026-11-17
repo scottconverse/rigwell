@@ -1,0 +1,3 @@
+Add cursor pagination across repository.js and lib.js. Repository list(afterId,limit) sorts ascending ID and selects IDs greater than afterId. service page(afterId,limit) validates nonnegative integer cursor and positive integer limit, returns {items,nextCursor}, where nextCursor is last ID only when another row exists, otherwise null. Preserve stored rows.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

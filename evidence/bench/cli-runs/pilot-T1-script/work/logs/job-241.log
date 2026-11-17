@@ -1,0 +1,9 @@
+job job-241 started on runner-3
+step 0: warning: FAILED to fetch optional mirror, using default
+step 1: cache hit
+step 2: warning: FAILED to fetch optional mirror, using default
+step 3: tests: 41 passed
+step 4: tests: 41 passed
+step 5: download 12MB
+STATUS: PASSED
+summary: see artifacts

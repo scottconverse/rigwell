@@ -1,11 +1,11 @@
 // Signed Linux updates (spec 14.5): a generated test key pair and a local feed. No shipped key, no real hosts.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkForUpdate } from "../../desktop/main/update-feed.ts";
-import { downloadAndVerify, installAppImage, parsePublicKey, UpdateRefused, verifySignature } from "../../desktop/main/update-verify.ts";
+import { downloadAndVerify, installAppImage, rollbackAppImage, parsePublicKey, UpdateRefused, verifySignature } from "../../desktop/main/update-verify.ts";
 
 const good = generateKeyPairSync("ed25519");
 const other = generateKeyPairSync("ed25519");
@@ -123,5 +123,19 @@ test("installAppImage replaces the file atomically and keeps it executable", () 
   writeFileSync(src, "new");
   installAppImage(src, file);
   expect(readFileSync(file, "utf8")).toBe("new");
+  expect(readFileSync(file + ".previous", "utf8")).toBe("old");
+  rollbackAppImage(file); expect(readFileSync(file, "utf8")).toBe("old");
+  expect(readFileSync(file + ".previous", "utf8")).toBe("old");
   expect(existsSync(file + ".new")).toBe(false);
+  expect(readdirSync(dest).filter((name) => name.startsWith("current.AppImage.") && name.includes(".new-"))).toEqual([]);
+});
+
+test("failed verification cannot replace the installed version, and update/rollback refuse file links", async () => {
+  const installed = join(dest, "safe.AppImage"); writeFileSync(installed, "known good");
+  const result = await refused(fetchUpdate("tampered", rawPub(good))); expect(result).toBe("bad-signature"); expect(readFileSync(installed, "utf8")).toBe("known good");
+  const linked = join(dest, "linked.AppImage"); symlinkSync(installed, linked);
+  expect(() => installAppImage(linked, installed)).toThrow("regular file");
+  expect(() => installAppImage(installed, linked)).toThrow("regular file");
+  symlinkSync(installed, installed + ".previous"); expect(() => rollbackAppImage(installed)).toThrow("regular file");
+  expect(readFileSync(installed, "utf8")).toBe("known good");
 });

@@ -1,0 +1,8 @@
+job job-083 started on runner-7
+step 0: warning: FAILED to fetch optional mirror, using default
+step 1: tests: 41 passed
+step 2: cache hit
+step 3: download 12MB
+step 4: lint ok
+STATUS: PASSED
+summary: see artifacts

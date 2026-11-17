@@ -9,7 +9,6 @@ import type { SessionController } from "../lib/session.ts";
 import { ConnectorsDialog, SkillsDialog } from "./Dialogs.tsx";
 import { ModelPicker } from "./ModelPicker.tsx";
 import { DictateButton } from "./DictateButton.tsx";
-import { ImagePreview } from "./ImagePreview.tsx";
 import { MAX_ATTACHMENTS, defaultText, readAttachment, sizeLabel, type Attachment } from "../lib/attachments.ts";
 
 const MODES = [
@@ -50,6 +49,8 @@ export function Composer(props: {
   pinnedModels?: string[];
   /** Mode chip: Mission was chosen. */
   onMission?(): void;
+  prefill?: string;
+  onPrefillUsed?(): void;
 }) {
   const [text, setText] = useState("");
   const [help, setHelp] = useState(false);
@@ -58,8 +59,6 @@ export function Composer(props: {
   const [atts, setAtts] = useState<Attachment[]>([]);
   const [attachError, setAttachError] = useState("");
   const [dragging, setDragging] = useState(false);
-  const [previewId, setPreviewId] = useState<string | null>(null);
-  const previewAtt = atts.find((a) => a.id === previewId && a.kind === "image");
   const picker = useRef<HTMLInputElement>(null);
   const lastEsc = useRef(0);
   const keyRef = useRef<(e: KeyboardEvent) => boolean>(() => false);
@@ -76,9 +75,23 @@ export function Composer(props: {
       handlePaste: (_v, e) => { const f = e.clipboardData?.files; return !!f && f.length > 0 && pasteRef.current(f); },
     },
     onUpdate: ({ editor: ed }) => setText(ed.getText({ blockSeparator: "\n" })),
-    autofocus: !!props.autoFocus,
+    autofocus: false,
   });
-  useEffect(() => { if (props.autoFocus) editor?.commands.focus(); }, [props.autoFocus, editor]);
+  useEffect(() => {
+    if (!editor || !props.prefill) return;
+    editor.chain().focus("end").insertContent({ type: "text", text: `${editor.isEmpty ? "" : "\n"}${props.prefill}` }).run();
+    props.onPrefillUsed?.();
+  }, [editor, props.prefill]);
+  useEffect(() => {
+    if (!props.autoFocus || !editor) return;
+    const initialFocus = document.activeElement;
+    if (initialFocus && initialFocus !== document.body && initialFocus.tagName !== "BUTTON") return;
+    // Check at delivery time: mount autofocus must not steal a field the user selected.
+    const frame = requestAnimationFrame(() => {
+      if (!editor.isDestroyed && (!document.activeElement || document.activeElement === document.body || document.activeElement === initialFocus)) editor.view.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [props.autoFocus, editor]);
   const clearText = () => { editor?.commands.clearContent(true); setText(""); };
 
   const cycle = (list: string[], cur: string | undefined) => list[(Math.max(0, list.indexOf(cur ?? "")) + 1) % list.length];
@@ -134,7 +147,7 @@ export function Composer(props: {
         <div className="attachments" aria-label="Attachments">
           {atts.map((a) => (
             <span key={a.id} className="attachment">
-              {a.kind === "image" && <button className="thumb" aria-label={`Preview ${a.name}`} title="Click to preview" onClick={() => setPreviewId(a.id)}><img alt="" src={`data:${a.mediaType};base64,${a.data}`} /></button>}
+              {a.kind === "image" && <img alt="" src={`data:${a.mediaType};base64,${a.data}`} />}
               <span className="attachment-name" title={a.name}>{a.name}</span><span className="muted small"> {sizeLabel(a.size)}</span>
               <button aria-label={`Remove ${a.name}`} onClick={() => setAtts(atts.filter((x) => x.id !== a.id))}>x</button>
             </span>
@@ -173,7 +186,6 @@ export function Composer(props: {
           ? <button className="send stop" onClick={props.onStop} aria-label="Stop">Stop</button>
           : <button className="send" disabled={(!text.trim() && !atts.length) || props.disabled} onClick={send} aria-label="Send">Send</button>}
       </div>
-      {previewAtt && <ImagePreview src={`data:${previewAtt.mediaType};base64,${previewAtt.data}`} name={previewAtt.name} onClose={() => setPreviewId(null)} onRemove={() => setAtts((cur) => cur.filter((x) => x.id !== previewAtt.id))} />}
       {dialog === "connectors" && props.session && <ConnectorsDialog ctl={props.session} onClose={() => setDialog(null)} />}
       {dialog === "skills" && <SkillsDialog ctl={props.session} cwd={props.cwd ?? ""} onClose={() => setDialog(null)} />}
       {help && (

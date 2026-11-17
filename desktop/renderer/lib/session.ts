@@ -36,6 +36,7 @@ export const trustAsks = new TrustAsks();
 export interface SideEntry { id: string; question: string; answer: string; status: "pending" | "streaming" | "complete" | "error"; createdAt: number; forkId?: string; promotedTo?: string }
 
 export interface SessionState {
+  machine?: string;
   phase: "connecting" | "ready" | "disconnected" | "error";
   error?: string;
   sessionId?: string;
@@ -43,7 +44,7 @@ export interface SessionState {
   title: string;
   items: Item[];
   working: string;
-  settings: { modelId?: string; reasoningEffort?: string; interactionMode?: string; autonomyLevel?: string };
+  settings: { modelId?: string; reasoningEffort?: string; interactionMode?: string; autonomyLevel?: string; tags?: { name: string }[] };
   models: { id: string; displayName?: string; provider?: string }[];
   tokens: { input: number; output: number };
   prompts: Prompt[];
@@ -59,6 +60,7 @@ const empty = (cwd: string): SessionState => ({
 });
 
 export type CreateOptions = {
+  machine?: string;
   cwd: string; title?: string; modelId?: string; autonomyLevel?: string; interactionMode?: string; reasoningEffort?: string;
   /** Run the session in its own git worktree (spec §18.1). */
   worktree?: boolean | { enabled: true; lifecycle?: "ephemeral" | "persistent"; setupProfile?: string };
@@ -92,10 +94,10 @@ export class SessionController extends Store<SessionState> {
   }
 
   /** Reattaches to a stored session (after a reload or a daemon restart). */
-  static async resume(sessionId: string, cwd: string, info?: { title?: string; pinned?: boolean; archived?: boolean }): Promise<SessionController> {
+  static async resume(sessionId: string, cwd: string, info?: { title?: string; pinned?: boolean; archived?: boolean; machine?: string }): Promise<SessionController> {
     const c = new SessionController(cwd);
     c.set({ sessionId, ...(info?.title ? { title: info.title } : {}), pinned: info?.pinned === true, archived: info?.archived === true });
-    await c.connect((conn) => conn.request("load_session", { sessionId, cwd }));
+    await c.connect((conn) => conn.request("load_session", { sessionId, cwd, ...(info?.machine ? { machine: info.machine } : {}) }));
     return c;
   }
 
@@ -109,7 +111,7 @@ export class SessionController extends Store<SessionState> {
       const r = await init(conn);
       const models = (r.availableModels ?? []).map(normalizeModel);
       this.set({
-        phase: "ready", sessionId: r.sessionId, cwd: r.cwd ?? this.state.cwd, items: fromMessages(r.session?.messages ?? []),
+        phase: "ready", sessionId: r.sessionId, machine: r.machine, cwd: r.cwd ?? this.state.cwd, items: fromMessages(r.session?.messages ?? []),
         settings: r.settings ?? {}, models, working: r.workingState ?? "idle",
         title: this.state.title,
       });
@@ -126,6 +128,19 @@ export class SessionController extends Store<SessionState> {
     if (method !== "session_notification") return;
     const n = p.notification ?? {};
     switch (n.type) {
+      case "workstream_prompt_resolved": {
+        const prompt = this.state.prompts.find((x) => x.requestId === n.requestId && x.params.workstreamId === n.workstreamId);
+        if (prompt) this.answer(prompt.requestId, n.answer);
+        return;
+      }
+      case "workstream_member_notification": {
+        const inner = n.notification ?? {};
+        if (inner.type === "permission_resolved" || inner.type === "agent_turn_completed") {
+          const prompts = this.state.prompts.filter((x) => x.params.agentId === n.agentId && (inner.type === "agent_turn_completed" || x.requestId === inner.requestId));
+          for (const prompt of prompts) this.answer(prompt.requestId, prompt.method === "request_permission" ? { selectedOption: "cancel" } : { cancelled: true, answers: [] });
+        }
+        return;
+      }
       case "daemon.terminal_data": case "daemon.terminal_exit": for (const l of this.terminalListeners) l(n); return;
       case "daemon.side_chat_entry": this.upsertSide(n.entry); return;
       case "agent_working_state_changed": this.set({ working: n.newState }); return;
@@ -180,8 +195,8 @@ export class SessionController extends Store<SessionState> {
 
   /** `cancelReshown` false (the view closes): prompts shown again after a reload stay open in the harness for the next load_session. */
   private resolveAllPrompts(cancelReshown = true) {
-    for (const p of this.state.prompts) if (cancelReshown || !p.reshown) p.resolve(p.method === "request_permission" ? { selectedOption: "cancel" } : p.method === "ask_user" ? { cancelled: true, answers: [] } : { cancelled: true, selectedIds: [] });
-    if (this.state.prompts.length) this.set({ prompts: [] });
+    for (const p of this.state.prompts) if (!p.params.workstreamId && (cancelReshown || !p.reshown)) p.resolve(p.method === "request_permission" ? { selectedOption: "cancel" } : p.method === "ask_user" ? { cancelled: true, answers: [] } : { cancelled: true, selectedIds: [] });
+    if (this.state.prompts.length) this.set({ prompts: this.state.prompts.filter((p) => p.params.workstreamId) });
   }
 
   answer(requestId: string, result: unknown) {
@@ -198,9 +213,10 @@ export class SessionController extends Store<SessionState> {
     const names = [...(attach.images ?? []).map((_, i) => `image ${i + 1}`), ...(attach.files ?? []).map((f) => f.name)];
     const shown = names.length ? `${text}\n[Attached: ${names.join(", ")}]` : text;
     if (this.attaching) await Promise.race([this.attaching, new Promise((r) => setTimeout(r, 3000))]);
-    this.set({ items: [...this.state.items, { kind: "user", id: `u-${Date.now()}`, text: shown, ...(attach.images?.length ? { images: attach.images } : {}) }], working: "thinking" });
+    const messageId = crypto.randomUUID();
+    this.set({ items: [...this.state.items, { kind: "user", id: `${messageId}:0`, text: shown }], working: "thinking" });
     if (this.state.title === "New Session") this.set({ title: text.split("\n")[0].slice(0, 60) });
-    try { await this.conn.request("add_user_message", { text, ...(attach.images?.length ? { images: attach.images } : {}), ...(attach.files?.length ? { files: attach.files } : {}) }); } catch (e) { this.set({ items: [...this.state.items, { kind: "info", id: `e-${Date.now()}`, text: (e as Error).message, level: "error" }], working: "idle" }); }
+    try { await this.conn.request("add_user_message", { text, messageId, ...(attach.images?.length ? { images: attach.images } : {}), ...(attach.files?.length ? { files: attach.files } : {}) }); } catch (e) { this.set({ items: [...this.state.items, { kind: "info", id: `e-${Date.now()}`, text: (e as Error).message, level: "error" }], working: "idle" }); }
   }
   interrupt() { void this.conn?.request("interrupt_session").catch(() => {}); }
   async updateSettings(patch: Record<string, unknown>) { await this.conn?.request("update_session_settings", patch); }
@@ -213,12 +229,12 @@ export class SessionController extends Store<SessionState> {
   // ---- missions (spec §15.1): the mode chip's Mission entry
   async enterMission(continueAnyway = false): Promise<{ entered: boolean; readiness?: any; modelSwitched?: string }> {
     const r = await this.request("enter_mission_mode", continueAnyway ? { continue: true } : {});
-    if (r.entered) {
+    if (r.entered && !this.state.machine) {
       // Worker and validator models from the Missions settings page become this session's missionSettings.
       try {
         const m = (await bridge().userSettings.get()).missions ?? {};
         const ms: Record<string, unknown> = {};
-        for (const k of ["workerModel", "workerReasoningEffort", "validationWorkerModel", "validationWorkerReasoningEffort", "skipScrutiny", "skipUserTesting"]) if (m[k] !== undefined) ms[k] = m[k];
+        for (const k of ["machine", "workerWorkingDirectory", "workerModel", "workerReasoningEffort", "validationWorkerModel", "validationWorkerReasoningEffort", "skipScrutiny", "skipUserTesting"]) if (m[k] !== undefined) ms[k] = m[k];
         if (Object.keys(ms).length) await this.request("update_session_settings", { missionSettings: ms });
       } catch { /* the defaults stay */ }
     }
@@ -235,28 +251,8 @@ export class SessionController extends Store<SessionState> {
     if (i >= 0) list[i] = e; else list.push(e);
     this.set({ sideChat: list });
   }
-  /** Counts writes-switch changes, so a list reply sent before a change does not put the old value back. */
-  private writesSeq = 0;
-  async refreshSideChat() {
-    const seq = this.writesSeq;
-    try {
-      const r = await this.request("daemon.side_chat_list");
-      this.set(seq === this.writesSeq ? { sideChat: r.entries, sideWrites: r.writes === true } : { sideChat: r.entries });
-    } catch {}
-  }
-  /** The switch shows the new value at once (it does not wait for the daemon) and goes back if the call fails. */
-  async setSideWrites(enabled: boolean) {
-    const seq = ++this.writesSeq;
-    const before = this.state.sideWrites;
-    this.set({ sideWrites: enabled });
-    try {
-      const r = await this.request("daemon.side_chat_set_writes", { enabled });
-      if (seq === this.writesSeq) this.set({ sideWrites: r.writes === true });
-    } catch (e) {
-      if (seq === this.writesSeq) this.set({ sideWrites: before });
-      throw e;
-    }
-  }
+  async refreshSideChat() { try { const r = await this.request("daemon.side_chat_list"); this.set({ sideChat: r.entries, sideWrites: r.writes === true }); } catch {} }
+  async setSideWrites(enabled: boolean) { const r = await this.request("daemon.side_chat_set_writes", { enabled }); this.set({ sideWrites: r.writes === true }); }
   /** Promote: the side chat becomes a normal session in this project (spec 17.4). Returns the new session id. */
   async promoteSide(entryId: string): Promise<string> { const r = await this.request("daemon.side_chat_promote", { entryId }); void this.refreshSideChat(); return String(r.sessionId); }
   async askSide(question: string) { const r = await this.request("daemon.side_chat_ask", { question }); this.upsertSide(r.entry); }
@@ -264,8 +260,9 @@ export class SessionController extends Store<SessionState> {
   private attaching?: Promise<void>;
   /** Registers the browser pane with the daemon. `send` waits for this (briefly), so a Browser tool call never beats the attach. */
   attachBrowser(): Promise<void> {
+    if (this.state.machine) return Promise.resolve();
     return (this.attaching ??= (async () => {
-      const url = await bridge().browser.cdpUrl();
+      const url = await bridge().browser.cdpUrl(this.state.sessionId);
       if (url) await this.request("daemon.browser_attach", { cdpUrl: url }).catch(() => {});
     })());
   }

@@ -1,5 +1,6 @@
 import type { ModelAdapter, ModelConfig } from "../core/types.ts";
 import { AnthropicAdapter } from "./anthropic.ts";
+import { NativeCliAdapter } from "./native-cli.ts";
 import { BedrockAnthropicAdapter, BedrockConverseAdapter } from "./bedrock.ts";
 import { ChatCompletionsAdapter } from "./chat.ts";
 import { GoogleAdapter } from "./google.ts";
@@ -16,6 +17,7 @@ export { closeOpenAIWs } from "./openai-ws.ts";
  * None of the Bedrock adapters retry: the harness does (spec 4.6.9).
  */
 export function createAdapter(model: ModelConfig): ModelAdapter {
+  if (model.executionBackend) return new NativeCliAdapter();
   switch (model.provider) {
     case "anthropic": return model.bedrock ? new BedrockAnthropicAdapter() : new AnthropicAdapter();
     case "openai": return new OpenAIResponsesAdapter();

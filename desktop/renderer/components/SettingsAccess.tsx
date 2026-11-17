@@ -187,7 +187,12 @@ function EnvDialog({ env, secrets, onClose, onSaved }: { env: EnvironmentRow | n
 
 // ------------------------------------------------------------------ accounts (OAuth sign-in)
 
-export function Accounts() {
+export function Accounts({ request = (method: string, params?: Record<string, unknown>) => app.request(method, params), openExternal = (url: string) => bridge().shell.openExternal(url), setup = false, onSignedIn }: {
+  request?: (method: string, params?: Record<string, unknown>) => Promise<any>;
+  openExternal?: (url: string) => Promise<unknown>;
+  setup?: boolean;
+  onSignedIn?: () => void;
+} = {}) {
   const a = useApp();
   const [providers, setProviders] = useState<ProviderRow[]>([]);
   const [problems, setProblems] = useState<string[]>([]);
@@ -195,28 +200,29 @@ export function Accounts() {
   const [loaded, setLoaded] = useState(false);
   const [login, setLogin] = useState<{ name: string; status: LoginStatus } | null>(null);
   const refresh = useCallback(async () => {
-    try { const r = await app.request("auth_list"); setProviders(r.providers ?? []); setProblems(r.problems ?? []); setError(""); } catch (e) { setError((e as Error).message); } finally { setLoaded(true); }
+    try { const r = await request("auth_list"); setProviders(r.providers ?? []); setProblems(r.problems ?? []); setError(""); } catch (e) { setError((e as Error).message); } finally { setLoaded(true); }
   }, []);
-  useEffect(() => { if (a.daemon.state === "running") void refresh(); }, [a.daemon.state, refresh]);
+  useEffect(() => { if (setup || a.daemon.state === "running") void refresh(); }, [a.daemon.state, refresh]);
 
   const start = async (p: ProviderRow, mode: "browser" | "device") => {
     setError("");
     try {
-      const first: LoginStatus = await app.request("auth_login_start", { name: p.name, mode });
+      const first: LoginStatus = await request("auth_login_start", { name: p.name, mode });
       setLogin({ name: p.name, status: first });
-      if (first.url) void bridge().shell.openExternal(first.url).catch(() => {});
-      const done = await pollLogin(() => app.request("auth_login_status", { loginId: first.loginId }), { onUpdate: (s) => setLogin({ name: p.name, status: { ...first, ...s } }), cancelled: () => cancelledRef.has(first.loginId) });
+      if (first.url) void openExternal(first.url).catch(() => {});
+      const done = await pollLogin(() => request("auth_login_status", { loginId: first.loginId }), { onUpdate: (s) => setLogin({ name: p.name, status: { ...first, ...s } }), cancelled: () => cancelledRef.has(first.loginId) });
       if (done.state === "failed") setError(done.error ?? "Sign-in failed.");
       setLogin(null);
       await refresh();
+      if (done.state === "complete") onSignedIn?.();
     } catch (e) { setError((e as Error).message); setLogin(null); }
   };
-  const logout = async (p: ProviderRow) => { try { await app.request("auth_logout", { name: p.name }); await refresh(); } catch (e) { setError((e as Error).message); } };
+  const logout = async (p: ProviderRow) => { try { await request("auth_logout", { name: p.name }); await refresh(); } catch (e) { setError((e as Error).message); } };
 
   return (
     <>
-      <h2>Accounts</h2>
-      <p className="muted small">Sign in to an account plan with the OAuth providers you described in settings.json (<code>oauthProviders</code>). Rigwell ships no provider and no client id; check the provider's terms before using a plan from a third-party app. Tokens stay in the daemon: this page never sees them.</p>
+      <h2>{setup ? "Sign in with an account" : "Accounts"}</h2>
+      <p className="muted small">Sign in through the registered OAuth providers described in settings.json (<code>oauthProviders</code>). Only Rigwell-registered clients or your own registered clients can be used. Available sign-in methods depend on the provider. Tokens stay in the daemon: this page never sees them.</p>
       {error && <div className="banner error" role="alert">{error}</div>}
       {problems.map((p) => <div className="banner warn small" key={p}>{p}</div>)}
       <table className="table" aria-label="Accounts">
@@ -227,32 +233,29 @@ export function Accounts() {
               <td className="mono">{p.name}{p.apiBaseUrl ? <div className="muted small">{p.apiBaseUrl}</div> : null}</td>
               <td className="small" data-testid="provider-status">{providerStatus(p)}</td>
               <td className="row-ctl">
-                {p.loggedIn
-                  ? <button aria-label={`Sign out of ${p.name}`} onClick={() => void logout(p)}>Sign out</button>
-                  : <>
-                    {p.browserLogin && <button className="primary" aria-label={`Sign in to ${p.name}`} disabled={!!login} onClick={() => void start(p, defaultMode(p))}>Sign in</button>}
-                    {p.deviceLogin && <button aria-label={`Sign in to ${p.name} with a code`} disabled={!!login} onClick={() => void start(p, "device")}>{p.browserLogin ? "Use a code" : "Sign in"}</button>}
-                  </>}
+                {p.browserLogin && <button className="primary" aria-label={`Sign in to ${p.name}`} disabled={!!login} onClick={() => void start(p, defaultMode(p))}>{p.loggedIn ? "Sign in again" : `Sign in with ${p.name}`}</button>}
+                {p.deviceLogin && <button aria-label={`Sign in to ${p.name} with a code`} disabled={!!login} onClick={() => void start(p, "device")}>{p.browserLogin ? "Use a code" : p.loggedIn ? "Sign in again" : `Sign in with ${p.name}`}</button>}
+                {p.loggedIn && <button aria-label={`Sign out of ${p.name}`} onClick={() => void logout(p)}>Sign out</button>}
               </td>
             </tr>
           ))}
-          {loaded && !providers.length && <tr><td colSpan={3} className="muted">No OAuth providers are configured. Add <code>oauthProviders</code> to settings.json (see docs/auth.md).</td></tr>}
+          {loaded && !providers.length && <tr><td colSpan={3} className="muted">Account sign-in is not available: no registered provider client is configured. Add Rigwell's registered <code>oauthProviders</code> entries or use an API key or local server below (docs/auth.md).</td></tr>}
         </tbody>
       </table>
-      {login && <LoginPanel login={login} onCancel={() => { cancelledRef.add(login.status.loginId); }} />}
+      {login && <LoginPanel openExternal={openExternal} login={login} onCancel={() => { cancelledRef.add(login.status.loginId); }} />}
     </>
   );
 }
 const cancelledRef = new Set<string>();
 
-function LoginPanel({ login, onCancel }: { login: { name: string; status: LoginStatus }; onCancel(): void }) {
+function LoginPanel({ login, onCancel, openExternal }: { openExternal(url: string): Promise<unknown>; login: { name: string; status: LoginStatus }; onCancel(): void }) {
   const s = login.status;
   return (
     <div className="banner" role="status" aria-label="Sign-in in progress" data-testid="login-panel">
       <div>Signing in to <b>{login.name}</b>...</div>
       {s.kind === "device"
-        ? <div>Open <a href={s.verificationUriComplete ?? s.verificationUri} onClick={(e) => { e.preventDefault(); const u = s.verificationUriComplete ?? s.verificationUri; if (u) void bridge().shell.openExternal(u); }}>{s.verificationUri}</a> and enter the code <b className="mono" data-testid="device-code">{s.userCode}</b></div>
-        : <div className="small">A browser window should open. If it did not, <a href={s.url} data-testid="login-url" onClick={(e) => { e.preventDefault(); if (s.url) void bridge().shell.openExternal(s.url); }}>open the sign-in page</a>.</div>}
+        ? <div>Open <a href={s.verificationUriComplete ?? s.verificationUri} onClick={(e) => { e.preventDefault(); const u = s.verificationUriComplete ?? s.verificationUri; if (u) void openExternal(u); }}>{s.verificationUri}</a> and enter the code <b className="mono" data-testid="device-code">{s.userCode}</b></div>
+        : <div className="small">A browser window should open. If it did not, <a href={s.url} data-testid="login-url" onClick={(e) => { e.preventDefault(); if (s.url) void openExternal(s.url); }}>open the sign-in page</a>.</div>}
       <button onClick={onCancel}>Stop waiting</button>
     </div>
   );

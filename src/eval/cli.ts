@@ -8,12 +8,20 @@ import { runEval } from "./runner.ts";
 import { currentBuildId, evalDir, loadRuns, saveRun } from "./store.ts";
 import { defaultTasksDir, loadTasks } from "./tasks.ts";
 import type { EvalConfig } from "./types.ts";
+import { runComparison } from "./comparison.ts";
+import { datasetTasks, importDataset, listDatasets, previewDataset } from "./datasets.ts";
+import { exportEvalRun, listEvalRuns } from "./view.ts";
 
 export const EVAL_USAGE = `Usage:
   rigwell eval run [--config <file>] [--tasks <dir>] [--task a,b] [--model id,id] [--trials n]
-                   [--auto low|medium|high] [--build <id>]
+                   [--auto low|medium|high] [--build <id>] [--judge-model <id>] [--dataset <id>]
   rigwell eval report [--since 7d] [--build <id>] [--against <id>] [--json] [--out <file>]
   rigwell eval tasks [--tasks <dir>]
+  rigwell eval compare --config <file> [--task a,b] [--model id,id] [--build <id>] [--json] [--out <file>]
+  rigwell eval history
+  rigwell eval export --run <id> --format csv|jsonl [--out <file>]
+  rigwell eval datasets
+  rigwell eval import --source <file> --format csv|jsonl|stax [--columns <json>] [--name <name>] [--confirm <preview-hash>]
 
 Config default: $RIGWELL_HOME/eval/config.json. Without one, every custom model in settings runs unpriced.
 Results: $RIGWELL_HOME/eval/runs/<build>/<timestamp>.json (build = git short sha, or --build).`;
@@ -48,18 +56,48 @@ export function loadConfig(path?: string): EvalConfig {
 export async function evalMain(argv: string[]): Promise<void> {
   const [sub, ...rest] = argv;
   const { opts, bools } = flags(rest);
+  if (sub === "history" || sub === "datasets") { process.stdout.write(JSON.stringify(sub === "history" ? listEvalRuns() : listDatasets(), null, 2) + "\n"); return; }
+  if (sub === "import") {
+    if (!opts.source || !opts.format) fail("import needs --source and --format");
+    const format = opts.format as "csv" | "jsonl" | "stax", columns = opts.columns ? JSON.parse(opts.columns) : undefined;
+    const result = opts.confirm ? importDataset({ source: resolve(opts.source), format, columns, name: opts.name ?? "Imported dataset", previewHash: opts.confirm, confirmed: true }) : previewDataset(resolve(opts.source), format, columns);
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n"); return;
+  }
+  if (sub === "export") {
+    if (!opts.run || !opts.format) fail("export needs --run and --format"); const result = exportEvalRun(opts.run, opts.format);
+    if (opts.out) writeFileSync(resolve(opts.out), result.content, { mode: 0o600 }); else process.stdout.write(result.content); return;
+  }
+  if (sub === "compare") {
+    if (!opts.config) fail("compare requires an explicit config and external profile mappings");
+    const config = loadConfig(opts.config);
+    if (opts.model) config.models = config.models.filter((m) => opts.model!.split(",").includes(m.id));
+    if (opts.trials) config.trials = Number(opts.trials);
+    if (opts.auto) config.autonomy = opts.auto as EvalConfig["autonomy"];
+    if (opts["judge-model"]) config.judgeModel = opts["judge-model"];
+    const tasks = loadTasks(opts.tasks ? resolve(opts.tasks) : config.tasksDir ? resolve(config.tasksDir) : defaultTasksDir(), opts.task?.split(","));
+    const runs = await runComparison({ config, tasks, buildId: opts.build ?? currentBuildId(), onResult: (side, r) => process.stderr.write(`[compare] ${side} ${r.model} ${r.task} #${r.trial}: ${r.passed ? "pass" : "FAIL (" + r.failKind + ")"}\n`) });
+    const referenceFile = saveRun(runs.reference), candidateFile = saveRun(runs.candidate);
+    const report = buildReport(runs.candidate, runs.reference);
+    const output = bools.has("json") ? JSON.stringify({ ...runs, report }, null, 2) + "\n" : renderMarkdown(report);
+    if (opts.out) writeFileSync(resolve(opts.out), output); else process.stdout.write(output);
+    process.stderr.write(`[compare] candidate: ${candidateFile}\n[compare] reference: ${referenceFile}\n`);
+    process.exit(0);
+  }
   if (sub === "run") {
     const config = loadConfig(opts.config);
     if (opts.model) config.models = config.models.filter((m) => opts.model!.split(",").includes(m.id));
     if (!config.models.length) fail("no models selected");
     if (opts.trials) config.trials = Number(opts.trials);
     if (opts.auto) config.autonomy = opts.auto as EvalConfig["autonomy"];
-    const tasks = loadTasks(opts.tasks ? resolve(opts.tasks) : config.tasksDir ? resolve(config.tasksDir) : defaultTasksDir(), opts.task?.split(","));
+    if (opts["judge-model"]) config.judgeModel = opts["judge-model"];
+    if (opts.dataset && (opts.tasks || opts.task)) fail("Choose --dataset or --tasks/--task");
+    const dataset = opts.dataset ? datasetTasks(opts.dataset) : undefined;
+    const tasks = dataset?.tasks ?? loadTasks(opts.tasks ? resolve(opts.tasks) : config.tasksDir ? resolve(config.tasksDir) : defaultTasksDir(), opts.task?.split(","));
     const buildId = opts.build ?? currentBuildId();
-    const run = await runEval({
+    const run = await (async () => { try { return await runEval({
       config, tasks, buildId,
       onResult: (r) => process.stderr.write(`[eval] ${r.model} [${r.variant}] ${r.task} #${r.trial}: ${r.passed ? "pass" : "FAIL (" + r.failKind + ")"} ${r.requests} req ${(r.wallMs / 1000).toFixed(1)}s $${r.costUsd.toFixed(4)}\n`),
-    });
+    }); } finally { dataset?.cleanup(); } })();
     const file = saveRun(run);
     process.stdout.write(`${file}\n`);
     const passed = run.results.filter((r) => r.passed).length;

@@ -1,5 +1,6 @@
 // Terminal attention (spec §19.1, §19.3): BEL, sounds through an external player, OSC 9;4 progress, and the
 // custom status line command (spec §13.1). Side effects live here so the reducer stays pure.
+import { killProcessTree, shellInvocation } from "../platform/shell.ts";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -166,12 +167,28 @@ export interface StatusLineInput {
 
 export type StatusLineResult = { ok: true; text: string } | { ok: false; hint: string };
 
-export function runStatusLine(cfg: StatusLineConfig, input: StatusLineInput, cwd: string, timeoutMs = STATUS_LINE_TIMEOUT_MS): StatusLineResult {
-  const r = spawnSync(process.env.SHELL && existsSync(process.env.SHELL) ? process.env.SHELL : "sh", ["-c", cfg.command], {
-    cwd, input: JSON.stringify(input), timeout: timeoutMs, encoding: "utf8", maxBuffer: 64 * 1024,
+export async function runStatusLine(cfg: StatusLineConfig, input: StatusLineInput, cwd: string, timeoutMs = STATUS_LINE_TIMEOUT_MS): Promise<StatusLineResult> {
+  const shell = shellInvocation(cfg.command);
+  if (process.platform !== "win32" && process.env.SHELL && existsSync(process.env.SHELL)) shell.file = process.env.SHELL;
+  return new Promise((resolve) => {
+    const child = spawn(shell.file, shell.args, { cwd, windowsVerbatimArguments: shell.windowsVerbatimArguments, detached: process.platform !== "win32", windowsHide: true });
+    let output = "", size = 0, failure: string | undefined;
+    const timer = setTimeout(() => { failure = "Status line timed out. Run /statusline."; killProcessTree(child.pid); }, timeoutMs);
+    child.stdout.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > 64 * 1024) { failure = "Status line output exceeded 64 KB. Run /statusline."; killProcessTree(child.pid); }
+      else output += chunk.toString();
+    });
+    child.stderr.resume();
+    child.stdin.on("error", () => {});
+    child.stdin.end(JSON.stringify(input));
+    child.on("error", (error) => { clearTimeout(timer); resolve({ ok: false, hint: `Status line failed: ${error.message}. Run /statusline.` }); });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (failure) return resolve({ ok: false, hint: failure });
+      if (code !== 0) return resolve({ ok: false, hint: `Status line exited ${code}. Run /statusline.` });
+      const text = output.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").split("\n").map((l) => l.trimEnd()).filter((l, i, a) => l || i < a.length - 1).slice(0, cfg.maxRows).join("\n").trimEnd();
+      resolve({ ok: true, text });
+    });
   });
-  if (r.error) return { ok: false, hint: (r.error as any).code === "ETIMEDOUT" ? "Status line timed out. Run /statusline." : `Status line failed: ${r.error.message}. Run /statusline.` };
-  if (r.status !== 0) return { ok: false, hint: `Status line exited ${r.status}. Run /statusline.` };
-  const text = r.stdout.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").split("\n").map((l) => l.trimEnd()).filter((l, i, a) => l || i < a.length - 1).slice(0, cfg.maxRows).join("\n").trimEnd();
-  return { ok: true, text };
 }

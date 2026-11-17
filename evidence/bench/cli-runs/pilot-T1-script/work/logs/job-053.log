@@ -1,0 +1,9 @@
+job job-053 started on runner-8
+step 0: warning: FAILED to fetch optional mirror, using default
+step 1: cache hit
+step 2: warning: FAILED to fetch optional mirror, using default
+step 3: warning: FAILED to fetch optional mirror, using default
+step 4: download 12MB
+step 5: tests: 41 passed
+STATUS: PASSED
+summary: see artifacts

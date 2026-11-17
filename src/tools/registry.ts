@@ -1,4 +1,5 @@
 import type { AutonomyLevel, Tool } from "../core/types.ts";
+import { agentBrowserTools, defaultAgentBrowsers } from "../browser/tools.ts";
 import { createApplyPatchTool } from "./apply-patch.ts";
 import { createCreateTool } from "./create.ts";
 import { createEditTool } from "./edit.ts";
@@ -20,6 +21,7 @@ export function createCoreTools(opts: { skipPermissions?: boolean; fileEditProfi
     createGrepTool(),
     createGlobTool(),
     createFetchUrlTool(),
+    ...agentBrowserTools(defaultAgentBrowsers),
     ...(opts.fileEditProfile === "apply-patch" ? [createApplyPatchTool()] : [createEditTool(), createCreateTool()]),
   ];
 }

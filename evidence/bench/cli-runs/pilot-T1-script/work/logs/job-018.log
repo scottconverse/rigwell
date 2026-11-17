@@ -1,0 +1,27 @@
+job job-018 started on runner-8
+step 0: cache hit
+step 1: compile ok
+step 2: download 12MB
+step 3: tests: 41 passed
+step 4: cache hit
+step 5: compile ok
+step 6: lint ok
+step 7: tests: 41 passed
+step 8: compile ok
+step 9: cache hit
+step 10: download 12MB
+step 11: compile ok
+step 12: download 12MB
+step 13: compile ok
+step 14: cache hit
+step 15: compile ok
+step 16: lint ok
+step 17: compile ok
+step 18: download 12MB
+step 19: lint ok
+step 20: download 12MB
+step 21: download 12MB
+step 22: compile ok
+step 23: tests: 41 passed
+STATUS: PASSED
+summary: see artifacts

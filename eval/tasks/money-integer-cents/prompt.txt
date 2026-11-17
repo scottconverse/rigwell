@@ -1,0 +1,3 @@
+Fix totalCents(lines), where each line has decimal string price and nonnegative integer quantity. Prices have zero to two fraction digits. Sum integer cents without floating point rounding; reject malformed prices, negative quantities and unsafe totals.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

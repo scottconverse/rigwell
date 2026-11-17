@@ -1,0 +1,3 @@
+For a directory argument recursively list ordinary files as sorted forward-slash relative paths, tab, byte size. Never follow symlinks. Missing directory produces stderr and exit 2. Implement cli.js with built-in Node modules only.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

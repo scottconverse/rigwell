@@ -4,31 +4,45 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nati
 import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { badgeCount, notificationFor, soundFor, type SoundAction, type WindowState } from "./alerts.ts";
+import { attentionTag, badgeCount, notificationFor, soundFor, type SoundAction, type WindowState } from "./alerts.ts";
 import { initialWindowOptions, overlayFor } from "./appearance.ts";
 import { DaemonBroker } from "./broker.ts";
+import { saveSessionExport } from "./session-export.ts";
+import { saveAnalyticsExport } from "./analytics-export.ts";
+import { saveEvalExport } from "./eval-export.ts";
 import { daemonCommand as buildDaemonCommand } from "./daemon-cmd.ts";
 import { checkForUpdate, describeCheck, type UpdateCheck } from "./update-feed.ts";
-import { downloadAndVerify, installAppImage, UpdateRefused } from "./update-verify.ts";
+import { downloadAndVerify, installLinuxUpdate, rollbackAppImage, UpdateRefused } from "./update-verify.ts";
 import { dictationStatus, DictationError, transcribe as transcribeSpeech } from "./dictation.ts";
 import { readOrgManaged } from "./org-managed.ts";
 import { trayModel, type TrayModel } from "./tray.ts";
-import { cookieImportBlocked, importFromProfile, listChromeProfiles, listCookieDomains, toElectronCookie, userDataDirs, type ChromeProfile } from "../../src/sidepane/chrome-cookies.ts";
+import { importFromProfile, listChromeProfiles, listCookieDomains, toElectronCookie, userDataDirs, type ChromeProfile } from "../../src/sidepane/chrome-cookies.ts";
 import { startCdpProxy, type CdpProxy, type PaneHost, type PaneTarget } from "./cdp-proxy.ts";
+import { BrowserRequestGuards, sessionBrowserHost } from "./agent-browser.ts";
 import { browserPermission, buildCsp, isAllowedExternal, isTrustedSender, parseDeepLink } from "./security.ts";
 import { loadDesktopSettings, updateDesktopSettings, type DesktopSettings } from "./settings.ts";
 import { DaemonSupervisor, START_FAILURE_HINT } from "./supervisor.ts";
 import { deleteLocalProfile, gitRoot, listProfileViews, readUserSettings, saveLocalProfile, trustFolder, updateUserSettings } from "./user-settings.ts";
-import { createSkill, listSkillViews } from "./skills.ts";
+import { listSkillViews } from "./skills.ts";
 import { synthWav } from "./sounds.ts";
 import { freeSlot, saveZoom, stepZoom, zoomFor } from "./window-zoom.ts";
-import { showWhenReady } from "./window-show.ts";
+import { RemoteViews } from "./remote-view.ts";
+import { localProfileController, profileDesktopData, rememberDefaultProfileData } from "./local-profiles.ts";
+import { applyProfileOption } from "../../src/storage/local-profiles.ts";
+import { appendDiagnosticLog, installProcessCrashCapture, recordCrash } from "../../src/diagnostics/reports.ts";
+import { rendererCrashReceiver, saveBugReport } from "./bug-report.ts";
+import { guardWindowsInstallation } from "./windows-update.ts";
 
 // The bundle lives in <app>/dist next to preload.cjs and renderer/. app.getAppPath() is the folder with package.json
 // (also correct inside an asar), which is more reliable than __dirname because bundlers may inline that.
 const appRoot = /[\\/]dist$/.test(app.getAppPath()) ? join(app.getAppPath(), "..") : app.getAppPath();
 const here = join(appRoot, "dist");
+rememberDefaultProfileData(app.getPath("userData"));
+applyProfileOption(process.argv.slice(1));
 const HOME = process.env.RIGWELL_HOME ?? join(homedir(), ".rigwell");
+installProcessCrashCapture(HOME, "main");
+const receiveRendererCrash = rendererCrashReceiver(HOME);
+const localProfiles = localProfileController((args) => { app.relaunch({ args }); app.quit(); });
 const DEV_URL = process.env.RIGWELL_RENDERER_URL; // optional dev server
 const APP_PAGE = DEV_URL ?? new URL(`file://${join(here, "renderer", "index.html")}`).toString();
 const SCHEME = "rigwell";
@@ -55,8 +69,9 @@ function guard<T>(fn: (e: IpcMainInvokeEvent, ...a: any[]) => T) {
     return fn(e, ...a);
   };
 }
-const log = (m: string) => { try { process.stderr.write(m + "\n"); } catch {} };
+const log = (m: string) => { appendDiagnosticLog(HOME, m); try { process.stderr.write(m + "\n"); } catch {} };
 const sendTo = (id: number, channel: string, payload: unknown) => { const w = webContents.fromId(id); if (w && !w.isDestroyed()) w.send(channel, payload); };
+const remoteViews = new RemoteViews(HOME, (owner, event) => sendTo(owner, "remoteView:data", event));
 const broadcast = (channel: string, payload: unknown) => { for (const id of winIds()) sendTo(id, channel, payload); };
 
 function windowState(): WindowState {
@@ -70,7 +85,7 @@ const toasts = new Map<string, Notification>();
 function onAttention(ev: import("../../src/sidepane/attention.ts").AttentionEvent, open: import("../../src/sidepane/attention.ts").AttentionEvent[]) {
   app.setBadgeCount(badgeCount(open));
   updateTray();
-  if (ev.kind === "attention_resolved") { toasts.get(`session-${ev.sessionId}`)?.close(); return; }
+  if (ev.kind === "attention_resolved") { const tag = attentionTag(ev); toasts.get(tag)?.close(); toasts.delete(tag); return; }
   const w = windowState();
   const n = notificationFor(ev, settings, w);
   if (n && Notification.isSupported()) {
@@ -178,13 +193,23 @@ function createWindow(route = "/"): BrowserWindow {
   windows.add(win);
   slots.set(win, freeSlot(slots.values()));
   const id = win.webContents.id;
-  showWhenReady(win, () => { if (b?.maximized) win.maximize(); win.show(); updateTray(); });
+  // Some Linux display/GPU combinations never emit ready-to-show for a hidden window.
+  // The loaded page already has its startup theme from preload, so it is safe to show then too.
+  let initiallyShown = false;
+  const showInitially = () => {
+    if (initiallyShown || win.isDestroyed()) return;
+    initiallyShown = true;
+    if (b?.maximized) win.maximize();
+    win.show(); updateTray();
+  };
+  win.once("ready-to-show", showInitially);
+  win.webContents.once("did-finish-load", showInitially);
   win.on("show", () => updateTray()); win.on("hide", () => updateTray());
   win.webContents.setWindowOpenHandler(({ url }) => { if (isAllowedExternal(url)) void shell.openExternal(url); return { action: "deny" }; });
   win.webContents.on("will-navigate", (e, url) => { if (!isTrustedSender(url, [APP_PAGE])) { e.preventDefault(); if (isAllowedExternal(url)) void shell.openExternal(url); } });
   // A reload or navigation drops this window's daemon connections; its terminals live on in the daemon (spec 17.2).
   win.webContents.on("did-start-navigation", (_e, _url, inPlace, isMainFrame) => { if (isMainFrame && !inPlace) { broker.closeWindow(id); viewing.delete(id); } });
-  win.webContents.on("render-process-gone", (_e, d) => log(`[window] renderer gone: ${d.reason}`));
+  win.webContents.on("render-process-gone", (_e, d) => { log(`[window] renderer gone: ${d.reason}`); if (d.reason !== "clean-exit") recordCrash(HOME, "renderer", "render-process-gone", JSON.stringify({ reason: d.reason, exitCode: d.exitCode, windowId: id })); });
   win.on("unresponsive", () => log("[window] unresponsive"));
   win.webContents.on("did-finish-load", () => { const l = zoomFor(HOME, slots.get(win) ?? 0, settings.windowZoomLevel); zooms.set(win, l); win.webContents.setZoomLevel(l); });
   // Chromium remembers zoom per URL, and a file: page's route is part of its URL. Moving between routes would pick up
@@ -195,7 +220,7 @@ function createWindow(route = "/"): BrowserWindow {
   win.on("close", () => {
     if (windows.size === 1) { const bb = win.getNormalBounds(); settings = updateDesktopSettings(HOME, { windowBounds: { ...bb, maximized: win.isMaximized() } }); }
   });
-  win.on("closed", () => { windows.delete(win); slots.delete(win); zooms.delete(win); broker.closeWindow(id); viewing.delete(id); browserTabs.forEach((t, k) => { if (t.host === id) browserTabs.delete(k); }); });
+  win.on("closed", () => { void remoteViews.closeOwner(id); windows.delete(win); slots.delete(win); zooms.delete(win); broker.closeWindow(id); viewing.delete(id); closeWindowBrowsers(id); browserTabs.forEach((t, k) => { if (t.host === id) browserTabs.delete(k); }); });
   void win.loadURL(`${APP_PAGE}#${route}`);
   return win;
 }
@@ -219,13 +244,56 @@ function openRoute(route: string) {
 
 // ------------------------------------------------------------------ browser pane (webviews) + CDP proxy
 
-const browserTabs = new Map<number, { wc: WebContents; host: number }>();
+const browserTabs = new Map<number, { wc: WebContents; host: number; sessionId?: string; active?: boolean }>();
+const browserGuards = new BrowserRequestGuards();
+const scopedBrowsers = new Map<string, { url: string; close(): Promise<void> }>();
+
+function scopedBrowserUrl(windowId: number, sessionId: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(sessionId) || !proxy) throw new Error("Invalid browser session");
+  const key = `${windowId}:${sessionId}`;
+  const previous = scopedBrowsers.get(key); if (previous) return previous.url;
+  const visible = () => [...browserTabs.values()].filter((t) => t.host === windowId && t.sessionId === sessionId && !t.wc.isDestroyed()).map((t) => paneTarget(t.wc));
+  const owned = sessionBrowserHost({
+    visible,
+    async createVisible(url) {
+      const host = webContents.fromId(windowId); if (!host || host.isDestroyed()) throw new Error("Browser window closed");
+      const requestId = crypto.randomUUID();
+      let timer: ReturnType<typeof setTimeout>;
+      const got = new Promise<WebContents>((resolveTab, reject) => {
+        pendingTabs.set(requestId, resolveTab);
+        timer = setTimeout(() => { if (pendingTabs.delete(requestId)) reject(new Error("Browser pane did not register its new tab")); }, 10_000);
+      });
+      host.send("browser:new-tab", { requestId, url, sessionId });
+      try { return paneTarget(await got); } finally { clearTimeout(timer!); }
+    },
+    async createHidden(url) {
+      const hidden = new BrowserWindow({ show: false, webPreferences: { partition: `agent-browser-${sessionId}`, nodeIntegration: false, contextIsolation: true, sandbox: true } });
+      hidden.setSkipTaskbar(true);
+      const wc = hidden.webContents;
+      browserGuards.install(wc.session, true);
+      wc.session.setPermissionRequestHandler((_wc, _permission, done) => done(false));
+      wc.session.setPermissionCheckHandler(() => false); wc.session.setDevicePermissionHandler(() => false);
+      wc.setWindowOpenHandler(() => ({ action: "deny" }));
+      const target = paneTarget(wc);
+      try { await wc.loadURL(url); } catch (e) { hidden.destroy(); throw e; }
+      return { ...target, async close() { if (!hidden.isDestroyed()) hidden.destroy(); } };
+    },
+    closeVisible: (id) => paneHost.closeTab(id), activateVisible: (id) => paneHost.activateTab(id),
+    async setPolicy(target, params) { const wc = webContents.fromId(Number(target.id)); if (!wc || wc.isDestroyed()) throw new Error("Browser tab closed"); browserGuards.set(wc, params); },
+  });
+  const registration = proxy.registerHost(owned.host);
+  scopedBrowsers.set(key, { url: registration.url, async close() { registration.close(); await owned.close(); scopedBrowsers.delete(key); } });
+  return registration.url;
+}
+
+function closeWindowBrowsers(id: number) { for (const [key, owned] of scopedBrowsers) if (key.startsWith(`${id}:`)) void owned.close(); }
 const pendingTabs = new Map<string, (wc: WebContents) => void>();
 
 function paneTarget(wc: WebContents): PaneTarget {
   return {
     id: String(wc.id),
     url: () => wc.getURL(), title: () => wc.getTitle(),
+    active: () => browserTabs.get(wc.id)?.active === true,
     attach() { if (!wc.debugger.isAttached()) wc.debugger.attach("1.3"); },
     detach() { /* kept attached: other CDP sessions may share it */ },
     send: (method, params) => wc.debugger.sendCommand(method, params),
@@ -256,7 +324,7 @@ const paneHost: PaneHost = {
   },
   activateTab(id) {
     const t = browserTabs.get(Number(id));
-    if (t) sendTo(t.host, "browser:activate-tab", { webContentsId: Number(id) });
+    if (t) { for (const other of browserTabs.values()) if (other.host === t.host && other.sessionId === t.sessionId) other.active = false; t.active = true; sendTo(t.host, "browser:activate-tab", { webContentsId: Number(id) }); }
   },
 };
 
@@ -276,6 +344,7 @@ function setupBrowserSession() {
 // ------------------------------------------------------------------ IPC
 
 function registerIpc() {
+  ipcMain.handle("diagnostics:rendererCrash", guard((e, value: unknown) => receiveRendererCrash(e.sender.id, value)));
   ipcMain.handle("daemon:isIpcAvailable", guard(() => supervisor.state === "running"));
   ipcMain.handle("daemon:getTransportMode", guard(() => "websocket"));
   ipcMain.handle("daemon:getPort", guard(() => (supervisor.info ? Number(new URL(supervisor.info.wsUrl).port) : null)));
@@ -287,6 +356,10 @@ function registerIpc() {
     broker.send(e.sender.id, connId, message);
   }));
   ipcMain.handle("daemon:close", guard((e, connId: number) => broker.closeConnection(e.sender.id, connId)));
+  ipcMain.handle("remoteView:open", guard((e, name: string, port: number, kind: "browser" | "desktop") => remoteViews.open(e.sender.id, name, port, kind)));
+  ipcMain.handle("remoteView:receive", guard((e, id: string) => remoteViews.receive(e.sender.id, id)));
+  ipcMain.handle("remoteView:send", guard((e, id: string, data: unknown) => remoteViews.send(e.sender.id, id, data)));
+  ipcMain.handle("remoteView:close", guard((e, id: string) => remoteViews.close(e.sender.id, id)));
 
   ipcMain.handle("deeplink:claim", guard((e, state: string) => { claims.set(String(state), { windowId: e.sender.id, at: Date.now() }); }));
   ipcMain.handle("view:set", guard((e, sessionId: string | null) => { viewing.set(e.sender.id, sessionId ?? undefined); }));
@@ -310,17 +383,13 @@ function registerIpc() {
   ipcMain.handle("userSettings:update", guard((_e, patch: unknown) => updateUserSettings(HOME, patch)));
   ipcMain.handle("userSettings:trustFolder", guard((_e, folder: string) => trustFolder(HOME, String(folder))));
   ipcMain.handle("profiles:list", guard(async (_e, folder: string) => { const root = await gitRoot(String(folder)); return { repoRoot: root, profiles: root ? listProfileViews(HOME, root) : [] }; }));
+  ipcMain.handle("localProfiles:list", guard(() => localProfiles.list()));
+  ipcMain.handle("localProfiles:create", guard((_e, id: string, name: string, role: string) => localProfiles.create(id, name, role)));
+  ipcMain.handle("localProfiles:update", guard((_e, id: string, name: string, role: string) => localProfiles.update(id, name, role)));
+  ipcMain.handle("localProfiles:switch", guard((_e, id: string, confirmed: boolean) => localProfiles.switch(id, confirmed)));
   ipcMain.handle("profiles:save", guard(async (_e, folder: string, p: any) => { const root = await gitRoot(String(folder)); if (!root) throw new Error("Not a git repository"); return saveLocalProfile(HOME, root, p); }));
   ipcMain.handle("profiles:delete", guard(async (_e, folder: string, id: string) => { const root = await gitRoot(String(folder)); if (!root) throw new Error("Not a git repository"); deleteLocalProfile(HOME, root, String(id)); }));
   ipcMain.handle("skills:list", guard((_e, cwd: string) => listSkillViews(String(cwd))));
-  // The page has no clipboard permission (the default session denies it), so copy buttons go through the main process.
-  ipcMain.handle("clipboard:writeText", guard((_e, text: string) => { clipboard.writeText(String(text).slice(0, 5_000_000)); }));
-  ipcMain.handle("clipboard:writeImage", guard((_e, dataUrl: string) => {
-    const img = nativeImage.createFromDataURL(String(dataUrl));
-    if (img.isEmpty()) throw new Error("Not an image");
-    clipboard.writeImage(img);
-  }));
-  ipcMain.handle("skills:create", guard((_e, cwd: string, input: any) => createSkill(String(cwd ?? ""), input)));
 
   ipcMain.handle("dialog:pickFolder", guard(async (e) => {
     const w = BrowserWindow.fromWebContents(e.sender);
@@ -332,6 +401,21 @@ function registerIpc() {
     const r = await dialog.showOpenDialog(w!, { properties: ["openFile"], filters });
     return r.canceled ? null : r.filePaths[0];
   }));
+  ipcMain.handle("dialog:saveSessionExport", guard(async (e, format: unknown, content: unknown) => saveSessionExport(format, content, async (extension) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const result = await dialog.showSaveDialog(win!, { title: "Export redacted session", defaultPath: `rigwell-session.${extension}`, filters: [{ name: "Session export", extensions: [extension] }] });
+    return result.canceled ? null : result.filePath ?? null;
+  })));
+  ipcMain.handle("dialog:saveAnalyticsExport", guard(async (e, content: unknown) => saveAnalyticsExport(content, async () => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const result = await dialog.showSaveDialog(win!, { title: "Export local analytics", defaultPath: "rigwell-analytics.csv", filters: [{ name: "Analytics CSV", extensions: ["csv"] }] });
+    return result.canceled ? null : result.filePath ?? null;
+  })));
+  ipcMain.handle("dialog:saveEvalExport", guard(async (e, format: unknown, content: unknown) => saveEvalExport(format, content, async (extension) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const result = await dialog.showSaveDialog(win!, { title: "Export local evaluation", defaultPath: `rigwell-evaluation.${extension}`, filters: [{ name: "Evaluation results", extensions: [extension] }] });
+    return result.canceled ? null : result.filePath ?? null;
+  })));
   ipcMain.handle("shell:openExternal", guard((_e, url: string) => {
     if (!isAllowedExternal(url)) throw new Error("Link not allowed");
     if (testHooks) { openedExternal.push(url); return; } // the test runner follows the link itself
@@ -368,7 +452,6 @@ function registerIpc() {
     if (!p) throw new Error("That browser profile was not found");
     return p;
   };
-  ipcMain.handle("cookies:blocked", guard(() => cookieImportBlocked()));
   ipcMain.handle("cookies:profiles", guard(() => listChromeProfiles(chromeRoots()).map((p) => ({ key: `${p.browser}:${p.dir}`, browser: p.browser, name: p.name, dir: p.dir }))));
   ipcMain.handle("cookies:domains", guard((_e, key: unknown) => listCookieDomains(chromeProfile(key).cookiesFile)));
   // Explicit user action only: the page calls this from the Import button. Only the chosen domains are read, values are never logged.
@@ -383,13 +466,16 @@ function registerIpc() {
   }));
 
   // Browser pane
-  ipcMain.handle("browser:cdpUrl", guard(() => proxy?.url ?? null));
-  ipcMain.handle("browser:register", guard((e, webContentsId: number, requestId?: string) => {
+  ipcMain.handle("browser:cdpUrl", guard((e, sessionId?: string) => sessionId ? scopedBrowserUrl(e.sender.id, sessionId) : proxy?.url ?? null));
+  ipcMain.handle("browser:register", guard((e, webContentsId: number, requestId?: string, sessionId?: string, active?: boolean) => {
     const wc = webContents.fromId(webContentsId);
     // Only a webview hosted by the calling window may be registered.
     if (!wc || wc.getType() !== "webview" || wc.hostWebContents?.id !== e.sender.id) throw new Error("Not a webview of this window");
-    browserTabs.set(wc.id, { wc, host: e.sender.id });
-    wc.once("destroyed", () => browserTabs.delete(wc.id));
+    if (requestId && pendingTabs.has(requestId)) active = true;
+    if (sessionId !== undefined && (typeof sessionId !== "string" || !/^[A-Za-z0-9_-]+$/.test(sessionId))) throw new Error("Invalid browser session");
+    if (active) for (const t of browserTabs.values()) if (t.host === e.sender.id && t.sessionId === sessionId) t.active = false;
+    if (!browserTabs.has(wc.id)) wc.once("destroyed", () => browserTabs.delete(wc.id));
+    browserTabs.set(wc.id, { wc, host: e.sender.id, sessionId, active: active ?? browserTabs.get(wc.id)?.active });
     if (requestId) pendingTabs.get(requestId)?.(wc), pendingTabs.delete(requestId);
     return true;
   }));
@@ -433,7 +519,7 @@ async function runUpdateCheck(manual: boolean): Promise<UpdateCheck> {
     try {
       const v = await downloadAndVerify({ url: r.downloadUrl, publicKey: process.env.RIGWELL_UPDATE_PUBLIC_KEY || settings.updatePublicKey, signature: r.signature, sha512: r.sha512, size: r.size, destDir: join(HOME, "updates") });
       if (process.env.APPIMAGE) {
-        installAppImage(v.path, process.env.APPIMAGE);
+        installLinuxUpdate(v.path, process.env.APPIMAGE);
         const again = await dialog.showMessageBox({ message: "Update installed", detail: `Rigwell ${r.version} was verified and installed. Restart to use it.`, buttons: ["Restart now", "Later"], cancelId: 1 });
         if (again.response === 0) { app.relaunch(); app.quit(); }
       } else {
@@ -448,8 +534,10 @@ async function runUpdateCheck(manual: boolean): Promise<UpdateCheck> {
     try {
       const { autoUpdater } = await import("electron-updater");
       autoUpdater.setFeedURL({ provider: "generic", url: feedUrl() });
+      if (process.platform === "win32") {
+        guardWindowsInstallation(autoUpdater, e => { void dialog.showMessageBox({ type: "error", message: "The update signature was refused", detail: String(e) }); });
+      } else autoUpdater.on("update-downloaded", () => autoUpdater.quitAndInstall());
       autoUpdater.autoDownload = false;
-      autoUpdater.on("update-downloaded", () => autoUpdater.quitAndInstall());
       await autoUpdater.checkForUpdates();
       await autoUpdater.downloadUpdate();
     } catch (e) { void dialog.showMessageBox({ type: "error", message: "The update could not be installed", detail: String(e instanceof Error ? e.message : e) }); }
@@ -470,6 +558,12 @@ function buildMenu() {
       { label: "Settings", accelerator: "CmdOrCtrl+,", click: send("/settings/general") },
       { label: "Copy CLI install command", click: () => { clipboard.writeText("bun install -g rigwell"); } },
       { label: "Check for Updates", click: () => void runUpdateCheck(true) },
+      { label: "Restore previous Linux version", visible: process.platform === "linux" && !!process.env.APPIMAGE, click: async () => {
+        const choice = await dialog.showMessageBox({ message: "Restore the previous installed version?", detail: "The app will restart using its local previous binary. Your profile data stays in place. Restore a profile backup separately if a version changed its data format.", buttons: ["Restore and restart", "Cancel"], defaultId: 1, cancelId: 1 });
+        if (choice.response !== 0 || !process.env.APPIMAGE) return;
+        try { rollbackAppImage(process.env.APPIMAGE); app.relaunch(); app.quit(); }
+        catch (e) { void dialog.showMessageBox({ type: "error", message: "The previous version could not be restored", detail: String((e as Error).message) }); }
+      } },
       mac ? { role: "close" as const } : { role: "quit" as const, label: "Exit" },
     ] },
     { role: "editMenu" as const },
@@ -483,15 +577,26 @@ function buildMenu() {
     ] },
     { label: "Window", submenu: [{ role: "minimize" as const, accelerator: "CmdOrCtrl+M" }, { role: "close" as const, accelerator: "CmdOrCtrl+W" }] },
     { label: "Help", submenu: [
+      { id: "academy", label: "Academy tutorials", click: send("/academy") },
       { label: "Network check", click: async () => {
         const ok = supervisor.info ? await fetch(`http://${new URL(supervisor.info.wsUrl).host}/`).then((r) => r.status === 401, () => false) : false;
         void dialog.showMessageBox({ message: ok ? "The background service answers on loopback." : "The background service is not answering." });
       } },
-      { label: "Report a bug", click: () => void shell.openPath(join(HOME, "logs")) },
+      { label: "Report a bug", click: () => void reportBug() },
       { label: "About", click: () => void dialog.showMessageBox({ message: `Rigwell ${app.getVersion()}`, detail: `Electron ${process.versions.electron}` }) },
     ] },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(tpl));
+}
+
+async function reportBug() {
+  try {
+    const saved = await saveBugReport(HOME, { rigwell: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node }, async () => {
+      const result = await dialog.showSaveDialog({ title: "Save local bug report (no upload)", defaultPath: `rigwell-bug-report-${Date.now()}.zip`, filters: [{ name: "Redacted diagnostic ZIP", extensions: ["zip"] }] });
+      return result.canceled ? null : result.filePath ?? null;
+    });
+    if (saved) await dialog.showMessageBox({ message: "Local bug report saved", detail: `${saved.file}\n${saved.files.length} files; ${saved.omitted.length} omitted. Known secrets were redacted. Review the ZIP for private details before sending it. Nothing was uploaded.` });
+  } catch (e) { log(`[diagnostics] export failed: ${(e as Error).message}`); await dialog.showMessageBox({ type: "error", message: "Could not save the local bug report", detail: (e as Error).message }); }
 }
 
 // ------------------------------------------------------------------ deep links
@@ -524,7 +629,7 @@ async function boot() {
   quietChromium();
   // A custom RIGWELL_HOME is a separate Rigwell install: give it its own Electron profile, so its single-instance lock,
   // cookies and window state do not collide with another home's app (also lets parallel test runs coexist).
-  if (process.env.RIGWELL_HOME) app.setPath("userData", join(process.env.RIGWELL_HOME, "desktop-profile"));
+  app.setPath("userData", profileDesktopData(HOME));
   if (!app.requestSingleInstanceLock()) { app.quit(); return; }
   app.on("second-instance", (_e, argv) => {
     const link = argv.find((a) => a.startsWith(`${SCHEME}://`));
@@ -575,7 +680,7 @@ async function boot() {
   buildMenu();
   updateTray();
   applyKeepAwake();
-  if (settings.desktopAutoUpdateEnabled && feedUrl()) setTimeout(() => void runUpdateCheck(false), 15_000).unref();
+  if (app.isPackaged && settings.desktopAutoUpdateEnabled && feedUrl()) setTimeout(() => void runUpdateCheck(false), 15_000).unref();
   createWindow(process.argv.find((a) => a.startsWith("--route="))?.slice(8) ?? "/");
   try { await supervisor.start(); } catch (e) {
     status("failed", (e as Error).message);
@@ -586,9 +691,19 @@ async function boot() {
   app.on("before-quit", (e) => {
     if (quitting) return;
     quitting = true; e.preventDefault();
+    log("[shutdown] requested");
     broker.closeAll();
-    void Promise.all([supervisor.stop(), proxy?.stop()]).finally(() => app.exit(0));
+    log("[shutdown] connections closed");
+    void Promise.all([
+      remoteViews.closeAll(),
+      ...[...scopedBrowsers.values()].map((owned) => owned.close()),
+      supervisor.stop().finally(() => log("[shutdown] daemon stopped")),
+      proxy?.stop().finally(() => log("[shutdown] browser proxy stopped")),
+    ]).finally(() => {
+      log("[shutdown] exiting");
+      app.exit(0);
+    });
   });
 }
 
-void boot();
+void boot().catch((e) => { recordCrash(HOME, "main", "startup", e); log(`[startup] ${(e as Error).message}`); app.exit(1); });

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "lastCleanupAt": 1793381937528,
+  "totalSizeBytes": 528,
+  "boundaryQueue": [
+    {
+      "sessionId": "f5d50d37-9699-4a9a-846c-442f405953b1",
+      "boundaryIndex": 0,
+      "timestamp": 1793384931162,
+      "sizeBytes": 528,
+      "contentHashes": [
+        "78c344b5084953fdc399c196084dc09784fc38e2fd4f9e39f84a2cd5c5f98acc"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+Implement EventDecoder.push(chunk) and finish() for SSE text chunks. Return completed events as {event,data,id}; default event is message. Join multiple data lines with newline, ignore comment lines, handle CRLF split across chunks and flush an unterminated final event. Do not emit events without data.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

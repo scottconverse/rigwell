@@ -2,7 +2,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Session, type SessionDeps } from "../../src/agent/session.ts";
+import { Session, type SessionDeps, type SessionHost } from "../../src/agent/session.ts";
 import type { ContentBlock, Message, ModelConfig, ModelRequest, StreamEvent, TokenUsage } from "../../src/core/types.ts";
 import { decide } from "../../src/permissions/gate.ts";
 import { DEFAULT_COMMAND_LISTS } from "../../src/permissions/lists.ts";
@@ -20,7 +20,7 @@ export const call = (name: string, input: Record<string, unknown>, id?: string):
   content: [{ type: "tool_use", id: id ?? `toolu_${Math.random().toString(36).slice(2, 10)}`, name, input }],
 });
 
-export function makeStubSession(respond: Respond, over: Partial<SessionDeps> & { notes?: any[] } = {}) {
+export function makeStubSession(respond: Respond, over: Partial<SessionDeps> & { notes?: any[] } = {}, host: Partial<SessionHost> = {}) {
   const requests: ModelRequest[] = [];
   const stored: Message[] = [];
   const notes: any[] = over.notes ?? [];
@@ -48,6 +48,6 @@ export function makeStubSession(respond: Respond, over: Partial<SessionDeps> & {
     },
     ...over,
   };
-  const session = new Session(deps, { notify: (n) => notes.push(n) });
+  const session = new Session(deps, { notify: (n) => notes.push(n), ...host });
   return { session, requests, stored, notes, cwd };
 }

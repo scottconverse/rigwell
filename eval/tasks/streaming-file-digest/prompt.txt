@@ -1,0 +1,3 @@
+Refactor async digest(path) to stream file bytes into SHA-256 instead of reading the whole file. Return lowercase hex; preserve errors and support empty/binary files. Do not use readFile/readFileSync or collect chunks.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

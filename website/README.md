@@ -1,39 +1,28 @@
 # Rigwell website
 
-The landing page and the user manual for Rigwell. They are plain HTML, CSS and small scripts, with no build step.
+Static HTML, CSS and a small navigation script form the landing page. Bun renders repository Markdown into documentation pages and bundles the existing desktop Mermaid dependency for architecture diagrams. There are no hosted fonts, analytics scripts or additional framework dependencies.
 
-| File | What it is |
-|---|---|
-| `index.html` | The page |
-| `styles.css` | The styles. Colors come from the desktop app (`desktop/renderer/styles.css`) and the app icon. Dark mode follows the system setting. |
-| `main.js` | The phone menu and the Copy buttons. The page works without it. |
-| `assets/` | The app icon and three screenshots of the desktop app |
-| `manual/index.html` | The user manual, one page, published at `/rigwell/manual/` |
-| `manual/manual.css` | Manual layout (sidebar, tables, diagrams). It loads after `styles.css` and uses its colors. |
-| `manual/manual.js` | Sidebar filter, active section, heading links and Mermaid diagrams. Mermaid 11.4.1 loads from jsDelivr. Without it, the diagram source shows as text. |
+## Build and preview
 
-## Preview
+From the repository root, after `bun install` and `npm ci` in `desktop`:
 
-Serve the folder with any static server, then open http://localhost:8765 (the manual is at http://localhost:8765/manual/):
-
-```bash
-python -m http.server 8765 --directory website
+```sh
+bun run site:build
+bun run site:preview
 ```
 
-## Deploy
+Open `http://127.0.0.1:4173/rigwell/`. `PORT` can select another port. Rebuild after source changes. `site:dev` rebuilds once and watches the preview server; it does not automatically rebuild edited content.
 
-`.github/workflows/pages.yml` publishes this folder to GitHub Pages on a push to `main` that changes
-`website/`, or when run by hand. Pages is on for this repo (Settings > Pages > Source: GitHub Actions).
-All paths in the page are relative, so it works under `/rigwell/`.
+Build output is ignored under `website/dist`. The deployment prefix is `/rigwell/`, including local preview, so nested documentation and asset paths are exercised before deployment. The preview server binds only to loopback.
 
-## Screenshots
+## Deployment
 
-The screenshots were taken from the real desktop app with a local fake model server and a small demo repo
-(no keys, no personal data). To take new ones, launch the app with Playwright's Electron support the way
-`test/desktop/helpers.ts` does, use a fake model server from `test/fakes/`, and save PNGs at a window size
-of about 1360 by 850.
+The `website` GitHub Actions workflow builds and deploys GitHub Pages from `phase-1-core-loop`. The public URL is https://scottconverse.github.io/rigwell/. The historical `/rigwell/manual/` URL redirects to the current generated manual. Deployment needs Pages configured with the GitHub Actions source. Pull requests build without publishing.
 
-## Keeping it true
+## Maintenance
 
-Every claim on the page was checked against the code. When a feature changes, update the page. Items that
-are not proven or not built stay in the "Project status" section, marked that way.
+Edit `index.html` and `styles.css` for the landing page. The build substitutes `{{VERSION}}` from root package.json into Windows release/download links. Keep Linux/macOS platform links and update feeds at their actual published versions when shipping a Windows-only patch. Edit `docs/*.md` for user documentation. `build.ts` publishes top-level Markdown guides, excluding the internal decisions and Stax comparison, and links other repository material to GitHub. `DESIGN.md` records the source-backed positioning and existing product palette.
+
+The Workstreams screenshot is the actual renderer using isolated demonstration data. Its provenance is in `public/assets/workstreams-provenance.json`. Do not replace it with fabricated product UI. Recheck the built site at mobile, tablet and desktop widths, navigation, link targets, diagram rendering, keyboard focus and console errors after relevant changes.
+
+The build preserves upstream inline comments and generates `third-party-notices.txt` from directly bundled packages and Mermaid's installed declared runtime dependency tree. The footer links to the original license/notice texts. This attribution inventory is not a binary software bill of materials.

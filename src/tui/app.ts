@@ -10,7 +10,7 @@ import { listSessions } from "../storage/transcript.ts";
 import { loadSettings } from "../storage/settings.ts";
 import { focusAllows, playSound, progressSequence, runStatusLine, soundSettings, statusLineConfig } from "./attention.ts";
 import { loadCustomEntries, parseLoop } from "./customcmd.ts";
-import { buildView, statusLineInput } from "./views.ts";
+import { buildView, statusLineInput, type View } from "./views.ts";
 import { parseKeys, PASTE_OFF, PASTE_ON } from "./keys.ts";
 import { readClipboardImage } from "./clipboard.ts";
 import { render, stripAnsi } from "./render.ts";
@@ -51,10 +51,11 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     version: opts.version, cwd, homeDir: opts.homeDir, idPrefix: `tui-${crypto.randomUUID().slice(0, 8)}`,
     agentsMd: existsSync(join(cwd, "AGENTS.md")), theme: "dark",
   });
-  state = { ...state, starting: true };
   let client: RpcClient | undefined;
   let reqN = 0;
+  let viewGeneration = 0;
   const waiting = new Map<string, (result: unknown) => void>();
+  const memberRequests = new Set<string>();
   /** Re-shown prompts stay open in the harness when the TUI quits (a later load_session shows them again). */
   const reshownIds = new Set<string>();
   let renderQueued = false;
@@ -98,20 +99,11 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     if (next !== progress) { progress = next; if (tty) stdout.write(progressSequence(next)); }
   };
 
-  // While the session starts, keys reach the input box. Effects that need the session (a shortcut such as Tab or
-  // Ctrl+L, or Esc) wait here and run once session_ready clears `starting`. Trust answers and local effects run now.
-  const NEEDS_SESSION = new Set<Effect["type"]>(["settings", "interrupt", "rpc", "btw", "list_sessions", "new_session", "resume", "rewind", "open_rewind", "handoff", "fetch_context", "send", "shell"]);
-  const heldEffects: Effect[] = [];
   function dispatch(e: TuiEvent) {
     const step = reduce(state, e);
     state = step.state;
     setProgress();
-    // Held shortcuts (for example a model or autonomy change) run before the queued messages that session_ready sends.
-    const effects = !state.starting && heldEffects.length ? [...heldEffects.splice(0), ...step.effects] : step.effects;
-    for (const eff of effects) {
-      if (state.starting && NEEDS_SESSION.has(eff.type)) heldEffects.push(eff);
-      else void run(eff);
-    }
+    for (const eff of step.effects) void run(eff);
     schedule();
     if (state.quit && !finishing) void finish(0);
   }
@@ -133,6 +125,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     c.onRequest = (method, p) => {
       if (method !== "request_permission" && method !== "ask_user" && method !== "pick_options" && method !== "request_trust") throw new Error(`Method not found: ${method}`);
       const id = String((p as any).requestId ?? (p as any).toolCallId ?? `req-${++reqN}`);
+      if (p.workstreamId) memberRequests.add(id);
       return new Promise((res) => { waiting.set(id, res); dispatch({ type: "request", id, method, params: p }); });
     };
     c.onClose = () => { if (c === client && !finishing) dispatch({ type: "disconnected", message: "Connection to the session closed." }); };
@@ -171,7 +164,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
         case "settings": await client?.request("update_session_settings", eff.patch).catch((e) => info(`Settings: ${errText(e)}`, "error")); return;
         case "answer": {
           const f = waiting.get(eff.requestId);
-          if (f) { waiting.delete(eff.requestId); f(eff.result); }
+          if (f) { waiting.delete(eff.requestId); memberRequests.delete(eff.requestId); f(eff.result); }
           return;
         }
         case "quit": void finish(0); return;
@@ -196,14 +189,19 @@ export async function runTui(opts: TuiOptions): Promise<number> {
         }
         case "list_sessions": {
           // rigwell.list_sessions hides subagent and empty sessions (spec §12.1); fall back to a local scan when it is missing.
-          let list: { id: string; title?: string; updatedAt?: string; pinned?: boolean; parent?: string }[];
+          let list: { id: string; title?: string; updatedAt?: string; pinned?: boolean }[];
           try {
             const r = await client!.request("list_sessions", { cwd });
-            list = ((r?.sessions ?? []) as any[]).map((x) => ({ id: x.sessionId, title: x.title, updatedAt: x.updatedAt, pinned: x.pinned, parent: x.parent }));
+            list = ((r?.sessions ?? []) as any[]).map((x) => ({ id: x.sessionId, title: x.title, updatedAt: x.updatedAt, pinned: x.pinned }));
           } catch {
             list = listSessions(cwd).map((x) => ({ id: x.id, title: x.title, updatedAt: new Date(x.mtimeMs).toISOString() }));
           }
-          dispatch({ type: "sessions", sessions: list, tree: eff.tree });
+          dispatch({ type: "sessions", sessions: list });
+          return;
+        }
+        case "list_missions": {
+          const r = await client!.request("mission_list", {});
+          dispatch({ type: "sessions", title: "Missions", sessions: (r.missions ?? []).map((m: any) => ({ id: m.sessionId, title: `${m.title ?? m.sessionId} [${m.state}]` })) });
           return;
         }
         case "fetch_context": {
@@ -263,8 +261,11 @@ export async function runTui(opts: TuiOptions): Promise<number> {
           return;
         }
         case "view": {
-          const v = eff.name === "loop" ? await loopView(eff.args) : await buildView(eff.name, eff.args, { request: (m, p) => client!.request(m, p), state, connection: opts.connection ?? "in-process", settingsPath: opts.settingsPath, openUrl: openInBrowser, notify: (t, l) => info(t, l) });
-          dispatch({ type: "overlay", title: v.title, lines: v.lines });
+          const generation = ++viewGeneration;
+          const v: View = eff.name === "loop" ? await loopView(eff.args) : await buildView(eff.name, eff.args, { request: (m, p) => client!.request(m, p), state, connection: opts.connection ?? "in-process", settingsPath: opts.settingsPath, openUrl: openInBrowser, notify: (t, l) => info(t, l) });
+          if (generation !== viewGeneration || (eff.refresh && state.overlay?.workstreamId !== eff.args)) return;
+          if (v.workstreams) dispatch({ type: "workstreams", rows: v.workstreams });
+          else dispatch({ type: "overlay", title: v.title, lines: v.lines, workstreamId: v.workstreamId });
           if (eff.name === "statusline") void refreshStatusLine();
           if (eff.name === "mcp") void refreshExtras();
           return;
@@ -283,8 +284,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
         case "rpc": {
           try {
             const r = await client!.request(eff.method, eff.params);
-            if (eff.after === "show_pr") info(prText(r));
-            else info(`${eff.label}: done`);
+            info(`${eff.label}: done`);
             if (eff.after === "resume_new" && r?.newSessionId) await switchTo({}, r.newSessionId);
           } catch (e) {
             info(`/${eff.label}: ${errText(e)}`, "error");
@@ -341,7 +341,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
   async function refreshStatusLine() {
     const cfg = statusLineConfig(settingsNow());
     if (!cfg) { if (state.statusLine || state.statusLineHint) dispatch({ type: "status_line", text: undefined }); return; }
-    const r = runStatusLine(cfg, statusLineInput(state), cwd);
+    const r = await runStatusLine(cfg, statusLineInput(state), cwd);
     slFailed = !r.ok;
     dispatch(r.ok ? { type: "status_line", text: r.text, padding: cfg.padding } : { type: "status_line", text: undefined, hint: r.hint, padding: cfg.padding });
   }
@@ -390,8 +390,9 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     leaveTerminal();
     const c = client;
     client = undefined;
-    for (const [rid, f] of waiting) if (!reshownIds.has(rid)) f({ selectedOption: "cancel", cancelled: true, answers: [], selectedIds: [] });
+    for (const [rid, f] of waiting) if (!reshownIds.has(rid) && !memberRequests.has(rid)) f({ selectedOption: "cancel", cancelled: true, answers: [], selectedIds: [] });
     waiting.clear();
+    memberRequests.clear();
     if (c) {
       await Promise.race([c.request("close_session", { reason: "prompt_input_exit" }).catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
       await c.close().catch(() => {});
@@ -404,15 +405,17 @@ export async function runTui(opts: TuiOptions): Promise<number> {
   }
 
   let ready = false;
+  const early: string[] = [];
   function onData(chunk: Buffer | string) {
     let data = chunk.toString();
+    if (!ready && !state.panels.length) { early.push(data); return; }
     // Focus reporting (CSI I / CSI O) feeds soundFocusMode; it is not a key.
     data = data.replace(/\x1b\[([IO])/g, (_m, c) => { focused = c === "I"; return ""; });
     for (const key of parseKeys(data)) dispatch({ type: "key", key, now: Date.now() });
   }
 
   // The terminal is live before the session starts: rigwell.request_trust can arrive during initialize_session / load_session.
-  // Keys typed before the session is ready go into the input box as usual; Enter queues the message and it is sent when the session is ready.
+  // Keys typed before the session is ready wait, unless a panel (the trust question) is open to receive them.
   enterTerminal();
   onResize();
   stdin.on("data", onData);
@@ -421,6 +424,9 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     // Piped input ended: let a running turn finish, then exit.
     const wait = setInterval(() => {
       if (!ready) return;
+      // Member engines belong to the daemon. EOF disconnects this user view without
+      // answering their questions; another view can retrieve and answer them later.
+      if (state.panels.some((p) => p.workstreamId)) state = { ...state, panels: state.panels.filter((p) => !p.workstreamId) };
       if (state.panels.length) dispatch({ type: "key", key: { name: "esc" }, now: Date.now() });
       if (!state.running && !state.panels.length) { clearInterval(wait); void finish(0); }
     }, 50);
@@ -436,19 +442,7 @@ export async function runTui(opts: TuiOptions): Promise<number> {
     return 1;
   }
   ready = true;
+  for (const chunk of early.splice(0)) onData(chunk);
   process.once("SIGTERM", () => void finish(143));
   return exited;
-}
-
-/** One line for /pr: the new PR, a cancel, or the branch's PR status. */
-export function prText(r: any): string {
-  if (r?.cancelled) return "pr: cancelled; nothing was pushed";
-  if (r?.created) return `pr: created #${r.number} ${r.url}`;
-  if (r?.state === "none") return `pr: no pull request for ${r.branch}`;
-  if (r?.state) {
-    const c = r.checks;
-    const checks = !c || c.state === "none" ? "no checks" : `checks ${c.state} (${c.passed} passed, ${c.failed} failed, ${c.pending} running)`;
-    return `pr: #${r.number} ${r.draft ? "draft" : r.state}, ${checks} ${r.url}`;
-  }
-  return "pr: done";
 }

@@ -5,6 +5,7 @@
 import path from "node:path";
 import { configDirs, readJsonObject } from "../config/levels.ts";
 import { loadOrgSettings } from "../storage/org.ts";
+import { pluginComponents, jsonFile } from "../plugins/store.ts";
 
 export const HOOK_EVENTS = [
   "PreToolUse", "PostToolUse", "Notification", "UserPromptSubmit", "Stop",
@@ -25,6 +26,10 @@ export interface HookGroup {
   hooks: HookCommand[];
   /** Settings level the group came from (informational). */
   level?: string;
+  /** Set only by the approved plugin loader, not by hook JSON. */
+  pluginRoot?: string;
+  /** Local/system policy hook; lower-level hooksDisabled does not suppress it. */
+  required?: boolean;
 }
 export interface HooksConfig {
   hooksDisabled: boolean;
@@ -93,9 +98,10 @@ export function loadHooksConfig(opts: LoadHooksOptions): HooksConfig {
     if (!setDisabled && r.hooksDisabled !== undefined) { cfg.hooksDisabled = r.hooksDisabled; setDisabled = true; }
     if (!setShow && r.showHookOutput !== undefined) { cfg.showHookOutput = r.showHookOutput; setShow = true; }
   };
-  const add = (r: RawHooks, level: string) => {
+  const add = (r: RawHooks, level: string, pluginRoot?: string) => {
     for (const [ev, raw] of Object.entries(r.events)) {
       const groups = normalizeGroups(raw, level);
+      if (pluginRoot) for (const group of groups) group.pluginRoot = pluginRoot;
       if (!groups.length) continue;
       (cfg.events[ev as HookEventName] ??= []).push(...groups);
     }
@@ -104,6 +110,12 @@ export function loadHooksConfig(opts: LoadHooksOptions): HooksConfig {
   const org = loadOrgSettings(opts.env ?? process.env);
   if (org) {
     warnings.push(...org.warnings);
+    if (org.settings.requiredHooks) {
+      for (const [event, raw] of Object.entries(org.settings.requiredHooks as Record<string, unknown>)) {
+        const groups = normalizeGroups(raw, "org"); for (const g of groups) g.required = true;
+        if (groups.length) (cfg.events[event as HookEventName] ??= []).push(...groups);
+      }
+    }
     const h = org.settings.hooks;
     if (h && typeof h === "object" && !Array.isArray(h)) {
       const r = pick({ ...(h as Record<string, unknown>), ...pickFlags(org.settings) });
@@ -147,6 +159,7 @@ export function loadHooksConfig(opts: LoadHooksOptions): HooksConfig {
     take(merged);
     add(merged, level);
   }
+  for (const p of pluginComponents("hooks")) { const raw = jsonFile(p.path); add(pick(raw.hooks ?? raw), `plugin:${p.record.name}`, p.root); }
   return cfg;
 }
 

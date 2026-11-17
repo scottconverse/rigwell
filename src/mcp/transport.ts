@@ -1,18 +1,9 @@
 // MCP transports: stdio (newline-delimited JSON-RPC), streamable HTTP (POST; JSON or SSE response),
 // and legacy SSE (GET stream + POST endpoint). JSON-RPC 2.0.
 import { spawn, type ChildProcess } from "node:child_process";
-import { McpAuthRequiredError, mcpAuthHeaders, oauthEnabled } from "./oauth.ts";
+import { mcpFetch } from "./auth.ts";
+import { mcpSecret } from "./catalog.ts";
 import type { McpServerConfig } from "./types.ts";
-
-/** Extra request headers per request (the OAuth bearer token). */
-export type AuthHeaders = () => Promise<Record<string, string>>;
-const noAuth: AuthHeaders = async () => ({});
-
-/** A 401 from an http or sse server: sign-in needed when OAuth applies, else a plain error. */
-function unauthorized(cfg: McpServerConfig, res: Response): Error {
-  if (res.status === 401 && oauthEnabled(cfg)) return new McpAuthRequiredError(cfg.name, res.headers.get("www-authenticate") ?? undefined);
-  return new McpRpcError(`HTTP ${res.status}: authorization required${oauthEnabled(cfg) ? "" : " (check the authorization header in headers)"}`);
-}
 
 export class McpRpcError extends Error {
   constructor(message: string, public code?: number, public data?: unknown) { super(message); }
@@ -97,7 +88,8 @@ export class StdioConnection extends Base {
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
       const c = spawn(this.cfg.command!, this.cfg.args ?? [], {
-        cwd: this.cwd, env: { ...process.env, ...this.cfg.env }, stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+        cwd: this.cwd, env: { ...process.env, ...Object.fromEntries(Object.entries(this.cfg.env ?? {}).map(([k, v]) => [k, mcpSecret(v)])) }, stdio: ["pipe", "pipe", "pipe"],
       });
       this.child = c;
       c.once("spawn", () => resolve());
@@ -164,25 +156,23 @@ export async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerat
 export class HttpConnection extends Base {
   private sessionId?: string;
   private ac = new AbortController();
-  constructor(private cfg: McpServerConfig, private auth: AuthHeaders = noAuth) { super(); }
+  constructor(private cfg: McpServerConfig) { super(); }
   async start() { /* stateless until initialize */ }
 
   protected async post(msg: object): Promise<void> {
-    const auth = await this.auth();
-    const res = await fetch(this.cfg.url!, {
+    const res = await mcpFetch(this.cfg, this.cfg.url!, {
       method: "POST", signal: this.ac.signal,
       headers: {
         "content-type": "application/json", accept: "application/json, text/event-stream",
-        ...(this.sessionId ? { "mcp-session-id": this.sessionId } : {}), ...(this.cfg.headers ?? {}), ...auth,
+        ...(this.sessionId ? { "mcp-session-id": this.sessionId } : {}), ...(this.cfg.headers ?? {}),
       },
       body: JSON.stringify(msg),
     });
     const sid = res.headers.get("mcp-session-id");
     if (sid) this.sessionId = sid;
-    if (res.status === 401 || res.status === 403) { void res.body?.cancel(); throw unauthorized(this.cfg, res); }
     if (!res.ok && res.status !== 202) throw new McpRpcError(`HTTP ${res.status} ${res.statusText}`);
     const ct = res.headers.get("content-type") ?? "";
-    if (res.status === 202 || !res.body) { void res.body?.cancel(); return; }
+    if (res.status === 202 || !res.body) { await res.body?.cancel().catch(() => {}); return; }
     const isRequest = "id" in msg && "method" in msg;
     if (ct.includes("text/event-stream")) {
       // Responses arrive on the stream; read in the background so post() resolves once the stream starts.
@@ -193,7 +183,7 @@ export class HttpConnection extends Base {
     } else if (ct.includes("application/json")) {
       const j = await res.json();
       for (const m of Array.isArray(j) ? j : [j]) this.handle(m);
-    } else void res.body.cancel();
+    } else await res.body.cancel().catch(() => {});
   }
   private failId(id: number, e: unknown) {
     const p = this.pending.get(id);
@@ -202,7 +192,7 @@ export class HttpConnection extends Base {
   async close(): Promise<void> {
     this.closed = true; this.failAll("connection closed");
     if (this.sessionId) {
-      try { await fetch(this.cfg.url!, { method: "DELETE", headers: { "mcp-session-id": this.sessionId, ...(this.cfg.headers ?? {}), ...(await this.auth()) }, signal: AbortSignal.timeout(1500) }); } catch { /* best effort */ }
+      try { const res = await mcpFetch(this.cfg, this.cfg.url!, { method: "DELETE", headers: { "mcp-session-id": this.sessionId, ...(this.cfg.headers ?? {}) }, signal: AbortSignal.timeout(1500) }, false); await res.body?.cancel(); } catch { /* best effort; cleanup never refreshes a rejected credential */ }
     }
     this.ac.abort();
   }
@@ -212,40 +202,41 @@ export class HttpConnection extends Base {
 export class LegacySseConnection extends Base {
   private ac = new AbortController();
   private endpoint?: string;
-  constructor(private cfg: McpServerConfig, private auth: AuthHeaders = noAuth) { super(); }
+  constructor(private cfg: McpServerConfig) { super(); }
 
   async start(): Promise<void> {
-    const res = await fetch(this.cfg.url!, { headers: { accept: "text/event-stream", ...(this.cfg.headers ?? {}), ...(await this.auth()) }, signal: this.ac.signal });
-    if (res.status === 401 || res.status === 403) { void res.body?.cancel(); throw unauthorized(this.cfg, res); }
+    const res = await mcpFetch(this.cfg, this.cfg.url!, { headers: { accept: "text/event-stream", ...(this.cfg.headers ?? {}) }, signal: this.ac.signal });
     if (!res.ok || !res.body) throw new McpRpcError(`HTTP ${res.status} ${res.statusText}`);
     let gotEndpoint!: () => void;
-    const ready = new Promise<void>((r) => (gotEndpoint = r));
+    let rejectEndpoint!: (e: Error) => void;
+    const ready = new Promise<void>((resolve, reject) => { gotEndpoint = resolve; rejectEndpoint = reject; });
     void (async () => {
       try {
         for await (const ev of sseEvents(res.body!)) {
-          if (ev.event === "endpoint") { this.endpoint = new URL(ev.data.trim(), this.cfg.url).toString(); gotEndpoint(); }
+          if (ev.event === "endpoint") { const endpoint = new URL(ev.data.trim(), this.cfg.url); if (endpoint.origin !== new URL(this.cfg.url!).origin) throw new Error("MCP SSE endpoint changed origin"); this.endpoint = endpoint.toString(); gotEndpoint(); }
           else this.handle(safeJson(ev.data));
         }
+        rejectEndpoint(new McpRpcError("event stream ended before endpoint"));
         this.ended("event stream ended");
-      } catch (e) { if (!this.closed) this.ended(`event stream error: ${(e as Error).message}`); }
+      } catch (e) { rejectEndpoint(e as Error); if (!this.closed) this.ended(`event stream error: ${(e as Error).message}`); }
     })();
-    await Promise.race([ready, new Promise((_, rej) => setTimeout(() => rej(new McpRpcError("no endpoint event from SSE server")), 10000))]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try { await Promise.race([ready, new Promise((_, rej) => { timer = setTimeout(() => rej(new McpRpcError("no endpoint event from SSE server")), 10000); })]); }
+    finally { clearTimeout(timer); }
   }
   protected async post(msg: object): Promise<void> {
     if (!this.endpoint) throw new McpRpcError("not connected");
-    const res = await fetch(this.endpoint, { method: "POST", headers: { "content-type": "application/json", ...(this.cfg.headers ?? {}), ...(await this.auth()) }, body: JSON.stringify(msg) });
-    if (res.status === 401 || res.status === 403) { void res.body?.cancel(); throw unauthorized(this.cfg, res); }
+    const res = await mcpFetch(this.cfg, this.endpoint, { method: "POST", headers: { "content-type": "application/json", ...(this.cfg.headers ?? {}) }, body: JSON.stringify(msg), signal: this.ac.signal });
     if (!res.ok && res.status !== 202) throw new McpRpcError(`HTTP ${res.status} ${res.statusText}`);
-    void res.body?.cancel();
+    await res.body?.cancel().catch(() => {});
   }
   async close(): Promise<void> { this.closed = true; this.failAll("connection closed"); this.ac.abort(); }
 }
 
 const safeJson = (s: string) => { try { return JSON.parse(s); } catch { return null; } };
 
-/** `auth` defaults to the stored OAuth sign-in of the server (none when nobody signed in). */
-export function createConnection(cfg: McpServerConfig, cwd?: string, auth: AuthHeaders = () => mcpAuthHeaders(cfg)): Connection {
+export function createConnection(cfg: McpServerConfig, cwd?: string): Connection {
   if (cfg.type === "stdio") return new StdioConnection(cfg, cwd);
-  if (cfg.type === "sse") return new LegacySseConnection(cfg, auth);
-  return new HttpConnection(cfg, auth);
+  if (cfg.type === "sse") return new LegacySseConnection(cfg);
+  return new HttpConnection(cfg);
 }

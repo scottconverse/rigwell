@@ -5,10 +5,12 @@ import { app, useApp } from "../lib/app-model.ts";
 import { MASK, PROVIDERS, emptyForm, keyHint, toEntry, toForm, validate, type ModelForm } from "../lib/custom-models.ts";
 import { DaemonConn, bridge } from "../lib/rpc.ts";
 import { bulkRename, managementRows, projectName, type SessionRow } from "../lib/sessions.ts";
-import { prChip, prRequestHandler, type PrDetails, type PrStatusResult } from "../lib/pr.ts";
 import { addUsage, fmt, percentUsed, total, zero, type TokenUsage } from "../lib/usage.ts";
 import { ManagedNote, OrgCeiling } from "./SettingsAccess.tsx";
 import { AddServerForm, Dialog, McpLoginPanel, ServerList, TextDialog, useMcp } from "./Dialogs.tsx";
+import { WorktreePr } from "./WorktreePr.tsx";
+import { SpendLimits } from "./SpendLimits.tsx";
+import { FallbackModels } from "./FallbackModels.tsx";
 
 const Row = ({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => (
   <div className="row"><div className="row-label"><div>{label}</div>{hint && <div className="muted small">{hint}</div>}</div><div className="row-ctl">{children}</div></div>
@@ -54,6 +56,7 @@ export function SessionDefaults() {
       <h2>Session Defaults {status} <ManagedNote keys={["sessionDefaultSettings", "compactionTokenLimit", "compactionModel", "specSaveDir"]} /></h2>
       <OrgCeiling />
       <Row label="Model" hint="Used for new sessions"><ModelSelect label="Default model" value={d.model} onChange={(v) => set("model", v)} allowNone="First available" extra={auto} /></Row>
+      <FallbackModels />
       <Row label="Reasoning"><select aria-label="Default reasoning" value={d.reasoningEffort ?? "high"} onChange={(e) => set("reasoningEffort", e.target.value)}>{EFFORTS.map((x) => <option key={x}>{x}</option>)}</select></Row>
       <Row label="Mode"><select aria-label="Default mode" value={d.interactionMode ?? "auto"} onChange={(e) => set("interactionMode", e.target.value)}><option value="auto">Auto</option><option value="spec">Spec</option></select></Row>
       <Row label="Autonomy" hint="Off asks before every edit and command"><select aria-label="Default autonomy" value={d.autonomyLevel ?? "off"} onChange={(e) => set("autonomyLevel", e.target.value)}>{["off", "low", "medium", "high"].map((x) => <option key={x}>{x}</option>)}</select></Row>
@@ -74,6 +77,9 @@ export function SessionDefaults() {
 export function MissionSettings() {
   const a = useApp();
   const m = (a.userSettings.missions ?? {}) as Record<string, any>;
+  const [machines, setMachines] = useState<{ name: string; build?: string }[]>([]);
+  const [machineError, setMachineError] = useState("");
+  useEffect(() => { void app.request("machine_list", {}).then((r) => setMachines(r.machines ?? [])).catch((e) => setMachineError((e as Error).message)); }, []);
   const { save, status } = useSave();
   const set = (k: string, v: unknown) => { const next = { ...m }; if (v === "" || v === undefined || v === false) delete next[k]; else next[k] = v; void save({ missions: next }); };
   const allowed: string[] = m.allowedModels ?? [];
@@ -88,10 +94,13 @@ export function MissionSettings() {
       <Row label="Model" hint="Used when the current model is not on the allowed list"><ModelSelect label="Orchestrator model" value={m.orchestratorModel} onChange={(v) => set("orchestratorModel", v)} allowNone="Keep current" /></Row>
       <Row label="Reasoning">{eff("orchestratorReasoningEffort", "Orchestrator reasoning")}</Row>
       <h3>Worker</h3>
-      <Row label="Model"><ModelSelect label="Worker model" value={m.workerModel} onChange={(v) => set("workerModel", v)} allowNone="Same as orchestrator" /></Row>
+      <Row label="Machine"><select aria-label="Mission worker machine" value={m.machine ?? ""} onChange={(e) => set("machine", e.target.value)}><option value="">Local</option>{machines.map((machine) => <option key={machine.name} value={machine.name} disabled={!machine.build}>{machine.name}</option>)}</select></Row>
+      {machineError && <p className="error-text" role="alert">{machineError}</p>}
+      {m.machine && <Row label="Remote repository" hint="An existing repository on the selected machine"><input aria-label="Mission remote working directory" value={m.workerWorkingDirectory ?? ""} onChange={(e) => set("workerWorkingDirectory", e.target.value)} /></Row>}
+      <Row label="Model">{m.machine ? <input aria-label="Remote worker model" value={m.workerModel ?? ""} placeholder="Remote profile ID" onChange={(e) => set("workerModel", e.target.value)} /> : <ModelSelect label="Worker model" value={m.workerModel} onChange={(v) => set("workerModel", v)} allowNone="Same as orchestrator" />}</Row>
       <Row label="Reasoning">{eff("workerReasoningEffort", "Worker reasoning")}</Row>
       <h3>Validator</h3>
-      <Row label="Model"><ModelSelect label="Validator model" value={m.validationWorkerModel} onChange={(v) => set("validationWorkerModel", v)} allowNone="Same as worker" /></Row>
+      <Row label="Model">{m.machine ? <input aria-label="Remote validator model" value={m.validationWorkerModel ?? ""} placeholder="Same as worker" onChange={(e) => set("validationWorkerModel", e.target.value)} /> : <ModelSelect label="Validator model" value={m.validationWorkerModel} onChange={(v) => set("validationWorkerModel", v)} allowNone="Same as worker" />}</Row>
       <Row label="Reasoning">{eff("validationWorkerReasoningEffort", "Validator reasoning")}</Row>
       <Row label="Skip scrutiny validation"><input type="checkbox" aria-label="Skip scrutiny" checked={m.skipScrutiny === true} onChange={(e) => set("skipScrutiny", e.target.checked)} /></Row>
       <Row label="Skip user-testing validation"><input type="checkbox" aria-label="Skip user testing" checked={m.skipUserTesting === true} onChange={(e) => set("skipUserTesting", e.target.checked)} /></Row>
@@ -108,6 +117,8 @@ export function MissionSettings() {
 
 export function CustomModels() {
   const a = useApp();
+  const [accounts, setAccounts] = useState<{ name: string }[]>([]);
+  useEffect(() => { if (a.daemon.state === "running") void app.request("auth_list").then((r) => setAccounts(r.providers ?? [])).catch(() => setAccounts([])); }, [a.daemon.state, a.userSettings.oauthProviders]);
   const list: Record<string, any>[] = Array.isArray(a.userSettings.customModels) ? a.userSettings.customModels : [];
   const { save, status } = useSave();
   const [editing, setEditing] = useState<{ index: number; form: ModelForm } | null>(null);
@@ -127,12 +138,12 @@ export function CustomModels() {
   return (
     <>
       <h2>Custom Models {status} <ManagedNote keys={["customModels", "modelPolicy"]} /></h2>
-      <p className="muted">Use your own provider keys. Keys are stored in the settings file and are never shown again after saving.</p>
+      <p className="muted">Connect a signed-in account, a stored API key, or a local server. API key references can use keychain:secret:NAME from the API keys page. Saved secret values stay hidden in this form.</p>
       <ul className="plain-list" aria-label="Custom models">
         {list.map((m, i) => (
           <li key={i} className="srv">
             <span className="srv-name">{m.displayName ?? m.model}</span>
-            <span className="muted small">{m.provider} / {m.baseUrl} / {keyHint(m.apiKey ?? "")}</span>
+            <span className="muted small">{m.provider} / {m.executionBackend ? "Signed-in official client" : `${m.baseUrl} / ${m.credentialSource ? `Account: ${m.credentialSource}` : keyHint(m.apiKey ?? "")}`}</span>
             <span className="spacer" />
             <button aria-label={`Edit ${m.displayName ?? m.model}`} onClick={() => { setEditing({ index: i, form: toForm(m) }); setError(""); }}>Edit</button>
             <button className="danger" aria-label={`Remove ${m.displayName ?? m.model}`} onClick={() => void save({ customModels: list.filter((_, j) => j !== i) }).then(() => app.refresh())}>Remove</button>
@@ -144,12 +155,33 @@ export function CustomModels() {
       {editing && f && (
         <Dialog title={editing.index < 0 ? "Add custom model" : "Edit custom model"} onClose={() => setEditing(null)} wide>
           <label className="field"><span>Provider and API format</span>
-            <select aria-label="Provider" value={f.provider} onChange={(e) => { const p = PROVIDERS.find((x) => x.id === e.target.value)!; set({ provider: p.id, baseUrl: !f.baseUrl || PROVIDERS.some((x) => x.baseUrl === f.baseUrl) ? p.baseUrl : f.baseUrl }); }}>{PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</select></label>
+            <select aria-label="Provider" value={f.provider} onChange={(e) => { const p = PROVIDERS.find((x) => x.id === e.target.value)!; set({ provider: p.id, baseUrl: !f.baseUrl || PROVIDERS.some((x) => x.baseUrl === f.baseUrl) ? p.baseUrl : f.baseUrl, ...(p.id === "bedrock-converse" ? { bedrock: f.bedrock ?? { awsRegion: "us-east-1", awsAuthMethod: "profile", awsProfile: "default" }, credentialSource: "", apiKey: "" } : { bedrock: undefined }), noImageSupport: p.id === "generic-chat-completion-api" }); }}>{PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</select></label>
           <label className="field"><span>Model name</span><input aria-label="Model name" value={f.model} onChange={(e) => set({ model: e.target.value })} /></label>
           <label className="field"><span>Display name</span><input aria-label="Display name" value={f.displayName} onChange={(e) => set({ displayName: e.target.value })} /></label>
-          <label className="field"><span>Base URL</span><input aria-label="Base URL" value={f.baseUrl} onChange={(e) => set({ baseUrl: e.target.value })} /></label>
-          <label className="field"><span>API key</span><input type="password" autoComplete="off" aria-label="API key" placeholder={'Paste a key, or ${ENV_VAR}'} value={f.apiKey} onChange={(e) => set({ apiKey: e.target.value })} />
-            <span className="muted small">{f.apiKey.startsWith(MASK) ? "A key is saved. Leave this as it is to keep it." : keyHint(f.apiKey)}</span></label>
+          {(f.provider === "anthropic" || f.provider === "openai") && <label className="field"><span>Execution</span><select aria-label="Model execution" value={f.executionBackend ?? ""} onChange={(e) => set({ executionBackend: e.target.value as "" | "claude-cli" | "codex-cli", apiKey: "", credentialSource: "" })}>
+            <option value="">Direct API</option><option value={f.provider === "anthropic" ? "claude-cli" : "codex-cli"}>Signed-in official client</option>
+          </select><span className="muted small">Rigwell manages the session. The signed-in client runs native tools and enforces its own permissions.</span></label>}
+          {!f.executionBackend && <label className="field"><span>Base URL</span><input aria-label="Base URL" value={f.baseUrl} onChange={(e) => set({ baseUrl: e.target.value })} /></label>}
+          {!f.executionBackend && f.provider !== "bedrock-converse" && <>
+            <label className="field"><span>Authentication</span>
+              <select aria-label="Model authentication" value={f.credentialSource} onChange={(e) => set({ credentialSource: e.target.value, apiKey: "" })}>
+                {!!accounts.length && <optgroup label="Account sign-in">{accounts.map((p) => <option key={p.name} value={p.name}>Account: {p.name}</option>)}</optgroup>}
+                {f.credentialSource && !accounts.some((p) => p.name === f.credentialSource) && <option value={f.credentialSource}>Account: {f.credentialSource} (not available)</option>}
+                <option value="">API key or local server</option>
+              </select>
+              <span className="muted small">{accounts.length ? "Account tokens refresh automatically." : "Account sign-in is not available until a registered provider is configured."} <a href="#/settings/accounts">Manage sign-in</a></span>
+            </label>
+            {!f.credentialSource && <label className="field"><span>API key</span><input type="password" autoComplete="off" aria-label="API key" placeholder="Stored credential, environment reference, or key (optional locally)" value={f.apiKey} onChange={(e) => set({ apiKey: e.target.value })} />
+              <span className="muted small">{f.apiKey.startsWith(MASK) ? "A key is saved. Leave this as it is to keep it." : keyHint(f.apiKey)}</span></label>}
+          </>}
+          {f.bedrock && <fieldset><legend>AWS connection</legend>
+            <label className="field"><span>Region</span><input aria-label="AWS region" value={f.bedrock.awsRegion ?? ""} onChange={(e) => set({ bedrock: { ...f.bedrock, awsRegion: e.target.value } })} /></label>
+            <label className="field"><span>Authentication</span><select aria-label="AWS authentication" value={f.bedrock.awsAuthMethod ?? ""} onChange={(e) => set({ bedrock: { awsRegion: f.bedrock!.awsRegion, ...(e.target.value ? { awsAuthMethod: e.target.value } : {}) } })}>
+              <option value="">Automatic credential chain</option><option value="profile">AWS profile</option><option value="bearer-token">Bearer token</option><option value="access-keys">Access keys</option><option value="credentials-command">Credential command</option>
+            </select></label>
+            {(f.bedrock.awsAuthMethod === "profile" ? [["awsProfile", "AWS profile", false]] : f.bedrock.awsAuthMethod === "bearer-token" ? [["awsBearerToken", "AWS bearer token", true]] : f.bedrock.awsAuthMethod === "access-keys" ? [["awsAccessKeyId", "AWS access key ID", true], ["awsSecretAccessKey", "AWS secret access key", true], ["awsSessionToken", "AWS session token", true]] : f.bedrock.awsAuthMethod === "credentials-command" ? [["awsCredentialExport", "AWS credential export command", true], ["awsAuthRefresh", "AWS refresh command", true]] : []).map(([key, label, secret]) => <label className="field" key={String(key)}><span>{String(label)}</span><input aria-label={String(label)} type={secret ? "password" : "text"} autoComplete="off" value={f.bedrock![String(key)] ?? ""} onChange={(e) => set({ bedrock: { ...f.bedrock, [String(key)]: e.target.value } })} /></label>)}
+            <p className="muted small">Use environment references for credentials, or an existing AWS profile. Leave the base URL empty to use the region's runtime endpoint.</p>
+          </fieldset>}
           <div className="dlg-row">
             <label className="field"><span>Max output tokens</span><input aria-label="Max output tokens" inputMode="numeric" value={f.maxOutputTokens} onChange={(e) => set({ maxOutputTokens: e.target.value })} /></label>
             <label className="field"><span>Context limit</span><input aria-label="Context limit" inputMode="numeric" value={f.maxContextLimit} onChange={(e) => set({ maxContextLimit: e.target.value })} /></label>
@@ -176,7 +208,7 @@ export function CustomModels() {
 
 // ------------------------------------------------------------------ Worktrees (spec §18)
 
-interface Managed { path: string; branch?: string; repoRoot?: string; lifecycle?: string; baseRef?: string; pr?: { number: number; url: string } }
+interface Managed { path: string; branch?: string; repoRoot?: string; lifecycle?: string; baseRef?: string }
 interface Profile { id: string; source: string; name: string; script?: string; initialPrompt?: string; cleanupScript?: string }
 
 export function WorktreeSettings() {
@@ -190,27 +222,7 @@ export function WorktreeSettings() {
   const [managed, setManaged] = useState<Managed[]>([]);
   const [err, setErr] = useState("");
   const [removing, setRemoving] = useState<{ w: Managed; info: any } | null>(null);
-  const [prs, setPrs] = useState<Record<string, PrStatusResult | null>>({});
-  const [confirmPr, setConfirmPr] = useState<{ d: PrDetails; answer: (yes: boolean) => void } | null>(null);
-  const [prBusy, setPrBusy] = useState("");
-  // PR status for each row. A row whose status cannot be read (no gh, no token, no remote) shows no chip.
-  const loadPrs = useCallback(async (rows: Managed[]) => {
-    const pairs = await Promise.all(rows.map(async (w) => [w.path, await app.request<PrStatusResult>("get_pr_status", { worktreePath: w.path }).catch(() => null)] as const));
-    setPrs(Object.fromEntries(pairs));
-  }, []);
-  const reload = useCallback(async () => {
-    try { const rows: Managed[] = (await app.request("list_managed_worktrees")).worktrees ?? []; setManaged(rows); setErr(""); void loadPrs(rows); } catch (e) { setErr((e as Error).message); }
-  }, [loadPrs]);
-  // create_pr asks first (request_permission); the dialog below answers it. A short-lived connection carries the ask.
-  const createPr = async (w: Managed) => {
-    setPrBusy(w.path); setErr("");
-    const c = await DaemonConn.open();
-    c.onRequest = prRequestHandler((d) => new Promise<boolean>((answer) => setConfirmPr({ d, answer: (yes) => { setConfirmPr(null); answer(yes); } })));
-    try {
-      const r = await c.request("create_pr", { worktreePath: w.path });
-      if (r.created) void reload();
-    } catch (e) { setErr((e as Error).message); } finally { c.close(); setPrBusy(""); }
-  };
+  const reload = useCallback(async () => { try { setManaged((await app.request("list_managed_worktrees")).worktrees ?? []); setErr(""); } catch (e) { setErr((e as Error).message); } }, []);
   useEffect(() => { if (a.daemon.state === "running") void reload(); }, [reload, a.daemon.state]);
 
   const [folder, setFolder] = useState(a.recentFolders[0] ?? "");
@@ -236,22 +248,11 @@ export function WorktreeSettings() {
       <ul className="plain-list" aria-label="Managed worktrees">
         {managed.map((w) => (
           <li key={w.path} className="srv"><span className="srv-name">{w.branch ?? projectName(w.path)}</span><span className="muted small mono">{w.path}</span><span className="spacer" />
-            {(() => { const chip = prChip(prs[w.path]); return chip ? <a className={`badge pr-${chip.tone}`} href={prs[w.path]?.url} target="_blank" rel="noreferrer" aria-label={`Pull request for ${w.path}`}>{chip.text}</a> : null; })()}
-            {(!prs[w.path] || prs[w.path]!.state === "none" || prs[w.path]!.state === "closed") && <button aria-label={`Create PR for ${w.path}`} disabled={prBusy === w.path} onClick={() => void createPr(w)}>{prBusy === w.path ? "Creating PR..." : "Create PR"}</button>}
+            <WorktreePr worktreePath={w.path} branch={w.branch} />
             <button className="danger" aria-label={`Remove ${w.path}`} onClick={() => void app.request("inspect_worktree_deletion", { worktreePath: w.path }).then((info) => setRemoving({ w, info })).catch((e) => setErr(e.message))}>Remove</button></li>
         ))}
         {!managed.length && <li className="muted pad">No managed worktrees.</li>}
       </ul>
-      {confirmPr && (
-        <Dialog title="Push and create a pull request?" onClose={() => confirmPr.answer(false)}>
-          <p className="mono-line">{confirmPr.d.branch} into {confirmPr.d.base}{confirmPr.d.remote ? ` on ${confirmPr.d.remote}` : ""}</p>
-          <p><strong>{confirmPr.d.title}</strong></p>
-          {confirmPr.d.body && <pre className="code-block small">{confirmPr.d.body}</pre>}
-          <p className="muted small">This pushes the branch, then opens the pull request on GitHub.</p>
-          <div className="dialog-actions"><button onClick={() => confirmPr.answer(false)}>Cancel</button>
-            <button className="primary" onClick={() => confirmPr.answer(true)}>Push and create</button></div>
-        </Dialog>
-      )}
       {removing && (
         <Dialog title="Remove this worktree?" onClose={() => setRemoving(null)}>
           <p className="mono-line">{removing.w.path}</p>
@@ -319,7 +320,7 @@ export function ConnectorSettings() {
   return (
     <>
       <h2>Connectors <ManagedNote keys={["mcpServers", "mcp"]} /></h2>
-      <p className="muted">MCP servers the agent can use. Hosted connector catalogs are not part of this build.</p>
+      <p className="muted">MCP servers the agent can use. Browse the Catalog tab in a session's Connectors dialog to add a connector.</p>
       {probe.none && <div className="banner warn" role="status">Start a session first. MCP servers are managed through a session.</div>}
       {probe.error && <div className="banner error" role="alert">{probe.error}</div>}
       {probe.request && (
@@ -327,7 +328,7 @@ export function ConnectorSettings() {
           <div className="dlg-row"><h3>MCP Servers ({m.servers.length})</h3><span className="spacer" /><button onClick={() => void m.refresh()}>Refresh</button></div>
           {m.summary?.configError && <div className="banner warn" role="status">{m.summary.configError.path}: {m.summary.configError.message}</div>}
           <ServerList servers={m.servers} busy={m.busy} onRemove={(n) => void m.remove(n)} onSignIn={(n) => void m.signIn(n)} onSignOut={(n) => void m.signOut(n)} />
-          <McpLoginPanel login={m.login} onCancel={m.stopWaiting} />
+          <McpLoginPanel login={m.login} onCancel={() => void m.cancelLogin()} />
           <AddServerForm busy={m.busy} onAdd={m.add} />
           {m.error && <div className="banner error" role="alert">{m.error}</div>}
         </>
@@ -440,7 +441,8 @@ export function UsagePage() {
   return (
     <>
       <h2>Usage</h2>
-      <p className="muted">Token totals from your recent sessions on this computer. Plan limits belong to hosted accounts and are not shown.</p>
+      <p className="muted">Token totals from your recent sessions on this computer. Local estimated spend caps are configured below.</p>
+      <SpendLimits />
       <div className="stats" data-testid="usage-totals">
         <div><div className="stat-n">{fmt(total(sum))}</div><div className="muted small">total tokens</div></div>
         <div><div className="stat-n">{fmt(sum.inputTokens)}</div><div className="muted small">input</div></div>

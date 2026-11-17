@@ -1,0 +1,3 @@
+Add AbortSignal propagation through lib.js importRows(rows,save,signal) and parser.js parseRow(row). Rows are trimmed numeric strings; reject empty/nonfinite values. Before each parse/save and after each awaited save, throw signal.reason if aborted. Return saved values in order. Never save later rows after abort or parse error.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

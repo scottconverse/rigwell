@@ -1,6 +1,7 @@
 // Helpers for the desktop-side service tests: an in-process daemon and raw protocol clients (no Electron).
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startDaemon } from "../../src/daemon/daemon.ts";
@@ -59,6 +60,25 @@ export async function connect(socketPath: string): Promise<TestClient> {
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Keep shutdown evidence when a platform stalls before the Electron process exits. */
+export async function closeElectron(app: any): Promise<void> {
+  if (!app) return;
+  const proc = app.process();
+  let tail = "";
+  const collect = (chunk: Buffer) => { tail = (tail + chunk.toString()).slice(-4000); };
+  proc.stderr?.on("data", collect);
+  const diagnostic = setTimeout(() => {
+    console.log(`[electron shutdown pending pid=${proc.pid}]\n${tail}`);
+    if (process.platform === "darwin") {
+      // Read the owned app's native stack if JS cleanup finished but native exit did not.
+      const sample = spawnSync("/usr/bin/sample", [String(proc.pid), "1", "1"], { encoding: "utf8", timeout: 5000 });
+      console.log(`[electron native shutdown sample]\n${String(sample.stdout).slice(0, 16000)}\n${sample.stderr}`);
+    }
+  }, 10_000);
+  try { await app.close(); }
+  finally { clearTimeout(diagnostic); proc.stderr?.off("data", collect); }
+}
+
 /** Playwright comes from desktop/node_modules (devDependency, installed by `npm install` in desktop/) or, in the sandbox, /opt/node-tools. */
 const PW_BASES = [join(import.meta.dir, "../../desktop") + "/", "/opt/node-tools/", process.cwd() + "/"];
 
@@ -85,12 +105,11 @@ export function chromiumStatus(label: string): { pw: any | null; reason: string 
 
 /** Same for the Electron tests: also needs the Electron binary and an X server. */
 export function electronStatus(label: string): { pw: any | null; electronBin: string; reason: string } {
-  // Windows has electron.exe and needs no X server.
-  const electronBin = join(import.meta.dir, "../../desktop/node_modules/electron/dist", process.platform === "win32" ? "electron.exe" : "electron");
+  const electronBin = join(import.meta.dir, "../../desktop/node_modules/electron/dist", process.platform === "win32" ? "electron.exe" : process.platform === "darwin" ? "Electron.app/Contents/MacOS/Electron" : "electron");
   const pw = loadPlaywright();
   const reason = !pw ? `playwright not resolvable from ${PW_BASES.join(", ")} (run npm install in desktop/)`
     : !existsSync(electronBin) ? `electron binary missing at ${electronBin} (npm install in desktop/ ran with --ignore-scripts? run node node_modules/electron/install.js)`
-    : process.platform !== "win32" && !Bun.which("Xvfb") && !process.env.DISPLAY ? "no X server: neither Xvfb on PATH nor DISPLAY set" : "";
+    : process.platform === "linux" && !Bun.which("Xvfb") && !process.env.DISPLAY ? "no X server: neither Xvfb on PATH nor DISPLAY set" : "";
   if (reason) console.log(`[${label} skipped: ${reason}]`);
   return { pw, electronBin, reason };
 }

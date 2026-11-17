@@ -22,6 +22,7 @@ import { loadSettings } from "../storage/settings.ts";
 import { listSessions } from "../storage/transcript.ts";
 import { toolsForSession } from "../tools/registry.ts";
 import { BrowserRegistry, createBrowserTool } from "./browser.ts";
+import { AgentBrowserManager, agentBrowserTools } from "../browser/tools.ts";
 import { listFiles, readWorkspaceFile, searchFiles, writeWorkspaceFile } from "./files.ts";
 import { TerminalManager, type TerminalOptions, type TerminalOwner } from "./pty.ts";
 import { SideChat, type ForkInfo, type SideChatEntry } from "./sidechat.ts";
@@ -89,6 +90,7 @@ export async function defaultFork(main: Session, messages: Message[], host: Cons
 export function createSidePane(opts: SidePaneOptions = {}) {
   const terminals = new TerminalManager({ ...opts.terminals, log: opts.log });
   const browsers = new BrowserRegistry({ expectedPort: opts.browserPort, defaultUrl: opts.browserDefaultUrl, idleMs: opts.browserIdleMs, log: opts.log });
+  const agentBrowsers = new AgentBrowserManager(browsers, { log: opts.log });
   const sideChats = new Map<string, SideChat>();
   const owners = new Map<string, TerminalOwner>();
 
@@ -184,7 +186,7 @@ export function createSidePane(opts: SidePaneOptions = {}) {
   return {
     terminals, browsers, methodsFor,
     /** Agent tools this side pane contributes to every session (the Browser tool). */
-    tools(): Tool[] { return [createBrowserTool(browsers)]; },
+    tools(): Tool[] { return [{ ...createBrowserTool(browsers), run: (input, ctx) => agentBrowsers.run("Browser", input, ctx) }, ...agentBrowserTools(agentBrowsers)]; },
     /** The connection dropped: terminals start their grace timer. */
     connectionClosed(ctx: ConnCtx) {
       const o = owners.get(ctx.id);
@@ -193,7 +195,7 @@ export function createSidePane(opts: SidePaneOptions = {}) {
       if (s) currentEmit.delete(s.id);
     },
     sideChatFor(sessionId: string) { return sideChats.get(sessionId); },
-    closeAll() { terminals.closeAll(); browsers.closeAll(); },
+    async closeAll() { terminals.closeAll(); await agentBrowsers.closeAll(); browsers.closeAll(); },
   };
 }
 

@@ -22,8 +22,18 @@ export function Sidebar({ sessions, current, daemon, route, go, openPalette }: {
     <nav className="sidebar" aria-label="Sidebar">
       <div className="side-top drag">
         <button className="side-btn primary" onClick={() => go("/")}>New Session</button>
+        <button className={`side-btn ${route?.startsWith("/inbox") ? "on" : ""}`} onClick={() => go("/inbox")}>Inbox</button>
         <button className={`side-btn ${route?.startsWith("/missions") ? "on" : ""}`} onClick={() => go("/missions")}>Mission Control</button>
+        <button className={`side-btn ${route?.startsWith("/workstreams") ? "on" : ""}`} onClick={() => go("/workstreams")}>Workstreams</button>
+        <button className={`side-btn ${route?.startsWith("/review") ? "on" : ""}`} onClick={() => go("/review")}>Review</button>
         <button className={`side-btn ${route?.startsWith("/automations") ? "on" : ""}`} onClick={() => go("/automations")}>Automations</button>
+        <button className={`side-btn ${route?.startsWith("/machines") ? "on" : ""}`} onClick={() => go("/machines")}>Machines</button>
+        <button className={`side-btn ${route?.startsWith("/imports") ? "on" : ""}`} onClick={() => go("/imports")}>Import session</button>
+        <button className={`side-btn ${route?.startsWith("/sync") ? "on" : ""}`} onClick={() => go("/sync")}>Sync</button>
+        <button className={`side-btn ${route?.startsWith("/plugins") ? "on" : ""}`} onClick={() => go("/plugins")}>Plugins</button>
+        <button className={`side-btn ${route?.startsWith("/wiki") ? "on" : ""}`} onClick={() => go("/wiki")}>Wiki</button>
+        <button className={`side-btn ${route?.startsWith("/analytics") ? "on" : ""}`} onClick={() => go("/analytics")}>Analytics</button>
+        <button className={`side-btn ${route?.startsWith("/eval") ? "on" : ""}`} onClick={() => go("/eval")}>Evaluations</button>
         <button className="side-btn" onClick={openPalette}>Search <kbd>Ctrl+K</kbd></button>
       </div>
       <div className="side-filters">
@@ -43,7 +53,7 @@ export function Sidebar({ sessions, current, daemon, route, go, openPalette }: {
               <button title="New session in this project" aria-label={`New session in ${projectName(k)}`} onClick={() => go(`/?folder=${encodeURIComponent(k)}`)}>+</button></div>}
             {list.map((s) => (
               <button key={s.id} className={`side-row ${s.id === current ? "on" : ""}`} onClick={() => go(`/sessions/${s.id}`)} title={s.cwd}>
-                <span className="side-title">{s.pinned && <span className="pin" title="Pinned" aria-label="Pinned">* </span>}{s.title}</span><span className="muted small">{ago(s.updatedAt)}</span>
+                <span className="side-title">{s.pinned && <span className="pin" title="Pinned" aria-label="Pinned">* </span>}{s.title}{s.source && <span className="badge" aria-label="Session source">{s.source === "slack" ? "Slack" : "Teams"}</span>}</span><span className="muted small">{ago(s.updatedAt)}</span>
               </button>
             ))}
           </div>
@@ -76,7 +86,7 @@ export function Palette({ sessions, go, close, actions }: { sessions: SessionRow
   const [sel, setSel] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => input.current?.focus(), []);
-  const pages = [{ id: "home", label: "Home", run: () => go("/") }, { id: "missions", label: "Go to Mission Control", run: () => go("/missions") }, { id: "automations", label: "Go to Automations", run: () => go("/automations") }];
+  const pages = [{ id: "eval", label: "Go to Evaluations", run: () => go("/eval") }, { id: "analytics", label: "Go to Analytics", run: () => go("/analytics") }, { id: "wiki", label: "Go to Wiki", run: () => go("/wiki") }, { id: "sync", label: "Sync between machines", run: () => go("/sync") }, { id: "imports", label: "Import shared session", run: () => go("/imports") }, { id: "machines", label: "Go to Machines", run: () => go("/machines") }, { id: "home", label: "Home", run: () => go("/") }, { id: "missions", label: "Go to Mission Control", run: () => go("/missions") }, { id: "workstreams", label: "Go to Workstreams", run: () => go("/workstreams") }, { id: "review", label: "Go to Review", run: () => go("/review") }, { id: "automations", label: "Go to Automations", run: () => go("/automations") }];
   const settingsPages = ["general", "appearance", "notifications", "session-defaults", "missions", "custom-models", "worktrees", "connectors", "session-management", "usage", "support"].map((p) => ({ id: p, label: `Settings: ${p.split("-").map((w, i) => (i ? w : w[0].toUpperCase() + w.slice(1))).join(" ")}`, run: () => go(`/settings/${p}`) }));
   const items = useMemo(() => {
     const ql = q.toLowerCase();

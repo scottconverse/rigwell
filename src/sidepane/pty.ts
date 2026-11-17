@@ -55,11 +55,6 @@ interface Term {
   closing: boolean;
 }
 
-/** Pipe mode (Windows): a lone CR becomes CRLF, so a shell that reads a pipe sees the end of the line. */
-export function pipeLineEnds(data: string): string {
-  return data.replace(/\r(?!\n)/g, "\r\n");
-}
-
 /** Picks the shell: only allow-listed names are honored; anything else becomes the platform default. */
 export function resolveShell(requested?: string, platform: NodeJS.Platform = process.platform): string {
   const name = requested ? basename(requested.replace(/\\/g, "/")) : "";
@@ -130,8 +125,8 @@ export class TerminalManager {
         })();
       }
       term.io = {
-        // The Enter key arrives as a lone CR (xterm.js). A shell on a pipe ends a line only at LF, so add it.
-        write: (data) => { try { proc.stdin.write(pipeLineEnds(data)); proc.stdin.flush?.(); } catch { /* shell is gone */ } },
+        // xterm sends CR for Enter; the Windows pipe shell needs a complete CRLF line.
+        write: (data) => { try { proc.stdin.write(data.replace(/\r(?!\n)/g, "\r\n")); proc.stdin.flush?.(); } catch { /* shell is gone */ } },
         resize: () => { /* no PTY: the size is only recorded */ },
         close: () => { try { proc.stdin.end(); } catch { /* ignore */ } },
       };

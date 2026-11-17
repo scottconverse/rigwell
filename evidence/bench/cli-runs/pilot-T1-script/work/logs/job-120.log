@@ -1,0 +1,9 @@
+job job-120 started on runner-6
+step 0: tests: 41 passed
+step 1: cache hit
+step 2: cache hit
+step 3: warning: FAILED to fetch optional mirror, using default
+step 4: cache hit
+step 5: warning: FAILED to fetch optional mirror, using default
+STATUS: PASSED
+summary: see artifacts

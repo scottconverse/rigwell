@@ -26,7 +26,7 @@ test("slug resolves symlinks when the path exists", () => {
   const real = path.join(env.root, "real");
   mkdirSync(real);
   const link = path.join(env.root, "link");
-  symlinkSync(real, link);
+  symlinkSync(real, link, process.platform === "win32" ? "junction" : "dir");
   expect(projectSlug(link)).toBe(projectSlug(real));
 });
 

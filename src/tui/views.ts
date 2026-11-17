@@ -8,6 +8,8 @@ import { loadSettings } from "../storage/settings.ts";
 import { loadCustomCommands } from "./customcmd.ts";
 import { runStatusLine, statusLineConfig, type StatusLineInput } from "./attention.ts";
 import type { TuiState } from "./types.ts";
+import { workstreamsView } from "./workstreams.ts";
+import type { ReviewSnapshot } from "../review/local.ts";
 
 export interface ViewCtx {
   request: (method: string, params: Record<string, unknown>) => Promise<any>;
@@ -21,7 +23,7 @@ export interface ViewCtx {
   /** Poll interval of /login in ms (tests shorten it). */
   loginPollMs?: number;
 }
-export interface View { title: string; lines: string[] }
+export interface View { title: string; lines: string[]; workstreamId?: string; workstreams?: { id: string; title: string; state: string; agentCount: number }[] }
 
 const errText = (e: unknown) => String((e as Error)?.message ?? e);
 const hr = (n: string, v: unknown) => `${n.padEnd(14)} ${v}`;
@@ -46,6 +48,29 @@ async function mcpView(args: string, c: ViewCtx): Promise<View> {
   const w = words(args);
   const title = "MCP servers";
   try {
+    if (w[0] === "sign-in" || w[0] === "sign-out") {
+      const name = w[1];
+      if (!name) return { title, lines: [`Usage: /mcp ${w[0]} <name>`] };
+      if (w[0] === "sign-out") {
+        await c.request("mcp_sign_out", { name });
+        return { title, lines: [`Signed out of ${name}.`, "", ...(await mcpLines(c))] };
+      }
+      const login = await c.request("mcp_sign_in", { name });
+      c.openUrl?.(login.url);
+      void (async () => {
+        while (Date.now() < login.expiresAt) {
+          await new Promise((r) => setTimeout(r, c.loginPollMs ?? 1500));
+          try {
+            const st = await c.request("mcp_sign_in_status", { name, loginId: login.loginId });
+            if (st.state === "pending") continue;
+            c.notify?.(st.state === "complete" ? `Signed in to MCP server ${name}.` : `MCP sign-in ${st.state}: ${st.error ?? name}`, st.state === "complete" ? "info" : "error");
+          } catch (e) { c.notify?.(`MCP sign-in: ${errText(e)}`, "error"); }
+          return;
+        }
+        c.notify?.(`MCP sign-in to ${name} timed out.`, "error");
+      })();
+      return { title, lines: [`Sign in to MCP server ${name}:`, login.url, "Waiting for sign-in. You can keep using this session."] };
+    }
     if (w[0] === "add") {
       const [, name, target, ...rest] = w;
       if (!name || !target) return { title, lines: ["Usage: /mcp add <name> <url | command> [args...]", "  An http(s) URL adds a remote server (add --sse before the URL for SSE); anything else is a stdio command."] };
@@ -77,9 +102,10 @@ async function mcpLines(c: ViewCtx): Promise<string[]> {
   for (const s of servers) {
     out.push(`${s.name}  [${s.status}]  ${s.serverType}  from ${s.source}${s.toolCount !== undefined ? `  ${s.toolCount} tools` : ""}`);
     if (s.error) out.push(`    error: ${s.error}`);
+    if (s.requiresAuth) out.push(`    needs sign-in: /mcp sign-in ${s.name}`);
   }
   if (r?.summary?.configError) out.push("", `Config problem: ${r.summary.configError}`);
-  out.push("", "/mcp add <name> <url | command> [args...]   /mcp remove <name>", "Servers are stored in the user MCP config (add and remove act on the user level only).");
+  out.push("", "/mcp add <name> <url | command> [args...]   /mcp remove <name>", "/mcp sign-in <name>   /mcp sign-out <name>", "Servers are stored in the user MCP config (add and remove act on the user level only).");
   return out;
 }
 
@@ -170,7 +196,7 @@ async function diagnosticsView(c: ViewCtx): Promise<View> {
 
 // ---------------------------------------------------------------- /statusline
 
-function statusLineView(c: ViewCtx): View {
+async function statusLineView(c: ViewCtx): Promise<View> {
   const loaded = loadSettings({ cwd: c.state.cwd, runtimeSettingsPath: c.settingsPath });
   const cfg = statusLineConfig(loaded.settings);
   const lines: string[] = [];
@@ -178,7 +204,7 @@ function statusLineView(c: ViewCtx): View {
     lines.push("No custom status line is configured.", "", 'Add to settings.json: "statusLine": { "type": "command", "command": "<your command>", "padding": 0, "maxRows": 1 }');
   } else {
     lines.push(`Command: ${cfg.command}`, `Rows: ${cfg.maxRows}   Padding: ${cfg.padding}`, "");
-    const r = runStatusLine(cfg, statusLineInput(c.state), c.state.cwd);
+    const r = await runStatusLine(cfg, statusLineInput(c.state), c.state.cwd);
     lines.push(r.ok ? "Output now:" : "Problem:", ...(r.ok ? (r.text ? r.text.split("\n").map((l) => "  " + l) : ["  (empty)"]) : ["  " + r.hint]));
   }
   lines.push("", "The command runs through the shell, gets this JSON on stdin and must finish within 2 seconds:",
@@ -284,6 +310,27 @@ async function logoutView(args: string, c: ViewCtx): Promise<View> {
 
 export async function buildView(name: string, args: string, c: ViewCtx): Promise<View> {
   switch (name) {
+    case "workstreams": return workstreamsView(args, c);
+    case "review": {
+      try {
+        const w = words(args);
+        const r: ReviewSnapshot = await c.request("review_snapshot", { cwd: c.state.cwd, ...(w[0] === "pr" ? { pr: w[1] ? Number(w[1]) : true } : w[0] ? { base: w[0] } : {}) });
+        const location = (p: { path: string; line: number } | undefined) => p ? `${p.path}:${p.line}` : "none";
+        return { title: "Review", lines: [r.pr ? `#${r.pr.number} ${r.pr.title} [${r.pr.state}]` : "Branch and working changes", `${r.files.length} files | ${r.base.slice(0, 10)} to ${r.head.slice(0, 10)}`, ...r.files.map((f) => `${f.status} ${f.oldPath ? f.oldPath + " to " : ""}${f.path}${f.binary ? " (binary)" : ""}`), "", "Semantic changes", ...r.semantic.changes.map((s) => `${s.kind}${s.renamed ? "/renamed" : ""} ${s.symbolKind} ${s.name}${s.changed ? " (also changed)" : ""}: ${location(s.from)} to ${location(s.to)}`), ...r.semantic.warnings.map((s) => `${s.path}: ${s.message}`), ...(r.checks.length ? ["", "Checks", ...r.checks.map((s) => `${s.name}: ${s.state}`)] : []), ...(r.comments.length ? ["", "Existing comments", ...r.comments.map((s) => `${s.author ?? "Reviewer"}${s.path ? ` ${s.path}:${s.line ?? ""}` : ""}: ${s.body}`)] : [])] };
+      } catch (e) { return { title: "Review", lines: [errText(e)] }; }
+    }
+    case "pr": {
+      const title = "Pull request", w = words(args);
+      try {
+        if (w[0] === "create") {
+          const parts = w.slice(1).filter((x) => x !== "--draft");
+          const r = await c.request("create_pr", { worktreePath: c.state.cwd, ...(parts[0] ? { title: parts[0] } : {}), body: parts[1] ?? "", ...(parts[2] ? { base: parts[2] } : {}), draft: w.includes("--draft") });
+          return { title, lines: [`Created #${r.number}`, r.url] };
+        }
+        const r = await c.request("get_pr_status", { worktreePath: c.state.cwd });
+        return { title, lines: [r.state === "none" ? "No PR for this branch." : `#${r.number}: ${r.state}`, ...(r.url ? [r.url] : []), ...(r.checks ?? []).map((x: any) => `${x.name}: ${x.state}`), "", 'Create: /pr create "title" "body" [base] [--draft]'] };
+      } catch (e) { return { title, lines: [errText(e)] }; }
+    }
     case "login": return loginView(args, c);
     case "logout": return logoutView(args, c);
     case "mcp": return mcpView(args, c);

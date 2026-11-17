@@ -114,7 +114,7 @@ describe("auto model", () => {
       modelId: "custom:Mid-2", reasoningEffort: "high", reason: "task_fit",
       fallbacks: [{ modelId: "custom:Strong-3", reasoningEffort: "high" }, { modelId: "custom:Cheap-1", reasoningEffort: "high" }],
     });
-    const asst = loadTranscript(findSession(s.sessionId, s.repo)!).messages.filter((m) => m.role === "assistant");
+    const asst = loadTranscript(findSession(s.sessionId, s.repo)!).messages.filter((m) => m.role === "assistant" && m.visibility !== "user_only");
     expect(asst.every((m) => m.modelId === "custom:Mid-2")).toBe(true);
     expect(asst.every((m) => m.routerId === "auto")).toBe(true); // routed turns carry the router id (spec 12.1)
     expect(st.toolExecutionModeModelId).toBe("custom:Mid-2"); // the model the tool mode was chosen for
@@ -131,7 +131,7 @@ describe("auto model", () => {
     expect(s.mid.requests.length).toBe(5); // all retries on the same provider first
     expect(s.strong.requests.length).toBe(1);
     expect(s.cheap.requests.length).toBe(0);
-    const asst = loadTranscript(findSession(s.sessionId, s.repo)!).messages.filter((m) => m.role === "assistant");
+    const asst = loadTranscript(findSession(s.sessionId, s.repo)!).messages.filter((m) => m.role === "assistant" && m.visibility !== "user_only");
     expect(asst[0]!.modelId).toBe("custom:Strong-3");
   }, 30_000);
 

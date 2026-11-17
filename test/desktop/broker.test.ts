@@ -36,7 +36,7 @@ describe("DaemonBroker", () => {
     const repo = makeRepo();
     const req = (id: string, method: string, params: any) => JSON.stringify({ jsonrpc: "2.0", type: "request", id, method: "rigwell." + method, params });
     broker.send(1, a, req("i1", "initialize_session", { cwd: repo, modelId: "custom:Fake-Anthropic-0", autonomyLevel: "off" }));
-    const wait = async (pred: () => boolean) => { for (let i = 0; i < 300 && !pred(); i++) await sleep(25); expect(pred()).toBe(true); };
+    const wait = async (pred: () => boolean) => { for (let i = 0; i < 300 && !pred(); i++) await sleep(25); if (!pred()) console.error("[broker pending]", JSON.stringify({ delivered: delivered.slice(-20), attention, requests: fake.requests.length })); expect(pred()).toBe(true); };
     await wait(() => delivered.some((d) => d.payload?.message?.includes('"id":"i1"')));
     broker.send(1, a, req("m1", "add_user_message", { text: "run it" }));
 
@@ -44,8 +44,16 @@ describe("DaemonBroker", () => {
     const perm = attention.find((e) => e.requestKind === "permission")!;
     expect(perm.summary).toContain("echo hi > out.txt");
     expect(openNow.length).toBe(1);
-    // Only window 1 received traffic; window 2's connection stayed quiet.
-    expect(delivered.every((d) => d.w === 1)).toBe(true);
+    // Inbox invalidation is a payload-free daemon broadcast. Session contents and requests stay with their window.
+    await wait(() => delivered.some((d) => d.w === 2));
+    const otherWindow = delivered.filter((d) => d.w === 2);
+    for (const d of otherWindow) {
+      expect(d.channel).toBe("daemon:message");
+      const message = JSON.parse(d.payload.message);
+      expect(message.method).toBe("rigwell.inbox_changed"); expect(message.params).toEqual({});
+    }
+    expect(delivered.filter((d) => { const m = JSON.parse(d.payload.message); return m.method === "rigwell.session_notification" || m.type === "request"; }).every((d) => d.w === 1)).toBe(true);
+    expect(JSON.stringify(otherWindow)).not.toContain("echo hi > out.txt");
     const permReq = delivered.filter((d) => d.channel === "daemon:message").map((d) => JSON.parse(d.payload.message)).find((m) => m.method === "rigwell.request_permission");
     broker.send(1, a, JSON.stringify({ jsonrpc: "2.0", type: "response", id: permReq.id, result: { selectedOption: "proceed_once" } }));
 

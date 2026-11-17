@@ -7,8 +7,11 @@ import { parseSkillFile } from "../skills/skills.ts";
 import { isValidatorSkill, needsAttention, type Feature, type HandoffRecord, type MissionState, type MissionStore } from "./store.ts";
 import { skeleton, type WorkerOutcome, type WorkerSpawner } from "./worker.ts";
 import type { WakeLock } from "./wakelock.ts";
+import { effectivePolicy } from "../storage/policy.ts";
 
 export interface MissionSettings {
+  machine?: string;
+  workerWorkingDirectory?: string;
   workerModel?: string;
   workerReasoningEffort?: string;
   validationWorkerModel?: string;
@@ -46,7 +49,7 @@ export interface RunnerDeps {
   spawn: WorkerSpawner;
   modelExists(id: string): boolean;
   /** Tool-list rewrite for a worker connection (EndFeatureRun and file protection). */
-  workerWrap(workerSessionId: string): (tools: Tool[]) => Tool[];
+  workerWrap(workerSessionId: string): import("./worker.ts").WorkerRequest["wrapTools"];
   notify(n: Record<string, unknown>): void;
   wake: WakeLock;
   limits: Limits;
@@ -109,8 +112,11 @@ export class MissionRunner {
   /** Returns a refusal message, or null when the run may start. */
   runGates(): string | null {
     const s = this.store;
+    const policy = effectivePolicy().missions;
+    if (policy?.enabled === false || policy?.maxConcurrentRuns === 0) return "Missions are disabled by policy.";
     if (!s.exists()) return "No mission folder exists yet: call ProposeMission first.";
     const features = s.features();
+    if (policy?.maxFeatures !== undefined && features.filter((f) => f.status !== "cancelled").length > policy.maxFeatures) return "Mission feature count exceeds policy maxFeatures.";
     if (!features.length) return "features.json has no features. Write the plan files before StartMissionRun.";
     if (!existsSync(s.path("validation-contract.md"))) return "validation-contract.md is missing from the mission folder.";
     if (!existsSync(s.path("validation-state.json"))) return "validation-state.json is missing from the mission folder.";
@@ -238,7 +244,7 @@ export class MissionRunner {
     }
   }
 
-  private limit(f: Feature) { return this.d.limits.retryLimit + (this.store.readState()?.featureRetryBudgetBonus?.[f.id] ?? 0); }
+  private limit(f: Feature) { return Math.min(this.d.limits.retryLimit + (this.store.readState()?.featureRetryBudgetBonus?.[f.id] ?? 0), effectivePolicy().missions?.maxWorkerAttempts ?? Infinity); }
 
   private setState(state: MissionState, pauseReason?: string) {
     const st = this.store.setState(state, pauseReason);
@@ -264,6 +270,8 @@ export class MissionRunner {
     let first = true;
     for (;;) {
       if (this.pauseRequest) return this.finishPaused(this.pauseRequest);
+      const policy = effectivePolicy().missions;
+      if (policy?.enabled === false || policy?.maxConcurrentRuns === 0 || (policy?.maxFeatures !== undefined && s.features().filter((f) => f.status !== "cancelled").length > policy.maxFeatures)) return this.finishPaused(this.pause("policy_limit_reached"));
       let features = s.features();
       if (features.every(doneStatus)) {
         this.setState("completed");
@@ -328,7 +336,7 @@ export class MissionRunner {
     const validator = isValidatorSkill(f.skillName);
     const want = (validator ? ms.validationWorkerModel ?? ms.workerModel : ms.workerModel) ?? o.modelId();
     const effort = (validator ? ms.validationWorkerReasoningEffort ?? ms.workerReasoningEffort : ms.workerReasoningEffort) ?? o.reasoningEffort();
-    if (this.d.modelExists(want)) return { modelId: want, effort };
+    if (ms.machine || this.d.modelExists(want)) return { modelId: want, effort };
     return { modelId: o.modelId(), effort, substitutedFrom: want };
   }
 
@@ -336,11 +344,15 @@ export class MissionRunner {
     const s = this.store;
     const o = this.d.orchestrator;
     const st = s.readState()!;
-    const cwd = st.workingDirectory || o.cwd;
+    const ms = o.settings();
+    const location = resume ? st.workerLocations?.[f.currentWorkerSessionId ?? ""] : undefined;
+    const machine = location ? location.machine : ms.machine;
+    const cwd = location?.cwd ?? (machine ? ms.workerWorkingDirectory || st.workingDirectory || o.cwd : st.workingDirectory || o.cwd);
     const pick = this.pickModel(f);
     let workerId = f.currentWorkerSessionId ?? "";
     if (!resume) {
       workerId = crypto.randomUUID();
+      s.writeState({ workerLocations: { ...st.workerLocations, [workerId]: { machine, cwd } } });
       s.updateFeature(f.id, (x) => { x.status = "in_progress"; x.currentWorkerSessionId = workerId; x.workerSessionIds = [...(x.workerSessionIds ?? []), workerId]; });
       s.log("worker_selected_feature", { workerSessionId: workerId, featureId: f.id });
       s.log("worker_started", { workerSessionId: workerId, featureId: f.id, modelId: pick.modelId, ...(pick.substitutedFrom ? { substitutedFromModelId: pick.substitutedFrom } : {}) });
@@ -348,6 +360,7 @@ export class MissionRunner {
     this.d.notify({ type: "mission_worker_started", workerSessionId: workerId });
     const h = this.d.spawn({
       sessionId: workerId, resume, cwd, modelId: pick.modelId, reasoningEffort: pick.effort, missionId: st.missionId, role: "worker",
+      ...(machine ? { machine, missionDir: s.dir, feature: f, extraMessage: input.messageToWorker } : {}),
       prompt: resume ? resumePrompt(input.messageToWorker) : workerPrompt(s.dir, f, workerId, cwd, input.messageToWorker),
       wrapTools: this.d.workerWrap(workerId), inactivityMs: this.d.limits.inactivityMs, startGraceMs: this.d.limits.startGraceMs,
       retryBaseDelayMs: this.d.retryBaseDelayMs, log: this.d.log,

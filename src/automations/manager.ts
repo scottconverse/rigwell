@@ -8,6 +8,8 @@ import type { AutonomyLevel } from "../core/types.ts";
 import type { HeadlessRunner } from "./runner.ts";
 import { machineTimeZone, nextRun, slotsBetween } from "./schedule.ts";
 import { VISUAL_FILE, VISUAL_MARKER, writeVisual } from "./visual.ts";
+import { externalKind } from "./triggers/config.ts";
+import type { TriggerEvent } from "./triggers/events.ts";
 import {
   automationsRoot, createAutomationFolder, deleteAutomationFolder, newSecret, projectAutomationsRoot, readRuns, readSecrets, saveRun,
   scanRoot, updateAutomationFolder, writeSecrets, writeState, atomicWrite,
@@ -44,7 +46,7 @@ export interface ManagerOptions {
   onAutoPaused?: (a: Automation, reason: "missed_runs" | "consecutive_failures") => void;
 }
 
-interface Dispatch { trigger: TriggerKind; payload?: string; attempt: number; scheduledFor?: number; catchUp?: boolean; missedSlots?: number }
+interface Dispatch { trigger: TriggerKind; payload?: string; attempt: number; scheduledFor?: number; catchUp?: boolean; missedSlots?: number; event?: TriggerEvent }
 
 export type DeliveryStatus = "accepted" | "filtered" | "deduped" | "capped" | "unauthorized";
 export interface WebhookResult { httpStatus: number; body: Record<string, unknown> }
@@ -63,6 +65,7 @@ export class AutomationManager {
   private sleeps: { from: number; to: number }[] = [];
   projectDirs: Set<string>;
   onChange?: () => void;
+  onRunCompleted?: (a: Automation, run: RunRecord, text: string, event?: TriggerEvent) => void;
 
   constructor(private opts: ManagerOptions) {
     this.clock = opts.clock ?? systemClock;
@@ -156,7 +159,7 @@ export class AutomationManager {
   }
 
   /** True when at least one valid automation uses the webhook trigger. */
-  hasWebhooks() { return this.list().some((a) => a.isValid && a.fm.trigger === "webhook"); }
+  hasWebhooks() { return this.list().some((a) => a.isValid && (a.fm.trigger === "webhook" || ((a.fm.trigger === "github" || a.fm.trigger === "ci") && (a.fm.eventTrigger as { transport?: string })?.transport === "webhook"))); }
 
   /** Pauses an automation by itself and records why. */
   private autoPause(a: Automation, reason: "missed_runs" | "consecutive_failures") {
@@ -168,7 +171,7 @@ export class AutomationManager {
   }
 
   nextRunAt(a: Automation): number | undefined {
-    if (!a.isValid || a.fm.paused || !a.schedule || a.fm.trigger === "webhook") return undefined;
+    if (!a.isValid || a.fm.paused || !a.schedule || a.fm.trigger === "webhook" || externalKind(a.fm.trigger)) return undefined;
     return nextRun(a.schedule, a.state.lastRunAt ?? this.clock.now(), a.timezone, a.state.createdAt);
   }
 
@@ -197,13 +200,13 @@ export class AutomationManager {
     const all = this.list();
     for (const a of all) { // due retries first
       const r = a.state.retry;
-      if (!r || r.at > now || this.running.has(a.id) || !room() || !a.isValid) continue;
+      if (!r || r.at > now || this.running.has(a.id) || !room() || !a.isValid || a.fm.paused) continue;
       dispatched++;
-      this.begin(a, { trigger: r.trigger, payload: r.payload, attempt: 2, scheduledFor: r.scheduledFor });
+      this.begin(a, { trigger: r.trigger, payload: r.payload, attempt: 2, scheduledFor: r.scheduledFor, event: r.event });
     }
     for (const a of all) {
       if (!room()) break;
-      if (!a.isValid || a.fm.paused || !a.schedule || a.fm.trigger === "webhook" || this.running.has(a.id) || a.state.retry) continue;
+      if (!a.isValid || a.fm.paused || !a.schedule || a.fm.trigger === "webhook" || externalKind(a.fm.trigger) || this.running.has(a.id) || a.state.retry) continue;
       const anchor = Math.max(a.state.lastRunAt ?? a.state.createdAt, a.state.resumedAt ?? 0);
       const first = nextRun(a.schedule, anchor, a.timezone, a.state.createdAt);
       if (first === undefined || first > now) continue;
@@ -215,6 +218,14 @@ export class AutomationManager {
   }
 
   // ---- running ----
+  dispatchEvent(id: string, event: TriggerEvent) {
+    const a = this.find(id), now = this.clock.now();
+    if (!a.isValid || a.fm.paused || a.state.retry || this.running.has(id) || this.running.size >= this.limits.maxConcurrent || now < this.holdUntil) return;
+    const payload = JSON.stringify(event.payload); if (Buffer.byteLength(payload) > this.limits.maxBodyBytes) throw new Error("Trigger payload is too large");
+    if (a.fm.payloadRegex && !new RegExp(a.fm.payloadRegex).test(payload)) return { filtered: true as const };
+    if (a.fm.maxRunsPerHour !== undefined && readRuns(a).filter((r) => r.attempt === 1 && now - r.startedAt < 3600_000).length >= a.fm.maxRunsPerHour) return;
+    return this.begin(a, { trigger: externalKind(a.fm.trigger) ? a.fm.trigger : "webhook", payload, event, attempt: 1 });
+  }
   /** Starts a run now. Resolves with the run id once the run is registered; `done` settles when it ends. */
   run(id: string, d: { trigger?: TriggerKind; payload?: string } = {}): { runId: string; done: Promise<RunRecord> } {
     const a = this.find(id);
@@ -228,6 +239,7 @@ export class AutomationManager {
     const startedAt = this.clock.now();
     const rec: RunRecord = {
       runId, status: "in_progress", trigger: d.trigger, attempt: d.attempt, startedAt,
+      ...(d.event ? { eventId: d.event.id, chain: d.event.chain } : {}),
       ...(d.catchUp !== undefined ? { catchUp: d.catchUp, scheduledFor: d.scheduledFor, missedSlots: d.missedSlots } : d.scheduledFor ? { scheduledFor: d.scheduledFor } : {}),
     };
     saveRun(a, rec);
@@ -241,11 +253,13 @@ export class AutomationManager {
 
   private async execute(a: Automation, rec: RunRecord, d: Dispatch): Promise<RunRecord> {
     const fm = a.fm;
-    const cwd = fm.workingDirectory && existsSync(fm.workingDirectory) ? fm.workingDirectory : a.dir;
+    const remote = fm.machine && !["local", "default"].includes(fm.machine);
+    const cwd = remote ? fm.workingDirectory ?? "." : fm.workingDirectory && existsSync(fm.workingDirectory) ? fm.workingDirectory : a.dir;
     let result;
     try {
       result = await this.opts.runner({
         cwd, title: `[Automation] ${fm.name}`, prompt: this.buildPrompt(a, d),
+        ...(remote ? { machine: fm.machine, automationId: a.id, remoteWorkingDirectory: fm.workingDirectory } : {}),
         modelId: fm.model, reasoningEffort: fm.reasoningEffort, autonomy: (fm.autonomy ?? "high") as AutonomyLevel,
         targetSessionId: fm.targetSessionId, startTimeoutMs: this.limits.startTimeoutMs, maxRunMs: this.limits.maxRunMs,
       });
@@ -276,7 +290,7 @@ export class AutomationManager {
     const patch: Parameters<typeof writeState>[1] = { lastRunStatus: out.status, lastRunSessionId: out.sessionId, runCount: runNo };
     let pauseFor: "consecutive_failures" | undefined;
     if (out.status === "success") { patch.health = undefined; patch.retry = undefined; patch.consecutiveFailures = undefined; }
-    else if (d.attempt < 2) patch.retry = { at: finishedAt + this.limits.retryDelayMs, trigger: d.trigger, payload: d.payload, scheduledFor: d.scheduledFor };
+    else if (d.attempt < 2) patch.retry = { at: finishedAt + this.limits.retryDelayMs, trigger: d.trigger, payload: d.payload, scheduledFor: d.scheduledFor, event: d.event };
     else {
       patch.health = "degraded"; patch.retry = undefined;
       if (out.failureReason !== "host_slept") {
@@ -290,6 +304,7 @@ export class AutomationManager {
     this.refreshVisual(a);
     this.log(`run ${rec.runId} of "${a.fm.name}" ${out.status}${out.failureReason ? ` (${out.failureReason})` : ""}`);
     this.onChange?.();
+    try { this.onRunCompleted?.(this.find(a.id), out, result.text, d.event); } catch (e) { this.log(`completion delivery could not be queued: ${(e as Error).message}`); }
     return out;
   }
 
@@ -297,7 +312,7 @@ export class AutomationManager {
     const parts = [
       `You are running as an unattended automation named "${a.fm.name}". It was triggered by: ${d.trigger}.`,
       `Finish the job in this one turn. Nobody is watching, so any action that would need approval is denied; carry on without it.`,
-      `Keep notes for future runs in ${join(a.dir, "memory")} and write output files to ${join(a.dir, "reports")}. Do not edit HEARTBEAT.md.`,
+      ...(!a.fm.machine || ["local", "default"].includes(a.fm.machine) ? [`Keep notes for future runs in ${join(a.dir, "memory")} and write output files to ${join(a.dir, "reports")}. Do not edit HEARTBEAT.md.`] : []),
       "", a.body.trim(),
     ];
     if (d.payload !== undefined) {

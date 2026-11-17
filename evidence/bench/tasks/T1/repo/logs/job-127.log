@@ -1,0 +1,23 @@
+job job-127 started on runner-2
+step 0: tests: 41 passed
+step 1: compile ok
+step 2: compile ok
+step 3: cache hit
+step 4: download 12MB
+step 5: compile ok
+step 6: cache hit
+step 7: compile ok
+step 8: warning: FAILED to fetch optional mirror, using default
+step 9: warning: FAILED to fetch optional mirror, using default
+step 10: cache hit
+step 11: cache hit
+step 12: tests: 41 passed
+step 13: cache hit
+step 14: warning: FAILED to fetch optional mirror, using default
+step 15: cache hit
+step 16: cache hit
+step 17: warning: FAILED to fetch optional mirror, using default
+STATUS: PASSED
+retrying (attempt 2)
+STATUS: PASSED
+summary: see artifacts

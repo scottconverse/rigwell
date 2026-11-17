@@ -1,0 +1,3 @@
+Implement PriorityQueue with push(value,priority), pop() and size getter. Lower numeric priority is first and equal priorities are FIFO. Empty pop returns undefined; reject nonfinite priorities.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

@@ -1,0 +1,3 @@
+Fix settings merge across defaults.js and lib.js. resolveSettings(user,project) gives project precedence, then user, then defaults, only for theme, retries and enabled. Undefined means absent; preserve false and zero. Reject invalid theme (light/dark), retries (nonnegative integer) or enabled (boolean). Do not mutate any layer.
+
+Use the existing module exports and preserve the documented contract. Do not add dependencies or access the network.

@@ -2,6 +2,8 @@
 // parameters. They are plain data; `instantiateTemplate` fills the {{key}} placeholders and returns the pieces
 // `create_automation` needs. Every template is read-only by default (it reports, it does not change the project).
 
+import { pluginComponents, jsonFile } from "../plugins/store.ts";
+
 export interface TemplateParam {
   key: string;
   label: string;
@@ -144,11 +146,12 @@ export const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
 
 export class TemplateError extends Error {}
 
-export const findTemplate = (id: string) => AUTOMATION_TEMPLATES.find((t) => t.id === id);
+export const findTemplate = (id: string) => listTemplates().find((t) => t.id === id);
 
 /** Copies of the templates, so a caller cannot change the data. */
 export function listTemplates(): AutomationTemplate[] {
-  return AUTOMATION_TEMPLATES.map((t) => ({ ...t, parameters: t.parameters.map((p) => ({ ...p })) }));
+  const extras: AutomationTemplate[] = pluginComponents("automationTemplates").flatMap((p) => jsonFile(p.path).map((t: AutomationTemplate) => ({ ...t, id: `${p.record.name}-${t.id}` })));
+  return [...AUTOMATION_TEMPLATES, ...extras].map((t) => ({ ...t, parameters: t.parameters.map((p) => ({ ...p })) }));
 }
 
 export interface TemplateInstance {

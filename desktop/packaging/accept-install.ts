@@ -1,0 +1,111 @@
+// Clean-runner installed acceptance, not a substitute for real macOS hardware.
+// Invoke after installing a package in CI. No providers, credentials or user profiles.
+import { spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:net";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { probeDaemon, readDaemonInfo } from "../main/supervisor.ts";
+import { verifyProtocolRegistration } from "./protocol-registration.ts";
+
+if (process.env.CI !== "true") throw new Error("Installed acceptance runs only on an isolated CI runner");
+const executable = resolve(process.argv[2] || ""), output = resolve(process.argv[3] || "installed-acceptance.json");
+const expectedVersion = process.argv.slice(4).find(arg => !arg.startsWith("--"));
+if (!existsSync(executable)) throw new Error("Provide the installed executable");
+const checkWindowsProtocol = process.argv.includes("--require-windows-protocol");
+if (checkWindowsProtocol && process.platform !== "win32") throw new Error("Windows protocol acceptance requires Windows");
+const powershell = join(process.env.SystemRoot || "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
+if (checkWindowsProtocol) {
+  // Read before first launch: app.setAsDefaultProtocolClient must not mask an
+  // installer that failed to register its own URL handler.
+  const checked = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; $k=[Microsoft.Win32.Registry]::ClassesRoot.OpenSubKey('rigwell'); if(!$k){throw 'Missing installed protocol'}; $c=$k.OpenSubKey('shell\\open\\command'); if(!$c){throw 'Missing protocol command'}; @{protocol=$k.GetValue('URL Protocol',$null);command=$c.GetValue('')}|ConvertTo-Json -Compress"], { encoding: "utf8", windowsHide: true, timeout: 10_000 });
+  if (checked.status !== 0) throw new Error(`Installed protocol registration: ${checked.stderr}`);
+  const registration = JSON.parse(checked.stdout);
+  verifyProtocolRegistration(registration, executable);
+}
+const resources = process.platform === "darwin" ? resolve(dirname(executable), "../Resources") : join(dirname(executable), "resources");
+const bundledBun = join(resources, "bun", process.platform === "win32" ? "bun.exe" : "bun");
+if (!existsSync(bundledBun) || !existsSync(join(resources, "app.asar"))) throw new Error("Installed package is missing bundled resources");
+const root = mkdtempSync(join(tmpdir(), "rigwell-installed-")), home = join(root, ".rigwell"); mkdirSync(home);
+for (const folder of ["Roaming", "Local"]) mkdirSync(join(root, "AppData", folder), { recursive: true });
+writeFileSync(join(home, "settings.json"), "{}");
+writeFileSync(join(home, "desktop-settings.json"), JSON.stringify({ desktopAutoUpdateEnabled: false, menuBarEnabled: false }));
+const env = { ...process.env, HOME: root, USERPROFILE: root, APPDATA: join(root, "AppData/Roaming"), LOCALAPPDATA: join(root, "AppData/Local"), XDG_CONFIG_HOME: join(root, "config"), XDG_DATA_HOME: join(root, "data"), XDG_CACHE_HOME: join(root, "cache"), RIGWELL_HOME: home, RIGWELL_CREDENTIALS: "file" } as Record<string, string>;
+for (const key of ["NODE_OPTIONS", "ELECTRON_RUN_AS_NODE", "RIGWELL_DAEMON_CMD", "RIGWELL_PROFILE", "RIGWELL_PROFILE_ROOT", "RIGWELL_PROFILE_DEFAULT_USER_DATA", "RIGWELL_RENDERER_URL"]) delete env[key];
+const socket = createServer(); await new Promise<void>((ok, fail) => { socket.once("error", fail); socket.listen(0, "127.0.0.1", ok); });
+const port = (socket.address() as { port: number }).port; await new Promise<void>((ok, fail) => socket.close(error => error ? fail(error) : ok()));
+const playwright = createRequire(join(import.meta.dir, "../package.json"))("playwright");
+const app = spawn(executable, ["--no-sandbox", "--use-mock-keychain", `--user-data-dir=${join(root, "chromium")}`, `--remote-debugging-port=${port}`, "--remote-debugging-address=127.0.0.1"], { env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+let log = "", browser: any, observed: ReturnType<typeof readDaemonInfo>;
+app.stdout!.on("data", chunk => { log = (log + chunk).slice(-16000); }); app.stderr!.on("data", chunk => { log = (log + chunk).slice(-16000); });
+const started = Date.now();
+function daemonCommandLine(pid: number): string {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return "";
+  const system = process.env.SystemRoot || "C:\\Windows";
+  const result = process.platform === "win32"
+    ? spawnSync(join(system, "System32/WindowsPowerShell/v1.0/powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`], { encoding: "utf8", windowsHide: true, env: { ...process.env, PSModulePath: join(system, "System32/WindowsPowerShell/v1.0/Modules") } })
+    : spawnSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" });
+  return result.status === 0 ? result.stdout || "" : "";
+}
+try {
+  let endpoint = "";
+  while (Date.now() - started < 60_000) {
+    if (app.exitCode !== null) throw new Error(`Installed app exited ${app.exitCode}: ${log}`);
+    try { const result = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1000) }); endpoint = (await result.json() as any).webSocketDebuggerUrl || ""; } catch {}
+    if (endpoint) break; await Bun.sleep(200);
+  }
+  if (!endpoint) throw new Error(`Installed app did not expose its renderer: ${log}`);
+  browser = await playwright.chromium.connectOverCDP(endpoint);
+  let page: any;
+  for (let attempt = 0; attempt < 100; attempt++) { page = browser.contexts().flatMap((context: any) => context.pages()).find((candidate: any) => candidate.url().startsWith("file:")); if (page) break; await Bun.sleep(100); }
+  if (!page) throw new Error("Installed app did not create its first-run page");
+  await page.getByRole("region", { name: "Connect a model" }).waitFor({ timeout: 30_000 });
+  await page.getByRole("button", { name: "Configure a model", exact: true }).waitFor();
+  const info = await page.evaluate(() => (window as any).rigwell.app.info());
+  if (expectedVersion && info.version !== expectedVersion) throw new Error(`Installed version ${info.version}, expected ${expectedVersion}`);
+  let evalTaskCount: number | undefined;
+  if (process.argv.includes("--require-eval-tasks")) {
+    const listed = spawnSync(bundledBun, [join(resources, "daemon/src/cli/main.ts"), "eval", "tasks"], { env, encoding: "utf8", windowsHide: true, timeout: 30_000 });
+    if (listed.status !== 0) throw new Error(`Installed CLI could not list bundled tasks: ${listed.stderr}`);
+    evalTaskCount = listed.stdout.trim().split(/\r?\n/).length;
+    if (evalTaskCount < 40 || !listed.stdout.includes("add-clamp\t")) throw new Error("Installed CLI task suite is incomplete");
+  }
+  observed = readDaemonInfo(home);
+  if (!observed?.ws || !await probeDaemon(observed.ws.url)) throw new Error("Bundled daemon did not answer");
+  if (!daemonCommandLine(observed.pid).toLowerCase().includes(bundledBun.toLowerCase())) throw new Error("Daemon is not running the installed bundled runtime");
+  const configuration = JSON.parse(readFileSync(join(home, "settings.json"), "utf8"));
+  if (configuration.customModels?.length || configuration.models?.length) throw new Error("First run imported unexpected model profiles");
+  if (checkWindowsProtocol) {
+    // Use the actual Windows URL association, rather than emitting an Electron
+    // event or directly executing the registered command ourselves.
+    const launched = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; Start-Process -FilePath 'rigwell://workstreams' -WindowStyle Hidden"], { env, encoding: "utf8", windowsHide: true, timeout: 15_000 });
+    if (launched.status !== 0) throw new Error(`Windows protocol launch: ${launched.stderr}`);
+    await page.waitForFunction(() => location.hash === "#/workstreams", undefined, { timeout: 15_000 });
+    await page.getByRole("heading", { name: "Workstreams", exact: true }).waitFor({ timeout: 15_000 });
+  }
+  const receipt = { status: "PASS", platform: process.platform, version: info.version, executable, resources, firstRun: "Connect a model", daemonReady: true, bundledRuntimePresent: true, emptyProfile: true, ...(evalTaskCount !== undefined ? { evalTaskCount } : {}), ...(checkWindowsProtocol ? { installedProtocolRegistration: true, windowsShellDeepLink: "rigwell://workstreams", observedRoute: "/workstreams" } : {}), elapsedMs: Date.now() - started };
+  writeFileSync(output, JSON.stringify(receipt, null, 2) + "\n"); console.log(JSON.stringify(receipt));
+} finally {
+  console.log("[installed acceptance] disconnecting CDP");
+  // Electron can close without answering CDP Browser.close, leaving that request
+  // unresolved forever after a successful probe. Disconnect the client instead.
+  if (browser) await Promise.race([browser.close().catch(() => {}), Bun.sleep(2000)]);
+  console.log("[installed acceptance] stopping owned app");
+  const running = () => app.exitCode === null && app.signalCode === null;
+  if (running()) app.kill();
+  for (let attempt = 0; attempt < 30 && running(); attempt++) await Bun.sleep(100);
+  if (running()) { app.kill("SIGKILL"); for (let attempt = 0; attempt < 20 && running(); attempt++) await Bun.sleep(100); }
+  if (running()) throw new Error("Owned installed app did not stop");
+  // Only stop the recorded daemon when the same profile still names that process
+  // and OS command-line evidence identifies this installed runtime.
+  const current = readDaemonInfo(home);
+  if (!observed && current && Date.parse(current.startedAt) >= started) observed = current;
+  if (observed && current?.pid === observed.pid && current.startedAt === observed.startedAt) {
+    const command = daemonCommandLine(current.pid);
+    if (command?.toLowerCase().includes(bundledBun.toLowerCase())) { try { process.kill(current.pid); } catch {} }
+  }
+  app.stdout!.destroy(); app.stderr!.destroy();
+  console.log("[installed acceptance] teardown complete");
+  if (!existsSync(output)) console.error(log);
+}

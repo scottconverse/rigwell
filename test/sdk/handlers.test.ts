@@ -136,11 +136,10 @@ const waitFor = async (pred: () => any, ms = 20000) => { const t0 = Date.now(); 
 test("a resumed session re-shows an open permission prompt and answers through answer_request", async () => {
   const { repo, d } = await daemon(write());
   try {
-    // Close the first client only once the prompt has reached it (a fixed wait was too short on a slow machine).
-    let asked = false;
-    const first = await connectToDaemon({ socketPath: d.socketPath, cwd: repo, modelId: MODEL, autonomyLevel: "low", onPermission: () => { asked = true; return new Promise(() => {}); } });
+    let promptOpen = false;
+    const first = await connectToDaemon({ socketPath: d.socketPath, cwd: repo, modelId: MODEL, autonomyLevel: "low", onPermission: () => { promptOpen = true; return new Promise(() => {}); } });
     void first.send("write it");
-    await waitFor(() => asked);
+    await waitFor(() => promptOpen);
     await (first as any).client.close(); // the client goes away with the prompt open
 
     const shown: any[] = [];
@@ -163,10 +162,10 @@ test("a resumed session re-shows an open permission prompt and answers through a
 test("a resumed session re-shows an open question; the answer reaches the model", async () => {
   const { repo, server, d } = await daemon(ask());
   try {
-    let asked = false;
-    const first = await connectToDaemon({ socketPath: d.socketPath, cwd: repo, modelId: MODEL, onAskUser: () => { asked = true; return new Promise(() => {}); } });
+    let promptOpen = false;
+    const first = await connectToDaemon({ socketPath: d.socketPath, cwd: repo, modelId: MODEL, onAskUser: () => { promptOpen = true; return new Promise(() => {}); } });
     void first.send("pick one");
-    await waitFor(() => asked);
+    await waitFor(() => promptOpen);
     await (first as any).client.close();
 
     const shown: any[] = [];

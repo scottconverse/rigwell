@@ -1,0 +1,28 @@
+job job-098 started on runner-6
+step 0: lint ok
+step 1: tests: 41 passed
+step 2: lint ok
+step 3: download 12MB
+step 4: lint ok
+step 5: download 12MB
+step 6: compile ok
+step 7: lint ok
+step 8: tests: 41 passed
+step 9: cache hit
+step 10: compile ok
+step 11: cache hit
+step 12: download 12MB
+step 13: lint ok
+step 14: download 12MB
+step 15: download 12MB
+step 16: lint ok
+step 17: lint ok
+step 18: download 12MB
+step 19: compile ok
+step 20: download 12MB
+step 21: cache hit
+step 22: lint ok
+step 23: lint ok
+step 24: cache hit
+STATUS: FAILED
+summary: see artifacts

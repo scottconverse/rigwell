@@ -7,6 +7,8 @@ import { bridge } from "../lib/rpc.ts";
 import { Dialog } from "./Dialogs.tsx";
 import { SetupDialog, TemplateDialog, VisualPanel } from "./AutomationExtras.tsx";
 import type { TemplateRow } from "../lib/templates.ts";
+import { externalKind } from "../../../src/automations/triggers/config.ts";
+import { AutomationTriggerStatus, EventTriggerFields, defaultEventTrigger } from "./AutomationTriggers.tsx";
 
 const POLL_MS = 3000;
 
@@ -72,7 +74,7 @@ export function Automations({ go }: { go(r: string): void }) {
           {shown.map((x) => (
             <tr key={x.id}>
               <td><button className="link" onClick={() => go(`/automations/${x.id}`)}>{x.name}</button></td>
-              <td className="small">{x.trigger === "webhook" ? "Webhook" : x.schedule}</td>
+              <td className="small">{x.trigger === "schedule" ? x.schedule : x.trigger}</td>
               <td><span className={`badge as-${x.status}`}>{statusLabel(x)}</span></td>
               <td className="small">{when(x.lastRunAt)}{x.lastRunStatus ? ` (${x.lastRunStatus})` : ""}</td>
               <td className="small">{x.paused ? "-" : when(x.nextRunAt)}</td>
@@ -98,6 +100,8 @@ function CreateDialog({ onClose, onCreated }: { onClose(): void; onCreated(id: s
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [secret, setSecret] = useState<{ id: string; secret: string }>();
+  const [machines, setMachines] = useState<{ name: string; build?: string }[]>([]);
+  useEffect(() => { void app.request("machine_list", {}).then((r) => setMachines(r.machines ?? [])).catch((e) => setError((e as Error).message)); }, []);
   const set = (p: Partial<CreateForm>) => setF((x) => ({ ...x, ...p }));
   const submit = async () => {
     const r = buildCreate(f);
@@ -120,9 +124,12 @@ function CreateDialog({ onClose, onCreated }: { onClose(): void; onCreated(id: s
   return (
     <Dialog title="New automation" onClose={onClose} wide>
       <label className="field"><span>Name</span><input aria-label="Name" value={f.name} onChange={(e) => set({ name: e.target.value })} /></label>
+      <label className="field"><span>Machine</span><select aria-label="Automation machine" value={f.machine ?? "local"} onChange={(e) => set({ machine: e.target.value, workingDirectory: "" })}><option value="local">Local</option>{machines.map((m) => <option key={m.name} value={m.name} disabled={!m.build}>{m.name}</option>)}</select></label>
       <div className="field"><span>Trigger</span>
         <div className="seg"><button className={f.trigger === "schedule" ? "on" : ""} onClick={() => set({ trigger: "schedule" })}>Schedule</button><button className={f.trigger === "webhook" ? "on" : ""} onClick={() => set({ trigger: "webhook" })}>Webhook</button></div>
+        <div className="seg">{(["github", "ci", "slack", "chained"] as const).map((kind) => <button key={kind} className={f.trigger === kind ? "on" : ""} onClick={() => set({ trigger: kind, eventTrigger: defaultEventTrigger(kind) })}>{({ github: "GitHub", ci: "CI", slack: "Slack", chained: "Chained" })[kind]}</button>)}</div>
       </div>
+      {externalKind(f.trigger) && <><EventTriggerFields key={f.trigger} kind={f.trigger} value={f.eventTrigger} onChange={(eventTrigger) => set({ eventTrigger })} /><label><input type="checkbox" checked={f.postResult === true} onChange={(e) => set({ postResult: e.target.checked })} />Allow posting run results back to the source</label></>}
       {f.trigger === "schedule" && (
         <div className="field"><span>Schedule</span>
           <select aria-label="Schedule" value={f.preset} onChange={(e) => set({ preset: e.target.value })}>{SCHEDULE_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</select>
@@ -130,7 +137,7 @@ function CreateDialog({ onClose, onCreated }: { onClose(): void; onCreated(id: s
         </div>
       )}
       <div className="field"><span>Project folder</span>
-        <div className="dlg-row"><input aria-label="Project folder" value={f.workingDirectory} onChange={(e) => set({ workingDirectory: e.target.value })} /><button onClick={() => void bridge().dialog.pickFolder().then((p) => p && set({ workingDirectory: p }))}>Browse</button></div>
+        <div className="dlg-row"><input aria-label="Project folder" value={f.workingDirectory} onChange={(e) => set({ workingDirectory: e.target.value })} />{(!f.machine || f.machine === "local") && <button onClick={() => void bridge().dialog.pickFolder().then((p) => p && set({ workingDirectory: p }))}>Browse</button>}</div>
       </div>
       <label className="field"><span>Instructions</span><textarea rows={6} aria-label="Instructions" value={f.instructions} onChange={(e) => set({ instructions: e.target.value })} placeholder="What should the agent do each time this runs?" /></label>
       {error && <div className="error-text" role="alert">{error}</div>}
@@ -167,13 +174,15 @@ export function AutomationDetail({ id, go }: { id: string; go(r: string): void }
       {note && <div className="banner small" role="status">{note}</div>}
       {!x.isValid && <div className="banner error" role="alert">{x.invalidReason ?? "This automation cannot run."}</div>}
       <dl className="facts">
-        <dt>Trigger</dt><dd>{x.trigger === "webhook" ? `Webhook ${x.webhookPath ?? ""}${x.webhookPort ? ` on port ${x.webhookPort}` : ""}` : "Schedule"}</dd>
+        <dt>Trigger</dt><dd>{x.webhookPath ? `Webhook ${x.webhookPath}${x.webhookPort ? ` on port ${x.webhookPort}` : ""}` : x.trigger}</dd>
         {x.schedule && <><dt>Schedule</dt><dd>{x.schedule}{x.timezone ? ` (${x.timezone})` : ""}</dd></>}
         <dt>Last run</dt><dd>{when(x.lastRunAt)}{x.lastRunStatus ? ` (${x.lastRunStatus})` : ""}</dd>
         <dt>Next run</dt><dd>{x.paused ? "Paused" : when(x.nextRunAt)}</dd>
         <dt>Runs</dt><dd>{x.runCount}</dd>
+        <dt>Machine</dt><dd>{x.machine ?? "Local"}</dd>
         {x.workingDirectory && <><dt>Folder</dt><dd className="mono">{x.workingDirectory}</dd></>}
       </dl>
+      <AutomationTriggerStatus automation={x} refresh={refresh} />
       <VisualPanel id={id} runs={runs} />
       <h2>Instructions</h2>
       <pre className="code-block">{x.instructions}</pre>
