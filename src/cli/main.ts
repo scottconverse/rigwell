@@ -2,13 +2,9 @@
 // rigwell CLI: `exec` (stdio JSON-RPC or a one-shot prompt) and `daemon` (many sessions over a Unix socket).
 import { join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
-import { installProcessCrashCapture, recordCrash } from "../diagnostics/reports.ts";
 import { rigwellHome } from "../storage/paths.ts";
-import { createConnection, type ConnectionOptions } from "../daemon/connection.ts";
-import { startDaemon, defaultSocketPath } from "../daemon/daemon.ts";
+import type { ConnectionOptions } from "../daemon/connection.ts";
 import type { AutonomyLevel } from "../core/types.ts";
-import { routedSessionList, forkRoutedSession } from "../machines/resume.ts";
-import { closeAllBrowsers } from "../browser/tools.ts";
 import { activeProfile, applyProfileOption, createLocalProfile, listLocalProfiles, profileRoot, updateLocalProfile } from "../storage/local-profiles.ts";
 
 const log = (m: string) => process.stderr.write(m + "\n");
@@ -112,6 +108,7 @@ function parseExec(argv: string[]): ExecArgs {
 
 /** `-r` without an id: a numbered list of sessions (newest first, pinned first), from list_sessions. */
 async function printSessionList(cwd: string, machine?: string) {
+  const { routedSessionList } = await import("../machines/resume.ts");
   const rows = await routedSessionList(cwd, machine);
   if (!rows.length) { process.stdout.write("No sessions to resume in this folder.\n"); return; }
   rows.forEach((r, i) => {
@@ -126,6 +123,7 @@ async function sessionToLoad(a: ExecArgs): Promise<string | undefined> {
   if (a.resume === true) { await printSessionList(a.cwd, a.machine); process.exit(0); }
   const id = (typeof a.resume === "string" ? a.resume : undefined) ?? a.sessionId;
   if (a.fork) {
+    const { forkRoutedSession } = await import("../machines/resume.ts");
     const id = await forkRoutedSession(a.fork, a.cwd, a.machine);
     log(`[fork] ${a.fork} -> ${id}`);
     return id;
@@ -162,6 +160,7 @@ async function execJsonRpc(a: ExecArgs) {
   if (a.inputFormat !== "stream-jsonrpc" || a.outputFormat !== "stream-jsonrpc") {
     fail("use both --input-format stream-jsonrpc and --output-format stream-jsonrpc, or pass a prompt");
   }
+  const { createConnection } = await import("../daemon/connection.ts");
   const conn = createConnection((line) => process.stdout.write(line), {
     canPrompt: true, runtimeSettingsPath: a.settings, log,
     forced: { autonomyLevel: a.auto, skipPermissions: a.skip || undefined, modelId: a.model, machine: a.machine },
@@ -174,6 +173,7 @@ async function execJsonRpc(a: ExecArgs) {
 
 /** One-shot prompt: drives a connection in-process and prints the assistant's text. Never prompts (spec §5.5.6). */
 async function execPrompt(a: ExecArgs) {
+  const { createConnection } = await import("../daemon/connection.ts");
   let reqN = 0;
   const waiters = new Map<string, (m: any) => void>();
   let turnDone: (reason: string) => void;
@@ -245,6 +245,7 @@ async function tui(argv: string[]) {
   const { runTui } = await import("../tui/app.ts");
   const { SocketTransport, WebSocketTransport } = await import("../sdk/transport.ts");
   const { readDaemonInfo } = await import("../sdk/session.ts");
+  const { defaultSocketPath } = await import("../daemon/daemon.ts");
   const url = val("--url");
   const socket = val("--socket");
   const makeTransport = async () => {
@@ -326,7 +327,9 @@ async function main() {
   if (cmd === "sync") return (await import("../sync/cli.ts")).syncMain(argv);
   if (cmd === "daemon") {
     daemonCommandActive = true;
+    const { installProcessCrashCapture } = await import("../diagnostics/reports.ts");
     installProcessCrashCapture(rigwellHome(), "daemon");
+    const { startDaemon, defaultSocketPath } = await import("../daemon/daemon.ts");
     const i = argv.indexOf("--socket");
     const path = i >= 0 ? resolve(argv[i + 1] ?? fail("--socket needs a value")) : defaultSocketPath();
     if (argv.includes("--stdio")) return (await import("../machines/stdio.ts")).bridgeDaemonStdio(path);
@@ -348,8 +351,12 @@ async function main() {
 }
 
 main().catch(async (e) => {
-  if (daemonCommandActive) recordCrash(rigwellHome(), "daemon", "startup", e);
+  if (daemonCommandActive) {
+    const { recordCrash } = await import("../diagnostics/reports.ts");
+    recordCrash(rigwellHome(), "daemon", "startup", e);
+  }
   log(`rigwell: ${(e as Error).message}`);
-  await closeAllBrowsers().catch((error) => log(`rigwell: browser cleanup failed: ${(error as Error).message}`));
+  await import("../browser/tools.ts").then(({ closeAllBrowsers }) => closeAllBrowsers())
+    .catch((error) => log(`rigwell: browser cleanup failed: ${(error as Error).message}`));
   process.exit(2);
 });
