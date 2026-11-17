@@ -9,6 +9,9 @@ import { makeStubSession } from "../agent/helpers.ts";
 import { streamWithRetry } from "../../src/adapters/retry.ts";
 import { createAutomationService, automationTools } from "../../src/automations/index.ts";
 import { tmpEnv } from "../storage/helpers.ts";
+import { createWorkstreamService } from "../../src/workstreams/index.ts";
+import { WorkstreamStore } from "../../src/workstreams/store.ts";
+import { until } from "../workstreams/helpers.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "rigwell-native-"));
 const fixture = join(dir, "client.js");
@@ -36,12 +39,23 @@ if(process.env.FAKE_BRIDGE){
   url=config.mcpServers.rigwell.url;token=config.mcpServers.rigwell.headers.Authorization.slice(7);
  }
  const call=async(method,params={})=>(await(await fetch(url,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})})).json());
+ if(process.env.FAKE_NEXT){
+  const current=prompt.split('Current user request:\\n').at(-1);
+  if(current==='VERIFY_NEXT_HISTORY'){
+   await Bun.write('native-history.txt',prompt);
+  }else if(current==='RUN_NEXT_WAIT'){
+   const first=await call('tools/call',{name:'WaitForEvents',arguments:{timeoutMs:5000}});
+   const second=await call('tools/call',{name:'ListAgents',arguments:{}});
+   await Bun.write('native-next.json',JSON.stringify({first:first.result.content,second:second.result.content}));
+  }
+ }else{
  const tool=process.env.FAKE_TOOL||(process.env.FAKE_ASK?'AskUser':'ListAgents');
  const listed=await call('tools/list');if(!listed.result.tools.some(t=>t.name===tool))process.exit(12);
  if(args[0]==='exec'&&!args.includes('mcp_servers.rigwell.tools.'+tool+'.approval_mode="approve"'))process.exit(14);
  const result=await call('tools/call',{name:tool,arguments:process.env.FAKE_INPUT?JSON.parse(process.env.FAKE_INPUT):process.env.FAKE_ASK?{questions:[{topic:'Fixture',question:'Which fixture?',options:['one','two']}]}:{}});
  if(process.env.FAKE_EXPECT_DENIED){if(!result.result.isError)process.exit(15)}
  else if(!result.result.content[0].text.includes(process.env.FAKE_EXPECT_TEXT||'fixture-roster'))process.exit(13);
+ }
 }
 if(process.env.ANTHROPIC_API_KEY||process.env.OPENAI_API_KEY)process.exit(9);
 if(process.env.FAKE_BAD){console.log('not-json');process.exit(0)}
@@ -74,6 +88,45 @@ if(args[0]==='exec'){
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const req = (backend: "claude-cli" | "codex-cli") => request(model(backend === "claude-cli" ? "anthropic" : "openai", "", { apiKey: undefined, executionBackend: backend }), [userMsg("Read and fix the requested file")], { nativeExecution: { cwd: dir, readOnly: false, skipPermissions: false } });
 const adapter = (env: NodeJS.ProcessEnv = {}) => new NativeCliAdapter({ command: [process.execPath, fixture], env: { ...process.env, ...env } });
+
+for (const backend of ["claude-cli", "codex-cli"] as const) {
+  test(`${backend}: a waiting native lead receives a Next body with its listener result, once`, async () => {
+    const env = tmpEnv();
+    const service = createWorkstreamService({ recover: false });
+    const request = async () => ({ selectedOption: "proceed_once" });
+    const s = makeStubSession(() => { throw new Error("native client only"); }, {
+      resolveModel: () => req(backend).model,
+      createAdapter: () => adapter({ FAKE_BRIDGE: "1", FAKE_NEXT: "1" }), streamWithRetry,
+      toolsFor: (_ctx) => attached.wrapTools([]),
+    }, { requestPermission: request });
+    const conn = { session: () => s.session, notify() {}, request };
+    const attached = service.attach(conn);
+    try {
+      const proposal = await service.propose(conn, { title: "Native handoff", goal: "Exchange task data", plan: "Wait for the next message" });
+      expect(proposal.accepted).toBe(true);
+      const store = new WorkstreamStore(proposal.workstreamId!);
+      service.listeners.create(store, "lead", { on: "message" });
+      s.session.addUserMessage("RUN_NEXT_WAIT");
+      await until(() => s.notes.some((n) => n.type === "tool_call" && n.toolUse.name === "WaitForEvents"));
+      const sent = attached.methods.workstream_send({ id: store.id, to: "lead", message: "UNIQUE_NEXT_BODY", priority: "next" });
+      const later = attached.methods.workstream_send({ id: store.id, to: "lead", message: "LATER_BODY", priority: "later" });
+      await s.session.idle();
+      const reply = await Bun.file(join(s.cwd, "native-next.json")).json();
+      expect(JSON.parse(reply.first[0].text).events[0].trigger.messageId).toBe(sent.messageId);
+      expect(JSON.stringify(reply.first).match(/UNIQUE_NEXT_BODY/g)).toHaveLength(1);
+      expect(JSON.stringify(reply.first)).not.toContain("LATER_BODY");
+      expect(JSON.stringify(reply.second)).not.toContain("UNIQUE_NEXT_BODY");
+      expect(s.session.uiMessages().filter((m) => m.id === sent.messageId)).toHaveLength(1);
+      expect(s.session.uiMessages().filter((m) => m.id === later.messageId)).toHaveLength(1);
+      s.session.addUserMessage("VERIFY_NEXT_HISTORY");
+      await s.session.idle();
+      expect((await Bun.file(join(s.cwd, "native-history.txt")).text()).match(/UNIQUE_NEXT_BODY/g)).toHaveLength(1);
+    } finally {
+      s.session.interrupt(true); await s.session.idle(); attached.close(); await service.stop();
+      env.cleanup(); rmSync(s.cwd, { recursive: true, force: true });
+    }
+  });
+}
 
 test("native command approval reaches the owning Session before execution", async () => {
   let approvals = 0;

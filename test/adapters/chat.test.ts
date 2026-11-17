@@ -111,6 +111,19 @@ describe("ChatCompletionsAdapter", () => {
     expect("reasoning_content" in off.messages[2]).toBe(false);
   });
 
+  test("does not serialize a reasoning-only turn as an empty assistant message before a handoff", () => {
+    const reasoning: Message = { id: "a", role: "assistant", content: [
+      { type: "thinking", thinking: "Plan the review", signatureProvider: "chat" },
+    ] };
+    const messages = [userMsg("Review the scheduler"), reasoning, userMsg("The contract is ready")];
+    const body = buildChatBody(request(M("http://x"), messages, { reasoningEffort: "low" }));
+    expect(body.messages).toEqual([
+      { role: "system", content: "identity line\n\nbase prompt" },
+      { role: "user", content: "Review the scheduler" },
+      { role: "user", content: "The contract is ready" },
+    ]);
+  });
+
   test("quirk profile: mistral replays thinking parts", () => {
     const msgs: Message[] = [userMsg("go"), { id: "a", role: "assistant", content: [
       { type: "thinking", thinking: "hmm", signature: '{"f":"reasoning_content"}', signatureProvider: "chat" },

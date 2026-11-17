@@ -821,6 +821,14 @@ export class Session {
   /** Messages accepted but not yet sent to the model (load_session queuedMessages). */
   queuedMessages(): QueuedUserMessage[] { return [...this.steer, ...this.queue]; }
 
+  private async recordSteering(entry: QueuedUserMessage) {
+    const message: Message = { id: entry.messageId, role: "user",
+      ...(entry.source ? { userMessageSource: entry.source } : {}),
+      content: entry.content ?? [{ type: "text", text: entry.text }] };
+    await this.push(message);
+    this.notify({ type: "create_message", message });
+  }
+
   /** Prompts the client has not answered (load_session pendingPermissions / pendingAskUserRequests). */
   pendingPrompts(): PendingPrompt[] { return [...this.prompts.values()]; }
 
@@ -1182,11 +1190,7 @@ export class Session {
           break;
         }
         // Steering (queuePlacement end_of_loop): delivered right after the tool results (spec 13.3).
-        for (const s of this.steer.splice(0)) {
-          const m: Message = { id: s.messageId, role: "user", content: s.content ?? [{ type: "text", text: s.text }] };
-          await this.push(m);
-          this.notify({ type: "create_message", message: m });
-        }
+        for (const s of this.steer.splice(0)) await this.recordSteering(s);
         if (n >= g.repeatStopAt) {
           await this.guardStop("guard_repeat_stop_user", "guard_repeat_stop_transcript", vars);
           break;
@@ -1617,6 +1621,16 @@ export class Session {
             }
           },
           tools: () => this.scriptTools().filter((t) => COORDINATION_TOOLS.has(t.name)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+          takeWorkstreamContext: async (callSignal: AbortSignal) => {
+            if (callSignal.aborted) return [];
+            const isWorkstream = (entry: QueuedUserMessage) => entry.source === "workstream_peer" || entry.source === "workstream_user" || entry.source === "workstream_listener";
+            const ready = this.steer.filter(isWorkstream);
+            if (!ready.length) return [];
+            this.steer = this.steer.filter((entry) => !isWorkstream(entry));
+            // A coordination response is the boundary we own inside a native client's turn.
+            for (const entry of ready) await this.recordSteering(entry);
+            return ready.map((entry) => entry.text);
+          },
           call: async (name: string, input: Record<string, unknown>, callSignal: AbortSignal) => {
             if (callSignal.aborted || signal?.aborted || !COORDINATION_TOOLS.has(name)) throw new Error("Coordination call is no longer available");
             const runId = `native-${crypto.randomUUID()}`, id = `${runId}-1`;

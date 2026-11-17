@@ -1,10 +1,10 @@
 # Rigwell user manual
 
-For Windows **0.4.1**, with Linux and macOS distributions remaining at **0.4.0**. See [0.4.1 release notes](release-0.4.1.md) for fixes and verification. Rigwell is a local workspace for AI-assisted coding: a desktop app, terminal interface and agent service, with persistent Workstreams, Missions, repository tools and review. You choose the model connection. Your machine runs the coordination service; a cloud model still receives the context sent to it.
+For Windows **0.4.2**, with Linux and macOS distributions remaining at **0.4.0**. See [0.4.2 release notes](release-0.4.2.md) for fixes and verification. Rigwell is a local workspace for AI-assisted coding: a desktop app, terminal interface and agent service, with persistent Workstreams, Missions, repository tools and review. You choose the model connection. Your machine runs the coordination service; a cloud model still receives the context sent to it.
 
 This manual covers first use, everyday work, nontechnical review, technical operation and architecture. Feature-specific reference guides are linked where more configuration detail is useful.
 
-**Known 0.4.1 limitation:** subscription-client Workstreams can receive a Next-message listener notification without the message body in model context, causing repeated handoffs and excess token use. The latest interactive exercise was paused before integration. See [message-delivery limits and recovery](workstreams.md#known-041-message-delivery-issue) before using this release for unattended multi-agent work. This defect remains unresolved in the published installer.
+**Workstream Next handoffs.** In 0.4.2, a signed-in lead waiting in a Rigwell coordination tool receives the full message body with the event. See [Workstream timing and recovery](workstreams.md#limits-and-recovery) for what happens when a client is using its own tools.
 
 ## Choose your starting point
 
@@ -34,11 +34,11 @@ Do not paste credentials into a chat or a repository file. Use Settings and the 
 
 ### Install and open
 
-Download the [signed Windows 0.4.1 installer](https://github.com/scottconverse/rigwell/releases/download/v0.4.1/rigwell-setup-0.4.1-x64.exe), or choose a Linux/macOS package from [0.4.0](https://github.com/scottconverse/rigwell/releases/tag/v0.4.0). Keep the release's checksum information with the installer.
+Download the [signed Windows 0.4.2 installer](https://github.com/scottconverse/rigwell/releases/download/v0.4.2/rigwell-setup-0.4.2-x64.exe), or choose a Linux/macOS package from [0.4.0](https://github.com/scottconverse/rigwell/releases/tag/v0.4.0). Keep the release's checksum information with the installer.
 
 | Platform | Installation | Current release qualification |
 | --- | --- | --- |
-| Windows x64, 0.4.1 | Run the setup executable. Choose the installation location, then open Rigwell from its shortcut. | The published installer has a verified Scott Converse signature and timestamp. The 0.4.1 patch passed clean-runner installation and a settings-preserving Halo upgrade; prior 0.4.0 signed upgrade/rollback evidence is retained. |
+| Windows x64, 0.4.2 | Run the setup executable. Choose the installation location, then open Rigwell from its shortcut. | Verify the Scott Converse signature and timestamp. The release notes record clean-runner installation and Workstream acceptance. |
 | Linux x64, 0.4.0 | Install the Debian package, or make the AppImage executable and open it. | Installed package checks and signed AppImage update/rollback have passed on disposable Linux runners. |
 | macOS arm64, 0.4.0 | Open the DMG and copy Rigwell.app to Applications. | Current artifacts are unsigned and not notarized. Installed runner checks passed; real Mac hardware acceptance remains unavailable. |
 
@@ -94,7 +94,7 @@ For a larger task, ask for a plan with checkpoints. State whether the agent may 
 - **Workstream or Mission proposal:** approves a plan for coordinated work. Read the goal, steps, workspace and limits.
 - **Push, pull request or review submission:** writes to a remote service. Check the branch, destination and text before confirming.
 
-Cancel when the operation differs from what you intended. Clarify the task in the conversation. Higher autonomy permits more actions without individual prompts; it does not establish that the agent's choices are correct. Subscription clients use their own native tool permissions, which differ from direct-adapter execution. In 0.4.1, unresolved Claude command approvals reach Rigwell's permission panel with the workspace and requested operation. Choose allow once or cancel; this does not change global client permissions. A native deny rule still applies. See [native permissions](auth.md#signed-in-coding-clients).
+Cancel when the operation differs from what you intended. Clarify the task in the conversation. Higher autonomy permits more actions without individual prompts; it does not establish that the agent's choices are correct. Subscription clients use their own native tool permissions, which differ from direct-adapter execution. In 0.4.2, unresolved Claude command approvals reach Rigwell's permission panel with the workspace and requested operation. Choose allow once or cancel; this does not change global client permissions. A native deny rule still applies. See [native permissions](auth.md#signed-in-coding-clients).
 
 ### Review without reading every line of code
 
@@ -125,7 +125,7 @@ A Workstream is persistent coordination around a goal. A lead session can propos
 5. Answer member questions and permission prompts. Pause or interrupt when you need control back.
 6. Review each member's branch and checks before integrating its work. Archiving is a separate action; review any cleanup confirmation.
 
-If you reload or reconnect a session view while its Workstream proposal is waiting, 0.4.1 restores that pending prompt while the daemon and session remain alive. Open the same session and answer the restored proposal instead of submitting another request. Cancelling a proposal prevents a late answer from creating it. An interrupted or restarted daemon can end an in-flight proposal; saved Workstreams and members have their own recovery lifecycle.
+If you reload or reconnect a session view while its Workstream proposal is waiting, 0.4.2 restores that pending prompt while the daemon and session remain alive. Open the same session and answer the restored proposal instead of submitting another request. Cancelling a proposal prevents a late answer from creating it. An interrupted or restarted daemon can end an in-flight proposal; saved Workstreams and members have their own recovery lifecycle.
 
 For subscription-client members, Rigwell carries native coordination call/result receipts into subsequent invocations so the lead can retain member identities and handoffs. Members still need explicit roles, file ownership and integration checks.
 
@@ -371,7 +371,7 @@ Local coordination does not mean every workflow is offline. Model requests, conf
 | Official client cannot be found | Its installation and optional absolute executable setting | Run that client's help/auth status locally; correct the path without changing provider or model |
 | Authentication or rate limit error | The selected account, provider entitlement and reported error | Reauthenticate through the proper client or wait for the account limit; do not repeatedly retry an uncertain coding action |
 | Local model will not load | Server URL, installed model, available RAM/VRAM and other model processes | Free appropriate resources or select a model that fits; preserve unrelated running work |
-| A Workstream proposal disappeared after a view reload | Same saved session and daemon state | Reopen the same session in 0.4.1; a still-pending proposal is restored. Check for an existing Workstream before proposing again |
+| A Workstream proposal disappeared after a view reload | Same saved session and daemon state | Reopen the same session in 0.4.2; a still-pending proposal is restored. Check for an existing Workstream before proposing again |
 | A native command reports approval is required | Native client deny rules, displayed Rigwell permission panel and account state | Review the exact request and allow once or cancel; do not switch models or enable permission skipping to bypass a refusal |
 | A permission prompt is waiting | Session, Inbox and Workstream member prompts | Approve only the intended operation, or cancel and clarify |
 | Workstream member appears idle | Its transcript, queued messages, questions and budget | Inspect the reason before resuming or increasing a limit |
@@ -384,7 +384,7 @@ Use **Report a bug** to create a local diagnostic archive. It is not uploaded au
 
 ## Limits of this release
 
-This is an early release. Windows 0.4.1 signing, clean-runner install, settings-preserving Halo upgrade and installed approval/reconnect checks are verified. Prior 0.4.0 signed update/rollback evidence is retained; a new interactive updater-dialog trial is not claimed. macOS artifacts remain unsigned and real Mac hardware acceptance is not claimed. Full long-session and model-family qualification is still being measured. Bedrock's documented adapter and fake coverage are available, but no owner-account live test was possible. Real connector registrations, remote hosts, phone networks and email delivery depend on the user's setup.
+This is an early release. See the 0.4.2 release notes for Windows signing, clean-runner install and the headless Dispatch Lab exercise. The 0.4.1 settings-preserving Halo upgrade and installed approval/reconnect checks remain historical evidence. macOS artifacts remain unsigned and real Mac hardware acceptance is still pending. Full long-session and model-family qualification is still being measured. Bedrock has fake coverage. Real connector registrations, remote hosts, phone networks and email delivery depend on the user's setup.
 
 The current evaluation subsystem is smaller than Stax. Compatibility with real Stax exports has not been verified. A hosted Stax option and later open-source reuse assessment belong to the [next-version list](next-version.md), not this release.
 
@@ -405,7 +405,7 @@ The current evaluation subsystem is smaller than Stax. Compatibility with real S
 
 ## Reference library
 
-For the current patch: [0.4.1 release notes](release-0.4.1.md).
+For the current patch: [0.4.2 release notes](release-0.4.2.md).
 
 For installation and daily use: [Install](install.md), [Authentication](auth.md), [Desktop](desktop.md), [Review](review.md), [Clients](clients.md).
 

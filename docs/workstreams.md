@@ -44,6 +44,13 @@ attention, but do not approve anything on your behalf.
 
 ## Limits and recovery
 
+Starting with Windows 0.4.2, a signed-in client's next successful Rigwell coordination
+tool response carries any waiting Next handoffs and listener reminders.
+For example, a lead waiting in `WaitForEvents` receives the message body
+with the event. If the client only uses its own tools, Rigwell hands off the
+message after that native invocation returns. The bridge cannot insert
+messages between calls that the signed-in client makes internally.
+
 ### Known 0.4.1 message-delivery issue
 
 A live Windows walkthrough reproduced a subscription-client handoff issue:
@@ -52,19 +59,18 @@ the message body in its model context. A **Delivered** label does not establish
 that the model received or acted on that body. Repeated acknowledgments can
 consume the token budget without advancing the task. **Now** messages delivered
 the bodies in the observed run, but interrupt the active turn and are only a
-temporary recovery option. This issue is not fixed in the published 0.4.1 binary.
+temporary recovery option. Upgrade Windows to [0.4.2](release-0.4.2.md) for the fix.
 
 If members repeatedly request the same contract, pause the Workstream and
 inspect its messages and transcripts. Preserve worktrees; do not start duplicate
-members or treat the missing acknowledgment as approval. The latest interactive
-exercise was paused before integration, so it is not passing end-to-end evidence.
+members or treat the missing acknowledgment as approval.
 
 Token totals can include repeated cached input. Cost remains unpriced when the
 profile has no price data; an absent or zero estimate is not a measured cash
 charge. A reached budget pauses work. Only the user can change a budget or
 resume after that pause; a still-reached limit must be raised or removed.
 
-In **0.4.1**, a pending proposal reappears after reconnecting the view to its
+Since **0.4.1**, a pending proposal reappears after reconnecting the view to its
 still-live daemon Session. Open that same saved session and answer the restored
 prompt. Cancellation or resolution invalidates late answers. Do not create a
 duplicate Workstream just because a view disconnected.
@@ -77,8 +83,8 @@ repositories. A profile backup does not include those repositories or external
 credential stores automatically.
 
 Both supported subscription clients use Rigwell's coordination bridge while
-retaining their native coding tools. In 0.4.1 their coordination receipts are
+retaining their native coding tools. Since 0.4.1 their coordination receipts have been
 included in subsequent native invocations. Claude's unresolved native approval
 requests reach Rigwell's permission panel; native deny rules still apply. See
-[authentication](auth.md) for execution boundaries and [0.4.1 release notes](release-0.4.1.md)
+[authentication](auth.md) for execution boundaries and [0.4.2 release notes](release-0.4.2.md)
 for installed verification and limits.

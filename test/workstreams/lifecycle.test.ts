@@ -114,12 +114,13 @@ test("hard daemon-owner restart retains session identity, interrupted status, qu
   process.env.RIGWELL_HOME = makeHome([{ provider: "anthropic", url: fake.url, displayName: "Fixture" }]);
   const cwd = tmp("ws-crash"), file = join(cwd, "ready.json");
   const child = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/crash-member.ts")], { env: { ...process.env, FIXTURE_CWD: cwd, FIXTURE_READY: file }, stdout: "pipe", stderr: "pipe" });
+  const childLog = new Response(child.stderr).text();
   let recovered: ReturnType<typeof createWorkstreamService> | undefined;
   let daemon: Awaited<ReturnType<typeof startDaemon>> | undefined;
   const listenerLog: string[] = [];
   try {
-    await until(() => existsSync(file + ".phase"));
-    await until(() => readFileSync(file + ".phase", "utf8") === "proposal");
+    await until(() => existsSync(file + ".daemon"));
+    await until(() => existsSync(file + ".proposal"));
     await until(() => existsSync(file));
     const { workstreamId, agent, queued } = JSON.parse(readFileSync(file, "utf8"));
     child.kill(9); await child.exited;
@@ -141,6 +142,11 @@ test("hard daemon-owner restart retains session identity, interrupted status, qu
     expect(session.uiMessages().filter((m) => m.id === queued.messageId)).toHaveLength(1);
     expect(store.messages().find((m) => m.id === queued.messageId)?.readAt).toBeTruthy();
     expect(store.events().some((e) => e.type === "listener_wake_delivered" && e.owner === agent.agentId)).toBe(true);
+  } catch (error) {
+    if (child.exitCode === null) child.kill(9);
+    await child.exited;
+    console.error("Crash fixture diagnostics", await childLog);
+    throw error;
   } finally { if (child.exitCode === null) child.kill(9); await child.exited; await recovered?.stop(); daemon?.stop(); fake.stop(); }
 }, 15_000);
 

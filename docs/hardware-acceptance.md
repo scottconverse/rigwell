@@ -29,4 +29,6 @@ Real macOS hardware is unavailable; the owner requested continued work without i
 
 Release follow-up: signed Windows installation, version upgrade and rollback passed in run 43731720393 on corrected runtime 59dc19d; empty-profile installed checks and all 43 bundled tasks passed. Decision 505 adds a runner-only check for registry registration before first launch and actual Windows-shell URL delivery. The corrected installer registration and actual Windows-shell Workstreams route passed in run `43742095548`; signed update, routing and rollback passed in `43743716936`. This supplements the earlier native event-handler probe without taking over Halo.
 
-Current Windows patch: [0.4.1](release-0.4.1.md) passed a settings-preserving signed Halo upgrade, installed approval/proposal-reconnect checks and clean-runner installation. Its installed verification was headless. The broader 0.4.0 native probe and signed rollback evidence above remain historical evidence, rather than a new interactive 0.4.1 trial.
+Previous Windows patch: [0.4.1](release-0.4.1.md) passed a settings-preserving signed Halo upgrade, installed approval/proposal-reconnect checks and clean-runner installation. Its installed verification was headless. The broader 0.4.0 native probe and signed rollback evidence above remain historical evidence, rather than a new interactive 0.4.1 trial.
+
+The [Windows 0.4.2 release notes](release-0.4.2.md) record the current package and headless Workstream acceptance.
