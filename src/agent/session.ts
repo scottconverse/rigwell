@@ -72,7 +72,7 @@ export class SessionBusyError extends Error {
 export type TurnReason =
   | "completed" | "cancelled" | "permission_rejected" | "error" | "no_approver_available" | "prompt_rejected"
   | "model_authentication_failed" | "model_request_rejected" | "model_provider_unreachable"
-  | "model_provider_unavailable" | "model_rate_limited"
+  | "model_provider_unavailable" | "model_rate_limited" | "model_output_limit"
   | "structured_output_missing" | "structured_output_invalid" | "structured_output_schema_invalid"
   /** ExitSpecMode was approved with a handoff option: this session ends, a new one starts with the spec as its brief. */
   | "spec_handoff";
@@ -101,7 +101,7 @@ export interface PendingPrompt {
 }
 
 /** A user message waiting for its turn. */
-export interface QueuedUserMessage { text: string; messageId: string; source?: string; content?: ContentBlock[]; outputFormat?: OutputFormat | null }
+export interface QueuedUserMessage { text: string; messageId: string; source?: string; content?: ContentBlock[]; outputFormat?: OutputFormat | null; steerAtBoundary?: true }
 
 /** What a session needs from the connection that owns it. */
 export interface SessionHost {
@@ -809,7 +809,7 @@ export class Session {
   ) {
     if (this.fleetStopping || fleetIsStopping(this.fleetHome)) throw new Error("This machine is stopping its sessions; try again after it finishes.");
     const entry: QueuedUserMessage = {
-      text, messageId, ...(source ? { source } : {}), ...(opts.content?.length ? { content: opts.content } : {}), ...(opts.outputFormat !== undefined ? { outputFormat: opts.outputFormat } : {}),
+      text, messageId, ...(source ? { source } : {}), ...(opts.placement === "end_of_loop" ? { steerAtBoundary: true } : {}), ...(opts.content?.length ? { content: opts.content } : {}), ...(opts.outputFormat !== undefined ? { outputFormat: opts.outputFormat } : {}),
     };
     // end_of_loop while a turn runs is steering: it is delivered after the next tool call batch (spec 13.3).
     if (opts.placement === "now") { this.interrupt(); this.queue.unshift(entry); }
@@ -1092,6 +1092,7 @@ export class Session {
 
       const repeat = new RepeatTracker();
       let emptyStreak = 0;
+      let outputLimitNudged = false;
       while (!blocked) {
         if (signal.aborted) { reason = "cancelled"; break; }
         await this.maybeAutoCompact(signal);
@@ -1122,6 +1123,18 @@ export class Session {
 
         const calls = content.filter((b): b is ToolUseBlock => b.type === "tool_use");
         if (signal.aborted && !calls.length) { reason = "cancelled"; break; }
+        if (!calls.length && done.stopReason === "max_tokens") {
+          if (outputLimitNudged) {
+            reason = "model_output_limit";
+            await this.guardStop("guard_output_limit_stop_user", "guard_output_limit_stop_transcript", {});
+            break;
+          }
+          outputLimitNudged = true;
+          this.notify({ type: "llm_retry", attempt: 1, reason: "output_limit" });
+          await this.push({ id: `nudge-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: guardText("guard_output_limit_nudge") }] });
+          continue;
+        }
+        if (calls.length) outputLimitNudged = false;
         if (!calls.length && texts.trim() === "") {
           // No visible output (empty or thinking only): a one-word nudge each time, stop after emptyTurnStop in a row (spec 4.2).
           emptyStreak++;
@@ -1623,13 +1636,19 @@ export class Session {
           tools: () => this.scriptTools().filter((t) => COORDINATION_TOOLS.has(t.name)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
           takeWorkstreamContext: async (callSignal: AbortSignal) => {
             if (callSignal.aborted) return [];
-            const isWorkstream = (entry: QueuedUserMessage) => entry.source === "workstream_peer" || entry.source === "workstream_user" || entry.source === "workstream_listener";
-            const ready = this.steer.filter(isWorkstream);
+            const isWorkstreamNext = (entry: QueuedUserMessage) => entry.steerAtBoundary &&
+              (entry.source === "workstream_peer" || entry.source === "workstream_user" || entry.source === "workstream_listener");
+            // After a native invocation ends, its steering moves to the regular queue. Keep the remaining
+            // Next messages eligible for a coordination response during the invocation that dequeues the first.
+            const ready = [...this.queue.filter(isWorkstreamNext), ...this.steer.filter(isWorkstreamNext)];
             if (!ready.length) return [];
-            this.steer = this.steer.filter((entry) => !isWorkstream(entry));
-            // A coordination response is the boundary we own inside a native client's turn.
+            this.queue = this.queue.filter((entry) => !isWorkstreamNext(entry));
+            this.steer = this.steer.filter((entry) => !isWorkstreamNext(entry));
             for (const entry of ready) await this.recordSteering(entry);
-            return ready.map((entry) => entry.text);
+            return ready.map((entry) => ({ id: entry.messageId, text: entry.text }));
+          },
+          workstreamSubmitted: (messageIds: string[], boundary: "coordination" | "stdin") => {
+            if (messageIds.length) this.notify({ type: "native_workstream_submitted", messageIds, boundary });
           },
           call: async (name: string, input: Record<string, unknown>, callSignal: AbortSignal) => {
             if (callSignal.aborted || signal?.aborted || !COORDINATION_TOOLS.has(name)) throw new Error("Coordination call is no longer available");

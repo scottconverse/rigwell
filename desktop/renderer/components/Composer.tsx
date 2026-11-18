@@ -131,8 +131,9 @@ export function Composer(props: {
       lastEsc.current = now;
       return true;
     }
-    if (e.key === "Tab" && e.shiftKey && !off("spec")) { e.preventDefault(); props.onChange({ interactionMode: s.interactionMode === "spec" ? "auto" : "spec" }); return true; }
-    if (e.key === "Tab" && !e.shiftKey && !off("reasoning")) { e.preventDefault(); props.onChange({ reasoningEffort: cycle(REASONING, s.reasoningEffort) }); return true; }
+    const composerShortcut = e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey;
+    if (composerShortcut && e.key.toLowerCase() === "m" && !off("spec")) { e.preventDefault(); props.onChange({ interactionMode: s.interactionMode === "spec" ? "auto" : "spec" }); return true; }
+    if (composerShortcut && e.key.toLowerCase() === "r" && !off("reasoning")) { e.preventDefault(); props.onChange({ reasoningEffort: cycle(REASONING, s.reasoningEffort) }); return true; }
     if (e.key === "l" && e.ctrlKey && !off("autonomy")) { e.preventDefault(); props.onChange({ autonomyLevel: cycle(AUTONOMY, s.autonomyLevel === "off" ? "high" : s.autonomyLevel) }); return true; }
     if (e.key === "?" && !(editor?.getText() ?? text)) { e.preventDefault(); setHelp(true); return true; }
     return false;
@@ -164,7 +165,7 @@ export function Composer(props: {
           Autonomy: {s.autonomyLevel ?? "off"}
         </button>
         <div className="chip-wrap">
-          <button className="chip" aria-haspopup="menu" aria-expanded={modeOpen} title="Mode: Normal, Spec (Shift+Tab) or Mission" onClick={() => setModeOpen(!modeOpen)}>{MODE_LABEL[s.interactionMode ?? "auto"] ?? "Normal"}</button>
+          <button className="chip" aria-haspopup="menu" aria-expanded={modeOpen} title="Mode: Normal, Spec (Ctrl+Alt+M) or Mission" onClick={() => setModeOpen(!modeOpen)}>{MODE_LABEL[s.interactionMode ?? "auto"] ?? "Normal"}</button>
           {modeOpen && (
             <div className="menu" role="menu" aria-label="Mode">
               {MODES.map((m) => (
@@ -175,7 +176,7 @@ export function Composer(props: {
             </div>
           )}
         </div>
-        <button className="chip" title="Reasoning (Tab)" onClick={() => props.onChange({ reasoningEffort: cycle(REASONING, s.reasoningEffort) })}>Reasoning: {s.reasoningEffort ?? "high"}</button>
+        <button className="chip" title="Reasoning (Ctrl+Alt+R)" onClick={() => props.onChange({ reasoningEffort: cycle(REASONING, s.reasoningEffort) })}>Reasoning: {s.reasoningEffort ?? "high"}</button>
         {props.session && <button className="chip" onClick={() => setDialog("connectors")} title="MCP servers">Connectors</button>}
         <button className="chip" onClick={() => setDialog("skills")} title="Skills">Skills</button>
         <DictateButton shortcut={!off("dictation")} disabled={props.disabled} onText={(t) => { editor?.chain().focus().insertContent(t).run(); setText(editor?.getText({ blockSeparator: "\n" }) ?? t); }} />
@@ -195,7 +196,7 @@ export function Composer(props: {
             <ul>
               <li><kbd>Enter</kbd> send, <kbd>Shift+Enter</kbd> new line</li>
               <li><kbd>Esc</kbd> stop, <kbd>Esc Esc</kbd> clear</li>
-              <li><kbd>Shift+Tab</kbd> toggle Spec mode, <kbd>Tab</kbd> cycle reasoning, <kbd>Ctrl+L</kbd> cycle autonomy</li>
+              <li><kbd>Ctrl+Alt+M</kbd> toggle Spec mode, <kbd>Ctrl+Alt+R</kbd> cycle reasoning, <kbd>Ctrl+L</kbd> cycle autonomy</li>
               <li><kbd>Ctrl+K</kbd> palette, <kbd>Ctrl+P</kbd> files, <kbd>Ctrl+J</kbd> terminal, <kbd>Shift+Ctrl+B</kbd> browser, <kbd>Alt+Ctrl+S</kbd> side chat</li>
             </ul>
             <p className="muted">Autonomy: {Object.entries(AUTONOMY_TIPS).map(([k, v]) => `${k}: ${v}`).join(". ")}.</p>

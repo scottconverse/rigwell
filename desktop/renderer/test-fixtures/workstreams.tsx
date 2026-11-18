@@ -4,6 +4,7 @@ import { Workstreams } from "../components/Workstreams.tsx";
 import { live } from "../components/SessionScreen.tsx";
 import { app } from "../lib/app-model.ts";
 import { SessionController } from "../lib/session.ts";
+import { Composer, type ComposerSettings } from "../components/Composer.tsx";
 import { Prompts } from "../components/Prompts.tsx";
 
 const sockets = new Map<number, WebSocket>(); let seq = 0;
@@ -29,7 +30,16 @@ function Fixture() {
 }
 function Proposal() {
   const [ctl, setCtl] = useState<SessionController>();
-  return <><button onClick={() => void (async () => { const c = ctl ?? await SessionController.create({ cwd: (window as any).fixtureCwd, modelId: "custom:Fake-Anthropic-0", autonomyLevel: "low" }); setCtl(c); await c.send("PROPOSE"); })()}>Propose workstream</button>{ctl && <ProposalPrompts ctl={ctl} />}</>;
+  const profile = { id: "custom:Fake-Anthropic-0", displayName: "Test profile" };
+  const [settings, setSettings] = useState<ComposerSettings>({ modelId: profile.id, autonomyLevel: "low" });
+  return <>
+    {ctl && <ProposalPrompts ctl={ctl} />}
+    <Composer models={[profile]} settings={settings} busy={false} onStop={() => {}} onChange={(patch) => setSettings((value) => ({ ...value, ...patch }))}
+      onSend={(text) => void (async () => {
+        const c = ctl ?? await SessionController.create({ ...settings, cwd: (window as any).fixtureCwd });
+        setCtl(c); await c.send(text);
+      })()} />
+  </>;
 }
 function ProposalPrompts({ ctl }: { ctl: SessionController }) {
   const s = useSyncExternalStore(ctl.subscribe, ctl.getSnapshot);

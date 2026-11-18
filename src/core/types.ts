@@ -142,7 +142,8 @@ export interface ModelRequest {
       tools(): ToolSpec[];
       requestNativePermission?(name: string, input: Record<string, unknown>, signal: AbortSignal): Promise<{ behavior: "allow" } | { behavior: "deny"; message: string }>;
       call(name: string, input: Record<string, unknown>, signal: AbortSignal): Promise<ToolOutput>;
-      takeWorkstreamContext?(signal: AbortSignal): Promise<string[]>;
+      takeWorkstreamContext?(signal: AbortSignal): Promise<{ id: string; text: string }[]>;
+      workstreamSubmitted?(messageIds: string[], boundary: "coordination" | "stdin"): void;
     };
   };
   /**

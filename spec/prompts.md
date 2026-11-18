@@ -869,6 +869,26 @@ Stopped: the model returned no output {{COUNT}} times in a row.
 [Your previous turn was ended by the harness after {{COUNT}} responses in a row with no output. Respond to the next message normally.]
 ~~~~
 
+### 7.1.1 Output limit
+
+If a response reaches the model output limit without a tool call, direct one recovery
+attempt toward the next concrete action. A second cap without tool progress ends the turn.
+
+<!-- measure: guard_output_limit_nudge -->
+~~~~text
+<system-reminder>Your previous response reached the model output limit. Use the work already done. Take the smallest unfinished action immediately: if a tool or Workstream reply is required, call that tool now with concise arguments. For a long file, write or edit it in small pieces. If the task only needs an answer, give a brief complete answer. Avoid restating the plan or repeating analysis.</system-reminder>
+~~~~
+
+<!-- measure: guard_output_limit_stop_user -->
+~~~~text
+Stopped: the model reached its output limit twice without completing the next action.
+~~~~
+
+<!-- measure: guard_output_limit_stop_transcript -->
+~~~~text
+[The model reached its output limit twice without tool progress. The turn stopped before its answer could be confirmed complete.]
+~~~~
+
 ### 7.2 Repeated identical tool calls
 
 - **When:** the same batch of tool calls (same names, same arguments) with the same results. Nudge at

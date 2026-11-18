@@ -112,26 +112,34 @@ test("token budget accounts for cached tokens, pauses and requires a changed bud
 test("hard daemon-owner restart retains session identity, interrupted status, queued messages and rearmed listeners", async () => {
   const fake = await startFakeAnthropic(Array.from({ length: 40 }, () => busy));
   process.env.RIGWELL_HOME = makeHome([{ provider: "anthropic", url: fake.url, displayName: "Fixture" }]);
-  const cwd = tmp("ws-crash"), file = join(cwd, "ready.json");
-  const child = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/crash-member.ts")], { env: { ...process.env, FIXTURE_CWD: cwd, FIXTURE_READY: file }, stdout: "pipe", stderr: "pipe" });
+  const cwd = tmp("ws-crash");
+  const ready = Promise.withResolvers<{ workstreamId: string; agentId: string; sessionId: string; messageId: string }>();
+  const child = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/crash-member.ts")], {
+    env: { ...process.env, FIXTURE_CWD: cwd },
+    stdout: "ignore", stderr: "pipe",
+    ipc(message) { ready.resolve(message); },
+  });
+  // Share the existing three setup windows across actual startup work. The recovery test still has its 15 s deadline.
+  const setupDeadline = setTimeout(() => ready.reject(new Error("Crash fixture never reached the pending member prompt")), 9_000);
   const childLog = new Response(child.stderr).text();
   let recovered: ReturnType<typeof createWorkstreamService> | undefined;
   let daemon: Awaited<ReturnType<typeof startDaemon>> | undefined;
   const listenerLog: string[] = [];
   try {
-    await until(() => existsSync(file + ".daemon"));
-    await until(() => existsSync(file + ".proposal"));
-    await until(() => existsSync(file));
-    const { workstreamId, agent, queued } = JSON.parse(readFileSync(file, "utf8"));
+    const { workstreamId, agentId, sessionId, messageId } = await Promise.race([
+      ready.promise,
+      child.exited.then((code) => { throw new Error(`Crash fixture exited before it was ready (${code})`); }),
+    ]);
+    clearTimeout(setupDeadline);
     child.kill(9); await child.exited;
     const store = new WorkstreamStore(workstreamId);
-    expect(store.agent(agent.agentId)!.status).toBe("waiting_input");
+    expect(store.agent(agentId)!.status).toBe("waiting_input");
     daemon = await startDaemon({ socketPath: join(cwd, "daemon.sock"), automations: false, sidepane: false, ws: false, log: (line) => listenerLog.push(line) });
     recovered = daemon.workstreams;
-    expect(store.agent(agent.agentId)!.status).toBe("interrupted"); expect(store.read().state).toBe("paused");
-    const session = recovered.members.get(agent.agentId)!.connection.session!;
-    expect(session.id).toBe(agent.sessionId); expect(session.pendingPrompts()).toHaveLength(0);
-    expect(store.messages().find((m) => m.id === queued.messageId)?.deliveredAt).toBeUndefined();
+    expect(store.agent(agentId)!.status).toBe("interrupted"); expect(store.read().state).toBe("paused");
+    const session = recovered.members.get(agentId)!.connection.session!;
+    expect(session.id).toBe(sessionId); expect(session.pendingPrompts()).toHaveLength(0);
+    expect(store.messages().find((m) => m.id === messageId)?.deliveredAt).toBeUndefined();
     writeFileSync(store.path("shared/restarted.txt"), "Watch after restart");
     try { await until(() => store.events().some((e) => e.type === "listener_fired" && e.on === "file_changed")); }
     catch (error) {
@@ -139,15 +147,15 @@ test("hard daemon-owner restart retains session identity, interrupted status, qu
       throw error;
     }
     await recovered.resume(store.id); await session.idle();
-    expect(session.uiMessages().filter((m) => m.id === queued.messageId)).toHaveLength(1);
-    expect(store.messages().find((m) => m.id === queued.messageId)?.readAt).toBeTruthy();
-    expect(store.events().some((e) => e.type === "listener_wake_delivered" && e.owner === agent.agentId)).toBe(true);
+    expect(session.uiMessages().filter((m) => m.id === messageId)).toHaveLength(1);
+    expect(store.messages().find((m) => m.id === messageId)?.readAt).toBeTruthy();
+    expect(store.events().some((e) => e.type === "listener_wake_delivered" && e.owner === agentId)).toBe(true);
   } catch (error) {
     if (child.exitCode === null) child.kill(9);
     await child.exited;
     console.error("Crash fixture diagnostics", await childLog);
     throw error;
-  } finally { if (child.exitCode === null) child.kill(9); await child.exited; await recovered?.stop(); daemon?.stop(); fake.stop(); }
+  } finally { clearTimeout(setupDeadline); if (child.exitCode === null) child.kill(9); await child.exited; await recovered?.stop(); daemon?.stop(); fake.stop(); }
 }, 15_000);
 
 test("cost budget refuses unpriced requests and uses explicit per-model cache prices", async () => {

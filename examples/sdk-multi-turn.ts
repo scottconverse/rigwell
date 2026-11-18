@@ -5,17 +5,9 @@
 // The model must be configured in ~/.rigwell/settings.json (customModels). With --daemon-url the session runs
 // inside a running `rigwell daemon` (the token is read from $RIGWELL_HOME/daemon.json); otherwise the SDK
 // spawns `rigwell exec --input-format stream-jsonrpc --output-format stream-jsonrpc` itself.
-import { connectToDaemon, createSession, type PermissionRequest, type RigwellSession } from "../src/sdk/index.ts";
+import { connectToDaemon, createSession, type RigwellSession } from "../src/sdk/index.ts";
 
 const arg = (name: string) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
-
-// Called for every rigwell.request_permission the harness sends. Without this handler the SDK answers "cancel".
-function onPermission(req: PermissionRequest) {
-  const use = req.toolUses[0];
-  console.log(`\n[permission] ${use.confirmationType}: ${use.details.fullCommand ?? use.details.filePath ?? use.toolUse.name}`);
-  // Allow once. Offered values: proceed_once, proceed_always, cancel.
-  return { selectedOption: req.options.some((o) => o.value === "proceed_once") ? "proceed_once" : "cancel" };
-}
 
 // A custom MCP server attached to the session (initialize_session mcpServers). Its tools are deferred: the model
 // loads them with load_tools and calls them with call_tool, or inside a Script as tools.my_tools.<name>(...).
@@ -25,8 +17,8 @@ const mcpServers = [{ name: "my-tools", command: "bun", args: [new URL("../test/
 const common = {
   cwd: process.cwd(),
   modelId: arg("--model"),
-  autonomyLevel: "low" as const,
-  onPermission,
+  autonomyLevel: "off" as const,
+  // Without a permission handler, the SDK cancels individual permission requests.
   initParams: { mcpServers },
   // ask_user and pick_options default to "cancelled" unless you pass onAskUser / onPickOptions.
 };
@@ -44,7 +36,7 @@ async function turn(prompt: string) {
   }
 }
 
-await turn("List the files in this folder using a command, then summarise what the project is.");
+await turn("Read the project documentation and summarise what the project is. Do not edit or run commands.");
 await turn("Which of those files would you read first, and why?");
 await turn("Load the my-tools__echo tool and call it with the text \"hello\", then tell me what it returned.");
 

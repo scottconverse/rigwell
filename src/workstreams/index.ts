@@ -107,7 +107,7 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
     }
     return { workstream };
   }
-  function checkBudget(store: WorkstreamStore) { const reason = reached(store); if (reason && store.read().state === "active") pause(store.id, reason, true); }
+  function checkBudget(store: WorkstreamStore) { const w = store.read(), reason = reached(w, store.roster()); if (reason && w.state === "active") pause(store.id, reason, true); }
   function flushWakes(store: WorkstreamStore, owner: string) {
     if (store.read().state !== "active") return;
     const session = recipientSession(store, owner); if (!session) return;
@@ -122,16 +122,23 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
   async function resume(id: string, input: Record<string, unknown> = {}) {
     const store = new WorkstreamStore(id);
     enforceWorkstreamPolicy(store, true);
-    if (store.read().state !== "paused") throw new Error("Workstream is not paused");
-    if (Object.hasOwn(input, "budget")) store.update({ budget: budgetFrom(input.budget) });
-    const prices = pricesFor(store);
-    for (const row of store.roster()) if (row.usageByModel) {
-      const totals = usageTotals(row.usageByModel, prices);
-      store.updateAgent(row.agentId, totals);
-      if (store.read().budget?.maxCostUsd !== undefined && !totals.costKnown) throw new Error("Cost budget cannot resume with unpriced model usage");
+    const current = store.read();
+    if (current.state !== "paused") throw new Error("Workstream is not paused");
+    const rejection = (message: string) => new RpcError(ErrorCodes.INVALID_PARAMS, message, { budgetSaved: false, state: current.state });
+    let budget = current.budget;
+    try {
+      if (Object.hasOwn(input, "budget")) budget = budgetFrom(input.budget);
+    } catch (e) {
+      throw rejection((e as Error).message);
     }
-    if (reached(store)) throw new Error("The budget is still reached; raise or remove it before resuming");
-    const workstream = store.update({ state: "active" });
+    const prices = pricesFor(store);
+    const roster = store.roster().map((row) => row.usageByModel ? { ...row, ...usageTotals(row.usageByModel, prices) } : row);
+    if (budget?.maxCostUsd !== undefined && roster.some((row) => row.usageByModel && row.costKnown === false)) throw rejection("Cost budget cannot resume with unpriced model usage");
+    if (reached({ ...current, budget }, roster)) throw rejection("The budget is still reached; raise or remove it before resuming");
+    for (const { agentId, usageByModel, tokens, costUsd, costKnown } of roster) {
+      if (usageByModel) store.updateAgent(agentId, { tokens, costUsd, costKnown });
+    }
+    const workstream = store.update({ budget, state: "active" });
     store.event("workstream_resumed"); notify(store, "workstream_updated", { workstream });
     admission.pump();
     for (const row of store.roster()) {
@@ -236,6 +243,14 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
     const store = actorStore(session.id); if (!store) return;
     const to = session.id === store.read().leadSessionId ? "lead" : store.roster().find((a) => a.sessionId === session.id)?.agentId;
     if (!to) return;
+    if (notification.type === "native_workstream_submitted" && Array.isArray(notification.messageIds)) {
+      const ids = new Set(notification.messageIds);
+      for (const message of store.messages()) {
+        if (message.to !== to || message.priority !== "next" || message.nativeSubmittedAt || !ids.has(message.id)) continue;
+        const submitted = store.writeMessage({ ...message, nativeSubmittedAt: Date.now() });
+        notify(store, "workstream_message", { message: submitted });
+      }
+    }
     if (notification.type === "session_token_usage_changed" || notification.type === "agent_turn_completed") {
       const visible = new Set(session.uiMessages().map((m) => m.id));
       for (const message of store.messages()) if (message.to === to && message.deliveredAt && !message.readAt && visible.has(message.id)) {

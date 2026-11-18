@@ -2,7 +2,7 @@ import type { TokenUsage } from "../core/types.ts";
 import { costOf } from "../eval/cost.ts";
 import type { Price } from "../eval/types.ts";
 import { loadSettings } from "../storage/settings.ts";
-import { WorkstreamStore, type Workstream } from "./store.ts";
+import { WorkstreamStore, type AgentEntry, type Workstream } from "./store.ts";
 
 export function budgetFrom(value: unknown): Workstream["budget"] {
   if (value === undefined || value === null) return undefined;
@@ -36,10 +36,9 @@ export function usageTotals(usage: Record<string, TokenUsage>, prices: Record<st
   }
   return { tokens, costUsd, costKnown };
 }
-export function reached(store: WorkstreamStore): string | undefined {
-  const w = store.read(), b = w.budget;
+export function reached(w: Workstream, rows: AgentEntry[]): string | undefined {
+  const b = w.budget;
   if (!b) return;
-  const rows = store.roster();
   if (b.maxTokens !== undefined && rows.reduce((n, a) => n + a.tokens, 0) >= b.maxTokens) return "maxTokens";
   if (b.maxCostUsd !== undefined && rows.reduce((n, a) => n + a.costUsd, 0) >= b.maxCostUsd) return "maxCostUsd";
   if (b.maxWallMinutes !== undefined && Date.now() - w.createdAt >= b.maxWallMinutes * 60_000) return "maxWallMinutes";

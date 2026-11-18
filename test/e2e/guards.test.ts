@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadSession } from "../../src/storage/transcript.ts";
 import { startFakeAnthropic } from "../fakes/fake-anthropic.ts";
+import { startFakeChat, type FakeChatTurnSpec } from "../fakes/fake-chat.ts";
 import type { FakeServer, FakeTurn } from "../fakes/types.ts";
 import { inproc } from "./inproc.ts";
 import { makeRepo } from "./helpers.ts";
@@ -19,13 +20,13 @@ afterAll(() => {
 
 const MODEL = "custom:Fake-Anthropic-0";
 
-async function setup(script: FakeTurn[], settings: Record<string, unknown> = {}, init: Record<string, unknown> = {}) {
-  const server = await startFakeAnthropic(script);
+async function setup(script: FakeTurn[], settings: Record<string, unknown> = {}, init: Record<string, unknown> = {}, provider = "anthropic") {
+  const server = await (provider === "anthropic" ? startFakeAnthropic(script) : startFakeChat(script));
   servers.push(server);
   const repo = makeRepo();
   const home = mkdtempSync(join(tmpdir(), "rigwell-guards-home-"));
   writeFileSync(join(home, "settings.json"), JSON.stringify({
-    customModels: [{ model: "fake-anthropic", displayName: "Fake Anthropic", provider: "anthropic", baseUrl: server.url, apiKey: "test-key-not-real" }],
+    customModels: [{ model: "fake-anthropic", displayName: "Fake Anthropic", provider, baseUrl: server.url, apiKey: "test-key-not-real" }],
     ...settings,
   }));
   process.env.RIGWELL_HOME = home;
@@ -173,6 +174,26 @@ describe("repeated identical tool calls", () => {
 });
 
 describe("empty turns", () => {
+  const cut: FakeChatTurnSpec = { thinking: "long analysis without a tool", finishReason: "length" };
+
+  test("a reasoning-only output limit prompts an immediate tool action without replaying the same request", async () => {
+    const s = await setup([cut, read, { text: "The result is ready." }], {}, {}, "generic-chat-completion-api");
+    await s.c.turn("Inspect greet.js and report the actual result.");
+    expect(s.server.requests).toHaveLength(3);
+    expect(lastUser(s.server.requests[1])).toContain("output limit");
+    expect(lastUser(s.server.requests[1])).toContain("smallest unfinished action");
+    expect(completed(s.c).reason).toBe("completed");
+    expect(s.c.notes().filter((n) => n.type === "llm_retry").map((n) => n.reason)).toEqual(["output_limit"]);
+  }, 30_000);
+
+  test("a second output limit without progress ends as a failure instead of a completed turn", async () => {
+    const s = await setup([cut, cut, { text: "unreachable" }], {}, {}, "generic-chat-completion-api");
+    await s.c.turn("Send the review.");
+    expect(s.server.requests).toHaveLength(2);
+    expect(completed(s.c).reason).toBe("model_output_limit");
+    expect(s.c.notes().some((n) => n.type === "create_message" && /output limit twice/.test(JSON.stringify(n.message)))).toBe(true);
+  }, 30_000);
+
   test("no visible output: one-word continue each time, stop at 3 in a row", async () => {
     // each empty answer is retried once first (spec 4.6.9), so every "empty turn" uses two scripted responses
     const s = await setup([{}, {}, { thinking: "hmm" }, { thinking: "hmm" }, {}, {}, { text: "unreachable" }]);

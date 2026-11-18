@@ -1,4 +1,3 @@
-import { renameSync, writeFileSync } from "node:fs";
 import { startDaemon } from "../../../src/daemon/daemon.ts";
 import { join } from "node:path";
 import { MemberSession } from "../../../src/workstreams/member.ts";
@@ -7,16 +6,10 @@ import { resolveModels } from "../../../src/storage/models.ts";
 import { loadSettings } from "../../../src/storage/settings.ts";
 
 const cwd = process.env.FIXTURE_CWD!;
-const readyPath = process.env.FIXTURE_READY!;
-const publish = (path: string, value: string) => {
-  const pendingPath = path + ".pending";
-  writeFileSync(pendingPath, value);
-  renameSync(pendingPath, path);
-};
+if (!process.send) throw new Error("The crash fixture requires a parent IPC channel");
 const started = performance.now();
 console.error("crash fixture loaded");
 const daemon = await startDaemon({ socketPath: join(cwd, "daemon.sock"), automations: false, sidepane: false, ws: false });
-publish(readyPath + ".daemon", "ready");
 console.error("crash fixture daemon ready", Math.round(performance.now() - started));
 const service = daemon.workstreams;
 const request = async (_method: string, p: any) => p.toolUses?.[0]?.confirmationType === "propose_workstream" ? { selectedOption: "proceed_once" } : new Promise(() => {});
@@ -25,7 +18,6 @@ await lead.call("initialize_session", { cwd, modelId: resolveModels(loadSettings
 const conn = { session: () => lead.connection.session, notify() {}, request };
 service.attach(conn);
 const proposal = await service.propose(conn, { title: "Crash recovery", goal: "Recover", plan: "Keep existing sessions" });
-publish(readyPath + ".proposal", "ready");
 console.error("crash fixture proposal ready", Math.round(performance.now() - started));
 const agent = await service.spawn(lead.connection.session!, { name: "Interrupted member", role: "task", prompt: "BUSY", worktree: false });
 const session = service.members.get(agent.agentId)!.connection.session!;
@@ -34,6 +26,6 @@ const store = new WorkstreamStore(proposal.workstreamId!);
 service.listeners.create(store, "lead", { on: "file_changed", filter: { glob: "*.txt" } });
 service.listeners.create(store, agent.agentId, { on: "message" });
 const queued = service.send(lead.connection.session!.id, { to: agent.agentId, message: "LATER AFTER RESTART", priority: "later" });
-publish(readyPath, JSON.stringify({ workstreamId: store.id, agent, queued }));
+process.send({ workstreamId: store.id, agentId: agent.agentId, sessionId: agent.sessionId, messageId: queued.messageId });
 console.error("crash fixture member waiting", Math.round(performance.now() - started));
 setInterval(() => {}, 1000);

@@ -2,7 +2,7 @@
 
 Rigwell is a local workbench for coding agents. Use a desktop app or terminal to work with your models, coordinate persistent Workstreams, run staged Missions, inspect changes and create pull requests with explicit confirmation. Repositories stay ordinary files and Git branches. Cloud connections send context to the providers you configure.
 
-[Website](https://scottconverse.github.io/rigwell/) · [Windows 0.4.2 download](https://github.com/scottconverse/rigwell/releases/download/v0.4.2/rigwell-setup-0.4.2-x64.exe) · [User manual](docs/user-manual.md) · [Contributing](docs/contributing.md)
+[Website](https://scottconverse.github.io/rigwell/) · [Windows 0.4.3 download](https://github.com/scottconverse/rigwell/releases/download/v0.4.3/rigwell-setup-0.4.3-x64.exe) · [User manual](docs/user-manual.md) · [Contributing](docs/contributing.md)
 
 ## What it does
 
@@ -13,7 +13,7 @@ Rigwell is a local workbench for coding agents. Use a desktop app or terminal to
 
 ## Quick start
 
-For the desktop app, download the [signed Windows 0.4.2 installer](https://github.com/scottconverse/rigwell/releases/download/v0.4.2/rigwell-setup-0.4.2-x64.exe). Linux and macOS packages remain available in [0.4.0](https://github.com/scottconverse/rigwell/releases/tag/v0.4.0). Then follow the [installation guide](docs/install.md) and [first-task walkthrough](docs/user-manual.md#new-user-guide). Configure a model connection before starting a task. Do not paste credentials into a conversation.
+For the desktop app, download the [signed Windows 0.4.3 installer](https://github.com/scottconverse/rigwell/releases/download/v0.4.3/rigwell-setup-0.4.3-x64.exe). Linux and macOS packages remain available in [0.4.0](https://github.com/scottconverse/rigwell/releases/tag/v0.4.0). Then follow the [installation guide](docs/install.md) and [first-task walkthrough](docs/user-manual.md#new-user-guide). Configure a model connection before starting a task. Do not paste credentials into a conversation.
 
 For a source checkout, install Bun 1.4.4, Git and ripgrep:
 
@@ -47,7 +47,7 @@ To build the public site, run `bun run site:build` and `bun run site:preview`, t
 
 ## Project status
 
-The current Windows release is **0.4.2**. It delivers full Workstream Next handoffs to signed-in clients, fixes replay of reasoning-only replies, and starts offline CLI commands faster. The native approval and proposal-reconnect fixes introduced in 0.4.1 are included. See [0.4.2 release notes](docs/release-0.4.2.md). Linux and macOS distributions remain at **0.4.0**. The Windows setup installer is signed by Scott Converse. Linux has packaged-install and signed AppImage update/rollback evidence. macOS arm64 packages are unsigned and have runner installation evidence. Full model-family and long-session qualification remains incomplete. Account access, connector registrations and remote infrastructure require your own configuration.
+The current Windows release is **0.4.3**. It recovers stalled Workstream reviews when a member hits its output limit, preserves full Next handoffs to signed-in clients, and improves Windows restart-test reliability. The native approval and proposal-reconnect fixes introduced in 0.4.1 are included. See [0.4.3 release notes](docs/release-0.4.3.md). Linux and macOS distributions remain at **0.4.0**. The Windows setup installer is signed by Scott Converse. Linux has packaged-install and signed AppImage update/rollback evidence. macOS arm64 packages are unsigned and have runner installation evidence. Full model-family and long-session qualification remains incomplete. Account access, connector registrations and remote infrastructure require your own configuration.
 
 
 

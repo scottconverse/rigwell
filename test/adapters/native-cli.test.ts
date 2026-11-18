@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NativeCliAdapter, nativeEnvironment, nativeArguments, nativePrompt } from "../../src/adapters/native-cli.ts";
@@ -43,6 +43,17 @@ if(process.env.FAKE_BRIDGE){
   const current=prompt.split('Current user request:\\n').at(-1);
   if(current==='VERIFY_NEXT_HISTORY'){
    await Bun.write('native-history.txt',prompt);
+  }else if(current==='RUN_NATIVE_ONLY'){
+   await Bun.write('native-only-live.txt','ready');
+   const end=Date.now()+5000;
+   while(!(await Bun.file('release-native-only.txt').exists())){
+    if(Date.now()>=end)process.exit(16);
+    await Bun.sleep(5);
+   }
+  }else if(current.includes('NATIVE_STDIN_BODY')){
+   await Bun.write('native-stdin.txt',current);
+   const handoff=await call('tools/call',{name:'ListAgents',arguments:{}});
+   await Bun.write('native-backlog.json',JSON.stringify(handoff.result.content));
   }else if(current==='RUN_NEXT_WAIT'){
    const first=await call('tools/call',{name:'WaitForEvents',arguments:{timeoutMs:5000}});
    const second=await call('tools/call',{name:'ListAgents',arguments:{}});
@@ -94,11 +105,13 @@ for (const backend of ["claude-cli", "codex-cli"] as const) {
     const env = tmpEnv();
     const service = createWorkstreamService({ recover: false });
     const request = async () => ({ selectedOption: "proceed_once" });
+    const notes: any[] = [];
     const s = makeStubSession(() => { throw new Error("native client only"); }, {
+      notes,
       resolveModel: () => req(backend).model,
       createAdapter: () => adapter({ FAKE_BRIDGE: "1", FAKE_NEXT: "1" }), streamWithRetry,
       toolsFor: (_ctx) => attached.wrapTools([]),
-    }, { requestPermission: request });
+    }, { requestPermission: request, notify: (n) => { notes.push(n); service.observe(s.session, n); } });
     const conn = { session: () => s.session, notify() {}, request };
     const attached = service.attach(conn);
     try {
@@ -110,6 +123,7 @@ for (const backend of ["claude-cli", "codex-cli"] as const) {
       await until(() => s.notes.some((n) => n.type === "tool_call" && n.toolUse.name === "WaitForEvents"));
       const sent = attached.methods.workstream_send({ id: store.id, to: "lead", message: "UNIQUE_NEXT_BODY", priority: "next" });
       const later = attached.methods.workstream_send({ id: store.id, to: "lead", message: "LATER_BODY", priority: "later" });
+      expect(store.messages().find((m) => m.id === sent.messageId)).not.toHaveProperty("nativeSubmittedAt");
       await s.session.idle();
       const reply = await Bun.file(join(s.cwd, "native-next.json")).json();
       expect(JSON.parse(reply.first[0].text).events[0].trigger.messageId).toBe(sent.messageId);
@@ -117,10 +131,29 @@ for (const backend of ["claude-cli", "codex-cli"] as const) {
       expect(JSON.stringify(reply.first)).not.toContain("LATER_BODY");
       expect(JSON.stringify(reply.second)).not.toContain("UNIQUE_NEXT_BODY");
       expect(s.session.uiMessages().filter((m) => m.id === sent.messageId)).toHaveLength(1);
+      expect(store.messages().find((m) => m.id === sent.messageId)).toHaveProperty("nativeSubmittedAt", expect.any(Number));
+      expect(store.messages().find((m) => m.id === later.messageId)).not.toHaveProperty("nativeSubmittedAt");
       expect(s.session.uiMessages().filter((m) => m.id === later.messageId)).toHaveLength(1);
       s.session.addUserMessage("VERIFY_NEXT_HISTORY");
       await s.session.idle();
       expect((await Bun.file(join(s.cwd, "native-history.txt")).text()).match(/UNIQUE_NEXT_BODY/g)).toHaveLength(1);
+      s.session.addUserMessage("RUN_NATIVE_ONLY");
+      const started = join(s.cwd, "native-only-live.txt");
+      await until(() => existsSync(started));
+      const nextPrompt = attached.methods.workstream_send({ id: store.id, to: "lead", message: "NATIVE_STDIN_BODY", priority: "next" });
+      expect(store.messages().find((m) => m.id === nextPrompt.messageId)).not.toHaveProperty("nativeSubmittedAt");
+      const backlog = attached.methods.workstream_send({ id: store.id, to: "lead", message: "NEXT_BACKLOG_BODY", priority: "next" });
+      attached.methods.workstream_send({ id: store.id, to: "lead", message: "LATER_BACKLOG_BODY", priority: "later" });
+      writeFileSync(join(s.cwd, "release-native-only.txt"), "continue");
+      await s.session.idle();
+      expect((await Bun.file(join(s.cwd, "native-stdin.txt")).text()).match(/NATIVE_STDIN_BODY/g)).toHaveLength(1);
+      expect(store.messages().find((m) => m.id === nextPrompt.messageId)).toHaveProperty("nativeSubmittedAt", expect.any(Number));
+      expect(notes.some((n) => n.type === "native_workstream_submitted" && n.boundary === "stdin" && n.messageIds.includes(nextPrompt.messageId))).toBe(true);
+      const backlogReply = await Bun.file(join(s.cwd, "native-backlog.json")).text();
+      expect(backlogReply.match(/NEXT_BACKLOG_BODY/g)).toHaveLength(1);
+      expect(backlogReply).not.toContain("LATER_BACKLOG_BODY");
+      expect(s.session.uiMessages().filter((m) => m.id === backlog.messageId)).toHaveLength(1);
+      expect(notes.some((n) => n.type === "native_workstream_submitted" && n.boundary === "coordination" && n.messageIds.includes(backlog.messageId))).toBe(true);
     } finally {
       s.session.interrupt(true); await s.session.idle(); attached.close(); await service.stop();
       env.cleanup(); rmSync(s.cwd, { recursive: true, force: true });

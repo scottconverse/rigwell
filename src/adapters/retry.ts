@@ -62,7 +62,7 @@ export async function* streamWithRetry(
   for (let attempt = 1; ; attempt++) {
     try {
       for await (const ev of adapter.stream(req)) {
-        if (ev.type === "message_done" && (opts.passEmpty ? noVisible(ev.content) : ev.content.length === 0)) {
+        if (ev.type === "message_done" && ev.stopReason !== "max_tokens" && (opts.passEmpty ? noVisible(ev.content) : ev.content.length === 0)) {
           if (opts.passEmpty && emptyRetries >= 1) { yield ev; return; }
           throw new ModelError("empty_response", "Model returned an empty response", { retryable: true });
         }
