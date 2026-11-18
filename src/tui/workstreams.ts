@@ -1,6 +1,7 @@
 import type { View, ViewCtx } from "./views.ts";
 import { words } from "./views.ts";
 import type { AgentEntry, Workstream, WorkstreamMessage } from "../workstreams/store.ts";
+import { workstreamMessageStatus } from "../workstreams/message-status.ts";
 
 export async function workstreamsView(args: string, c: ViewCtx): Promise<View> {
   const w = words(args), action = w[0];
@@ -29,7 +30,7 @@ export async function workstreamsView(args: string, c: ViewCtx): Promise<View> {
     return { title: `Workstream: ${r.workstream.title}`, workstreamId: id, lines: [
       `${r.workstream.state}: ${r.workstream.goal}`, ...(r.workstream.budget ? [`Budget: ${JSON.stringify(r.workstream.budget)}`] : []), "", "Agents",
       ...r.roster.flatMap((a) => [`${a.name} [${a.status}] ${a.role}`, `  ${a.model} · ${a.branch ?? "shared directory"} · ${a.tokens} tokens · ${a.costKnown === false ? "cost unpriced" : `$${a.costUsd.toFixed(4)} estimated`}`, ...(a.lastSummary ? [`  ${a.lastSummary}`] : [])]),
-      "", "Messages", ...r.messages.flatMap((m) => [`${name(m.from)} -> ${name(m.to)} [${m.priority}, ${m.readAt ? "read" : m.deliveredAt ? "delivered" : "queued"}]`, m.text]),
+      "", "Messages", ...r.messages.flatMap((m) => [`${name(m.from)} -> ${name(m.to)} [${m.priority}, ${workstreamMessageStatus(m).toLowerCase()}]`, m.text]),
       "", '/ws send "agent name" <text>', '/ws interrupt "agent name"', "Esc closes this view; updates arrive while it is open.",
     ] };
   } catch (e) {

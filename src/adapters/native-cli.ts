@@ -89,7 +89,7 @@ export function nativePrompt(req: ModelRequest): string {
   ].join("\n\n");
 }
 
-interface ProcessOptions { executable: string; args: string[]; cwd: string; input?: string; signal?: AbortSignal; timeoutMs: number; env: NodeJS.ProcessEnv; onLine?: (line: string) => void }
+interface ProcessOptions { executable: string; args: string[]; cwd: string; input?: string; signal?: AbortSignal; timeoutMs: number; env: NodeJS.ProcessEnv; onLine?: (line: string) => void; onInputSubmitted?: () => void }
 async function runProcess(o: ProcessOptions): Promise<{ stdout: string; stderr: string }> {
   if (o.signal?.aborted) throw failure("Native execution cancelled before launch");
   return new Promise((resolve, reject) => {
@@ -136,7 +136,10 @@ async function runProcess(o: ProcessOptions): Promise<{ stdout: string; stderr: 
     });
     o.signal?.addEventListener("abort", abort, { once: true });
     if (o.signal?.aborted) abort();
-    child.stdin.end(o.input ?? "");
+    child.stdin.end(o.input ?? "", (error?: Error | null) => {
+      if (error || stopped || o.signal?.aborted) return;
+      try { o.onInputSubmitted?.(); } catch (e) { stop(e as Error); }
+    });
   });
 }
 
@@ -183,7 +186,9 @@ export class NativeCliAdapter implements ModelAdapter {
     } catch (e) {
       await bridge?.close(); if (configDir) rmSync(configDir, { recursive: true, force: true }); throw e;
     }
+    const workstreamMessageIds = req.messages.filter((m) => m.role === "user" && (m.userMessageSource === "workstream_peer" || m.userMessageSource === "workstream_user")).map((m) => m.id);
     const task = runProcess({ ...common, signal, args: [...prefix, ...args], input: prompt,
+      onInputSubmitted: () => req.nativeExecution?.coordination?.workstreamSubmitted?.(workstreamMessageIds, "stdin"),
       timeoutMs: req.limits?.hardLimitMs ?? 600_000,
       onLine: (line) => {
         let e: any; try { e = JSON.parse(line); } catch { throw failure("Malformed native client event"); }

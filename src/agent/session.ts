@@ -1629,7 +1629,10 @@ export class Session {
             this.steer = this.steer.filter((entry) => !isWorkstream(entry));
             // A coordination response is the boundary we own inside a native client's turn.
             for (const entry of ready) await this.recordSteering(entry);
-            return ready.map((entry) => entry.text);
+            return ready.map((entry) => ({ id: entry.messageId, text: entry.text }));
+          },
+          workstreamSubmitted: (messageIds: string[], boundary: "coordination" | "stdin") => {
+            if (messageIds.length) this.notify({ type: "native_workstream_submitted", messageIds, boundary });
           },
           call: async (name: string, input: Record<string, unknown>, callSignal: AbortSignal) => {
             if (callSignal.aborted || signal?.aborted || !COORDINATION_TOOLS.has(name)) throw new Error("Coordination call is no longer available");

@@ -35,7 +35,7 @@ export interface WorkstreamEvent { id: string; ts: number; type: string; [key: s
 export type MessagePriority = "now" | "next" | "later";
 export interface WorkstreamMessage {
   id: string; ts: number; from: string; to: string; priority: MessagePriority; text: string;
-  deliveredAt?: number; readAt?: number;
+  deliveredAt?: number; readAt?: number; nativeSubmittedAt?: number;
 }
 export type ListenerOn = "agent_idle" | "agent_turn_completed" | "agent_failed" | "agent_waiting_input" | "message" | "all_idle" | "file_changed" | "timer";
 export interface WorkstreamListener {

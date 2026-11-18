@@ -49,7 +49,7 @@ const Row = ({ label, hint, children }: { label: string; hint?: string; children
   <div className="row"><div className="row-label"><div>{label}</div>{hint && <div className="muted small">{hint}</div>}</div><div className="row-ctl">{children}</div></div>
 );
 
-const SHORTCUTS = [["spec", "Toggle Spec mode (Shift+Tab)"], ["reasoning", "Cycle reasoning (Tab)"], ["autonomy", "Cycle autonomy (Ctrl+L)"], ["files", "Files (Ctrl+P)"], ["terminal", "Terminal (Ctrl+J)"], ["browser", "Browser (Shift+Ctrl+B)"], ["sidechat", "Side chat (Alt+Ctrl+S)"], ["dictation", "Voice dictation (Ctrl+Shift+D)"]] as const;
+const SHORTCUTS = [["spec", "Toggle Spec mode (Ctrl+Alt+M)"], ["reasoning", "Cycle reasoning (Ctrl+Alt+R)"], ["autonomy", "Cycle autonomy (Ctrl+L)"], ["files", "Files (Ctrl+P)"], ["terminal", "Terminal (Ctrl+J)"], ["browser", "Browser (Shift+Ctrl+B)"], ["sidechat", "Side chat (Alt+Ctrl+S)"], ["dictation", "Voice dictation (Ctrl+Shift+D)"]] as const;
 
 function General({ s }: { s: DesktopSettings }) {
   const toggleShortcut = (id: string) => void app.updateSettings({ disabledShortcuts: s.disabledShortcuts.includes(id) ? s.disabledShortcuts.filter((x) => x !== id) : [...s.disabledShortcuts, id] });

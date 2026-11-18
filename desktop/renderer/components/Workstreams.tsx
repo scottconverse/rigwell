@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { AgentEntry, Workstream, WorkstreamMessage } from "../../../src/workstreams/store.ts";
+import { workstreamMessageStatus } from "../../../src/workstreams/message-status.ts";
 import { useApp } from "../lib/app-model.ts";
-import { DaemonConn } from "../lib/rpc.ts";
+import { DaemonConn, RpcFailure } from "../lib/rpc.ts";
 import { SessionController, type Prompt } from "../lib/session.ts";
 import { Dialog } from "./Dialogs.tsx";
 import { Prompts } from "./Prompts.tsx";
@@ -16,11 +17,12 @@ export function Workstreams({ id, go }: { id?: string; go(route: string): void }
   const [messageTo, setMessageTo] = useState<AgentEntry>(), [text, setText] = useState(""), [priority, setPriority] = useState("next");
   const [archive, setArchive] = useState<AgentEntry | "workstream">(), [cleanup, setCleanup] = useState(false);
   const [budget, setBudget] = useState(false), [limits, setLimits] = useState<string[]>(["", "", ""]);
+  const [resuming, setResuming] = useState(false), [budgetError, setBudgetError] = useState(""), [budgetStatus, setBudgetStatus] = useState("");
   const pull = useRef<() => Promise<void>>(async () => {});
   useEffect(() => {
     if (a.daemon.state !== "running") return;
     let dead = false, generation = 0;
-    setDetail(undefined); setLoaded(false);
+    setDetail(undefined); setLoaded(false); setBudgetStatus("");
     (async () => {
       try {
         const c = await DaemonConn.open(); if (dead) { c.close(); return; } conn.current = c;
@@ -44,6 +46,25 @@ export function Workstreams({ id, go }: { id?: string; go(route: string): void }
   const act = async (method: string, params: Record<string, unknown> = {}) => {
     try { await conn.current!.request(method, { id, ...params }); await pull.current(); } catch (e) { setError((e as Error).message); }
   };
+  const resumeBudget = async () => {
+    if (resuming) return;
+    setResuming(true); setBudgetError("");
+    try {
+      const budget = Object.fromEntries(["maxTokens", "maxCostUsd", "maxWallMinutes"].flatMap((key, i) => limits[i] === "" ? [] : [[key, Number(limits[i])]]));
+      const response = await conn.current!.request<{ workstream: Workstream }>("resume_workstream", { id, budget });
+      const resumed = response.workstream;
+      setDetail((current) => current?.workstream.id === resumed.id ? { ...current, workstream: resumed } : current);
+      setBudgetStatus("Budget saved. Workstream resumed.");
+      setBudget(false);
+      await pull.current();
+    } catch (e) {
+      const rejected = e instanceof RpcFailure && (e.data as { budgetSaved?: boolean } | undefined)?.budgetSaved === false;
+      setBudgetError(rejected ? `${e.message}. Budget unchanged. Workstream is still paused.` : `${(e as Error).message}. Could not confirm the saved budget or workstream state.`);
+      await pull.current();
+    } finally {
+      setResuming(false);
+    }
+  };
   const open = async (agent: { sessionId: string; cwd: string; name: string }) => {
     try { if (!live.has(agent.sessionId)) live.set(agent.sessionId, await SessionController.resume(agent.sessionId, agent.cwd, { title: agent.name })); go(`/sessions/${agent.sessionId}`); }
     catch (e) { setError((e as Error).message); }
@@ -53,9 +74,10 @@ export function Workstreams({ id, go }: { id?: string; go(route: string): void }
   return <div className="page">
     <header className="page-head">{id && <button onClick={() => go("/workstreams")}>Back</button>}<h1>{w?.title ?? "Workstreams"}</h1><span className="spacer" />
       {w && <><span className="badge">{w.state}</span><button onClick={() => void open({ sessionId: w.leadSessionId, cwd: w.cwd, name: w.title })}>Open lead</button>
-        <button disabled={archived} onClick={() => { if (w.state === "paused") { setLimits([w.budget?.maxTokens, w.budget?.maxCostUsd, w.budget?.maxWallMinutes].map((v) => v == null ? "" : String(v))); setBudget(true); } else void act("pause_workstream"); }}>{w.state === "paused" ? "Resume" : "Pause"}</button>
+        <button disabled={archived} onClick={() => { setBudgetStatus(""); setBudgetError(""); if (w.state === "paused") { setLimits([w.budget?.maxTokens, w.budget?.maxCostUsd, w.budget?.maxWallMinutes].map((v) => v == null ? "" : String(v))); setBudget(true); } else void act("pause_workstream"); }}>{w.state === "paused" ? "Resume" : "Pause"}</button>
         <button disabled={archived} onClick={() => { setCleanup(false); setArchive("workstream"); }}>Archive workstream</button></>}
     </header>
+    {budgetStatus && <p role="status">{budgetStatus}</p>}
     {error && <div className="banner error" role="alert">{error}</div>}
     {!id && <><p className="muted">Ask a lead session to propose a workstream. Review its plan before members start.</p><ul className="plain-list cards" aria-label="Workstreams">{rows.map((r) => <li key={r.id}><button className="card-row" onClick={() => go(`/workstreams/${r.id}`)}><strong>{r.title}</strong><span>{r.state}</span><span>{r.agentCount} agents</span><span>{r.goal}</span></button></li>)}</ul>{loaded && !rows.length && <p>No workstreams yet.</p>}</>}
     {detail && w && <>
@@ -66,11 +88,20 @@ export function Workstreams({ id, go }: { id?: string; go(route: string): void }
         <div className="row"><button onClick={() => void open(r)}>Open transcript</button><button disabled={archived || r.status === "archived"} onClick={() => { setText(""); setMessageTo(r); }}>Message</button><button disabled={archived || r.status === "archived"} onClick={() => void act("workstream_interrupt", { agentId: r.agentId })}>Interrupt</button><button disabled={r.status === "archived"} onClick={() => { setCleanup(false); setArchive(r); }}>Archive</button></div>
       </li>)}</ul>
       {!!detail.pendingPrompts.length && <section aria-label="Member prompts"><h2>Waiting for your answer</h2><Prompts prompts={detail.pendingPrompts.map((p) => ({ ...p, resolve() {} }))} onAnswer={(requestId, answer) => { const p = detail.pendingPrompts.find((p) => p.requestId === requestId)!; void act("workstream_answer_request", { agentId: p.agentId, requestId, answer }); }} /></section>}
-      <h2>Messages</h2><ol aria-label="Message timeline">{detail.messages.map((m) => <li key={m.id}><strong>{detail.roster.find((r) => r.agentId === m.from)?.name ?? m.from} to {detail.roster.find((r) => r.agentId === m.to)?.name ?? m.to}</strong> <span className="muted small">{m.priority} · {m.readAt ? "Read" : m.deliveredAt ? "Delivered" : "Queued"}</span><p className="pre-wrap">{m.text}</p></li>)}</ol>
+      <h2>Messages</h2><ol aria-label="Message timeline">{detail.messages.map((m) => <li key={m.id}><strong>{detail.roster.find((r) => r.agentId === m.from)?.name ?? m.from} to {detail.roster.find((r) => r.agentId === m.to)?.name ?? m.to}</strong> <span className="muted small">{m.priority} · {workstreamMessageStatus(m)}</span><p className="pre-wrap">{m.text}</p></li>)}</ol>
       <p className="muted">Before merging member branches, ask the lead to use the built-in overlap-check skill.</p>
     </>}
     {messageTo && <Dialog title={`Message ${messageTo.name}`} onClose={() => setMessageTo(undefined)}><form onSubmit={(e) => { e.preventDefault(); void act("workstream_send", { to: messageTo.agentId, message: text, priority }); setMessageTo(undefined); }}><textarea aria-label="Message" required value={text} onChange={(e) => setText(e.target.value)} /><label>Delivery<select aria-label="Delivery priority" value={priority} onChange={(e) => setPriority(e.target.value)}><option value="now">Now: interrupt current turn</option><option value="next">Next: steer at the next boundary</option><option value="later">Later: queue until idle</option></select></label><button type="submit" className="primary">Send</button></form></Dialog>}
     {archive && <Dialog title={`Archive ${archive === "workstream" ? w?.title : archive.name}?`} onClose={() => setArchive(undefined)}><p>History is retained. Members stop running.</p><label className="check"><input type="checkbox" checked={cleanup} onChange={(e) => setCleanup(e.target.checked)} />Remove safe worktrees. Dirty work, local commits and open PRs are retained.</label><button className="danger" onClick={() => { const target = archive; setArchive(undefined); if (target === "workstream") void act("archive_workstream", { cleanupWorktrees: cleanup }); else void act("workstream_archive_agent", { agentId: target.agentId, cleanupWorktree: cleanup }); }}>Confirm archive</button></Dialog>}
-    {budget && <Dialog title="Resume workstream" onClose={() => setBudget(false)}><p>Raise or clear a reached limit to resume. Blank means no limit.</p><form onSubmit={(e) => { e.preventDefault(); void act("resume_workstream", { budget: Object.fromEntries(["maxTokens", "maxCostUsd", "maxWallMinutes"].flatMap((key, i) => limits[i] === "" ? [] : [[key, Number(limits[i])]])) }); setBudget(false); }}>{["Token limit", "Estimated cost limit (USD)", "Wall time limit (minutes)"].map((label, i) => <label key={label}>{label}<input aria-label={label} type="number" min="0" step="any" value={limits[i]} onChange={(e) => setLimits((v) => v.map((n, j) => j === i ? e.target.value : n))} /></label>)}<button className="primary">Resume</button></form></Dialog>}
+    {budget && <Dialog title="Resume workstream" onClose={() => { if (!resuming) setBudget(false); }}>
+      <p>Raise or clear a reached limit to resume. Blank means no limit.</p>
+      {budgetError && <p role="alert">{budgetError}</p>}
+      <form onSubmit={(e) => { e.preventDefault(); void resumeBudget(); }}>
+        {["Token limit", "Estimated cost limit (USD)", "Wall time limit (minutes)"].map((label, i) => <label key={label}>{label}
+          <input aria-label={label} type="number" min="0" step="any" disabled={resuming} value={limits[i]} onChange={(e) => setLimits((v) => v.map((n, j) => j === i ? e.target.value : n))} />
+        </label>)}
+        <button className="primary" disabled={resuming}>Resume</button>
+      </form>
+    </Dialog>}
   </div>;
 }

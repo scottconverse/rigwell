@@ -43,15 +43,18 @@ export function startCoordinationBridge(host: NonNullable<NonNullable<ModelReque
       const task = Promise.resolve().then(async () => {
         if (permission) {
           const decision = await host.requestNativePermission!(input.tool_name, input.input, callSignal);
-          return { content: [{ type: "text", text: JSON.stringify(callSignal.aborted ? { behavior: "deny", message: "Approval cancelled" } : decision) }] };
+          return reply({ content: [{ type: "text", text: JSON.stringify(callSignal.aborted ? { behavior: "deny", message: "Approval cancelled" } : decision) }] });
         }
         const out = await host.call(name, input, callSignal);
         const context = !out.isError && !callSignal.aborted ? await host.takeWorkstreamContext?.(callSignal) ?? [] : [];
-        return { content: [out.content, ...context].map((text) => ({ type: "text", text })), ...(out.isError ? { isError: true } : {}) };
+        const submitted = callSignal.aborted ? [] : context;
+        const result = reply({ content: [out.content, ...submitted.map((entry) => entry.text)].map((text) => ({ type: "text", text })), ...(out.isError ? { isError: true } : {}) });
+        if (submitted.length) host.workstreamSubmitted?.(submitted.map((entry) => entry.id), "coordination");
+        return result;
       });
       calls.add(task);
       try {
-        return reply(await task);
+        return await task;
       } catch (e) {
         return reply({ content: [{ type: "text", text: (e as Error).message }], isError: true });
       } finally { calls.delete(task); }
