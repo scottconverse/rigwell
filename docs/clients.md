@@ -5,9 +5,14 @@
 ```ts
 import { run, createSession, connectToDaemon } from "./src/sdk/index.ts";
 
-const r = await run("fix the failing test", { cwd, autonomyLevel: "low", onPermission: (req) => ({ selectedOption: "proceed_once" }) });
+const cwd = process.cwd();
+const r = await run(
+  "Explain how this project runs its tests. Read files only and do not edit or run commands.",
+  { cwd, autonomyLevel: "off" },
+);
+console.log(r.text);
 
-const s = await createSession({ cwd, modelId: "custom:My-Model-0", onPermission });   // spawns `rigwell exec` (stream-jsonrpc)
+const s = await createSession({ cwd, autonomyLevel: "off" });   // spawns `rigwell exec` (stream-jsonrpc)
 for await (const n of s.send("hello")) { /* notifications up to and including agent_turn_completed */ }
 await s.send("and then?").done;                                                       // { reason, text, ... }
 await s.interrupt(); await s.updateSettings({ autonomyLevel: "medium" }); await s.close();
@@ -20,7 +25,9 @@ const u = await connectToDaemon({ socketPath: "/path/to/daemon.sock" });        
 (`onTrust`: the folder stays untrusted). `onTrust` gets `{cwd, unlocks}` when a folder with project config (hooks, skills, AGENTS.md, MCP servers)
 is not trusted yet and returns `true`/`false` or `{trust, remember}`; a yes is saved in `trustedFolders` by the harness. With `resumeSessionId`,
 prompts the session still waits on (`pendingPermissions`, `pendingAskUserRequests`) are shown to `onPermission` / `onAskUser` again and answered
-through `rigwell.answer_request`. This includes pending Workstream proposal approvals since 0.4.1 while the same daemon Session remains alive. Request IDs remain bound to that pending request; cancellation or resolution invalidates late answers.
+through `rigwell.answer_request`. If you supply a permission handler, show the approver the requested tools and arguments. Return the exact
+option they chose from `req.options`. Return `{ selectedOption: "cancel" }` when they decline, the choice is unavailable, or no approver is
+present. `proceed_once` approves the specific pending request. This includes pending Workstream proposal approvals since 0.4.1 while the same daemon Session remains alive. Request IDs remain bound to that pending request; cancellation or resolution invalidates late answers.
 See `examples/sdk-multi-turn.ts`.
 
 ## Daemon WebSocket

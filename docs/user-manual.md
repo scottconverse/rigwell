@@ -1,8 +1,10 @@
 # Rigwell user manual
 
-For Windows **0.4.2**, with Linux and macOS distributions remaining at **0.4.0**. See [0.4.2 release notes](release-0.4.2.md) for fixes and verification. Rigwell is a local workspace for AI-assisted coding: a desktop app, terminal interface and agent service, with persistent Workstreams, Missions, repository tools and review. You choose the model connection. Your machine runs the coordination service; a cloud model still receives the context sent to it.
+For Windows **0.4.3**, with Linux and macOS distributions remaining at **0.4.0**. See [0.4.3 release notes](release-0.4.3.md) for fixes and verification. Rigwell is a local workspace for AI-assisted coding: a desktop app, terminal interface and agent service, with persistent Workstreams, Missions, repository tools and review. You choose the model connection. Your machine runs the coordination service; a cloud model still receives the context sent to it.
 
 This manual covers first use, everyday work, nontechnical review, technical operation and architecture. Feature-specific reference guides are linked where more configuration detail is useful.
+
+**Workstream review recovery.** When a member runs out of output before a tool call, Rigwell asks it to take the next concrete action. A repeated cap before tool progress marks the turn failed and can wake the lead.
 
 **Workstream Next handoffs.** In 0.4.2, a signed-in lead waiting in a Rigwell coordination tool receives the full message body with the event. See [Workstream timing and recovery](workstreams.md#limits-and-recovery) for what happens when a client is using its own tools.
 
@@ -34,11 +36,11 @@ Do not paste credentials into a chat or a repository file. Use Settings and the 
 
 ### Install and open
 
-Download the [signed Windows 0.4.2 installer](https://github.com/scottconverse/rigwell/releases/download/v0.4.2/rigwell-setup-0.4.2-x64.exe), or choose a Linux/macOS package from [0.4.0](https://github.com/scottconverse/rigwell/releases/tag/v0.4.0). Keep the release's checksum information with the installer.
+Download the [signed Windows 0.4.3 installer](https://github.com/scottconverse/rigwell/releases/download/v0.4.3/rigwell-setup-0.4.3-x64.exe), or choose a Linux/macOS package from [0.4.0](https://github.com/scottconverse/rigwell/releases/tag/v0.4.0). Keep the release's checksum information with the installer.
 
 | Platform | Installation | Current release qualification |
 | --- | --- | --- |
-| Windows x64, 0.4.2 | Run the setup executable. Choose the installation location, then open Rigwell from its shortcut. | Verify the Scott Converse signature and timestamp. The release notes record clean-runner installation and Workstream acceptance. |
+| Windows x64, 0.4.3 | Run the setup executable. Choose the installation location, then open Rigwell from its shortcut. | Verify the Scott Converse signature and timestamp. The release notes record clean-runner installation and Workstream acceptance. |
 | Linux x64, 0.4.0 | Install the Debian package, or make the AppImage executable and open it. | Installed package checks and signed AppImage update/rollback have passed on disposable Linux runners. |
 | macOS arm64, 0.4.0 | Open the DMG and copy Rigwell.app to Applications. | Current artifacts are unsigned and not notarized. Installed runner checks passed; real Mac hardware acceptance remains unavailable. |
 
@@ -53,6 +55,14 @@ For Windows, use Properties > Digital Signatures to check the publisher. For Lin
 5. Save the profile, return to the workspace and select it for your session.
 
 Model identifiers are supplied by your provider or local server. Rigwell does not grant access to a model merely because a profile can be saved. A sign-in option without a registered client is shown as unavailable; use an existing official-client profile or a supported direct connection rather than guessing another application's client ID.
+
+### Check your session profile and effort
+
+Before sending a task, check the model profile below the message box. Select the intended profile in the composer and check the adjacent **Reasoning** control if the task specifies an effort level. A model name in the prompt describes a requirement for the agent to follow. The composer selection controls which profile executes the turn.
+
+For future sessions, change **Model** in **Settings > Session Defaults**. For the current session, use its composer. Use **Tab** and **Shift+Tab** to move between controls. In the desktop composer, **Ctrl+Alt+M** toggles Spec mode and **Ctrl+Alt+R** cycles reasoning effort.
+
+If work has already started on the wrong profile, interrupt the turn and wait for it to become idle. Check what it already did, then select the intended profile and effort before sending another request. For a clean Workstream run, start a fresh session if the first attempt already created a proposal or changed the workspace.
 
 ### Open a project safely
 
@@ -134,6 +144,8 @@ Token, cost and wall-time limits can pause further work. Cost may be unpriced fo
 Example request:
 
 > Propose a Workstream to improve the onboarding guide. Use one writer and one verifier in separate worktrees. The verifier should check commands and links. Bring both results back for review, and do not push.
+
+For a Workstream with a required lead profile, [check the lead profile and reasoning level](#check-your-session-profile-and-effort) before requesting a proposal. Review the member profile IDs and worktree assignments in the proposed plan before accepting it, then confirm the active profiles in the roster.
 
 ### Missions
 
@@ -368,6 +380,7 @@ Local coordination does not mean every workflow is offline. Model requests, conf
 | Symptom | What to check | Safe next step |
 | --- | --- | --- |
 | First run has no models | The active profile and Settings > Custom Models | Configure one connection; do not paste a credential into the conversation |
+| Lead reports the wrong model or effort | Model and Reasoning controls below the message box | Interrupt the turn if needed and check its effects. Select the intended profile and effort before sending another request. Use Settings > Session Defaults for future sessions. |
 | Official client cannot be found | Its installation and optional absolute executable setting | Run that client's help/auth status locally; correct the path without changing provider or model |
 | Authentication or rate limit error | The selected account, provider entitlement and reported error | Reauthenticate through the proper client or wait for the account limit; do not repeatedly retry an uncertain coding action |
 | Local model will not load | Server URL, installed model, available RAM/VRAM and other model processes | Free appropriate resources or select a model that fits; preserve unrelated running work |
@@ -384,7 +397,7 @@ Use **Report a bug** to create a local diagnostic archive. It is not uploaded au
 
 ## Limits of this release
 
-This is an early release. See the 0.4.2 release notes for Windows signing, clean-runner install and the headless Dispatch Lab exercise. The 0.4.1 settings-preserving Halo upgrade and installed approval/reconnect checks remain historical evidence. macOS artifacts remain unsigned and real Mac hardware acceptance is still pending. Full long-session and model-family qualification is still being measured. Bedrock has fake coverage. Real connector registrations, remote hosts, phone networks and email delivery depend on the user's setup.
+This is an early release. See the 0.4.3 release notes for Windows signing, clean-runner install and the headless Dispatch Lab exercise. The 0.4.1 settings-preserving Halo upgrade and installed approval/reconnect checks remain historical evidence. macOS artifacts remain unsigned and real Mac hardware acceptance is still pending. Full long-session and model-family qualification is still being measured. Bedrock has fake coverage. Real connector registrations, remote hosts, phone networks and email delivery depend on the user's setup.
 
 The current evaluation subsystem is smaller than Stax. Compatibility with real Stax exports has not been verified. A hosted Stax option and later open-source reuse assessment belong to the [next-version list](next-version.md), not this release.
 
@@ -405,7 +418,7 @@ The current evaluation subsystem is smaller than Stax. Compatibility with real S
 
 ## Reference library
 
-For the current patch: [0.4.2 release notes](release-0.4.2.md).
+For the current patch: [0.4.3 release notes](release-0.4.3.md).
 
 For installation and daily use: [Install](install.md), [Authentication](auth.md), [Desktop](desktop.md), [Review](review.md), [Clients](clients.md).
 

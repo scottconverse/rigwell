@@ -487,7 +487,7 @@ The notification looks like this:
 | `droid_working_state_changed` | `newState: idle\|thinking\|streaming_assistant_message\|waiting_for_tool_confirmation\|executing_tool\|compacting_conversation` | SDK, RUN |
 | `session_token_usage_changed` | `sessionId`, `tokenUsage: TokenUsage`, `inclusiveTokenUsage?`, `lastCallTokenUsage?: {inputTokens, cacheReadTokens, outputTokens?}` | SDK, RUN |
 | `session_compacted` | `summaryId`, `removedCount: int ≥ 0`, `visibleBoundaryMessageId: string\|null` | SDK |
-| `llm_retry` | `attempt: number`, `reason: overloaded\|rate_limited\|timeout\|network\|empty_response\|unknown` | SDK |
+| `llm_retry` | `attempt: number`, `reason: overloaded\|rate_limited\|timeout\|network\|empty_response\|output_limit\|unknown` | SDK |
 | `permission_resolved` | `requestId` (the id of the `request_permission` request), `toolUseIds: string[]`, `selectedOption: ToolConfirmationOutcome` | SDK |
 | `hook_execution_started` | `hookId`, `hookEventName`, `hookCommands: {command, timeout?}[]`, `hookMatcher?`, `hookToolCallId?`, `hookParentId?`, `hookOrder?`, `isParallelExecution?`, `parallelGroupId?` | SDK |
 | `hook_execution_completed` | `hookId`, `hookStatus: "completed"\|"error"`, `hookEventName?`, `hookToolCallId?`, `hookPreventedAction?`, `hookResults?: {exitCode, stdout, stderr, command?, timeout?, suppressOutput?}[]` | SDK |
@@ -656,6 +656,7 @@ allowlist in config, not code, so you can turn Script on for a model without a r
 | Response breaks mid-stream | Discard the partial message, then retry (model only builds on complete answers) | POST |
 | Retry after error | Send to the same provider/region that holds the cache | POST |
 | No visible output | Inject a one-word "continue" message each time; stop at 3 in a row | POST + CLI (`3`) |
+| Provider output limit without a tool call | Ask once for a concrete next action or a brief complete answer. Stop with `model_output_limit` if it recurs before any tool call. Workstreams report the member turn as failed. | Rigwell behavior |
 | Same tool calls repeated (same names + same arguments, as one batch) | Nudge at 3 repeats, stop at 6 with reason "repeated identical tool calls" | POST + CLI (`3`, `6`) |
 | Repeats are only waits on a running Script | No nudge; stop at 24 repeats (2 h ÷ 5-min wait window) | CLI |
 | Identical calls that return *new* results (polling a build) | Allowed | POST; CLI hashes each batch's results too [CLI-INF] |

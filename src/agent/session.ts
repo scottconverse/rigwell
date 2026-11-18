@@ -72,7 +72,7 @@ export class SessionBusyError extends Error {
 export type TurnReason =
   | "completed" | "cancelled" | "permission_rejected" | "error" | "no_approver_available" | "prompt_rejected"
   | "model_authentication_failed" | "model_request_rejected" | "model_provider_unreachable"
-  | "model_provider_unavailable" | "model_rate_limited"
+  | "model_provider_unavailable" | "model_rate_limited" | "model_output_limit"
   | "structured_output_missing" | "structured_output_invalid" | "structured_output_schema_invalid"
   /** ExitSpecMode was approved with a handoff option: this session ends, a new one starts with the spec as its brief. */
   | "spec_handoff";
@@ -1092,6 +1092,7 @@ export class Session {
 
       const repeat = new RepeatTracker();
       let emptyStreak = 0;
+      let outputLimitNudged = false;
       while (!blocked) {
         if (signal.aborted) { reason = "cancelled"; break; }
         await this.maybeAutoCompact(signal);
@@ -1122,6 +1123,18 @@ export class Session {
 
         const calls = content.filter((b): b is ToolUseBlock => b.type === "tool_use");
         if (signal.aborted && !calls.length) { reason = "cancelled"; break; }
+        if (!calls.length && done.stopReason === "max_tokens") {
+          if (outputLimitNudged) {
+            reason = "model_output_limit";
+            await this.guardStop("guard_output_limit_stop_user", "guard_output_limit_stop_transcript", {});
+            break;
+          }
+          outputLimitNudged = true;
+          this.notify({ type: "llm_retry", attempt: 1, reason: "output_limit" });
+          await this.push({ id: `nudge-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: guardText("guard_output_limit_nudge") }] });
+          continue;
+        }
+        if (calls.length) outputLimitNudged = false;
         if (!calls.length && texts.trim() === "") {
           // No visible output (empty or thinking only): a one-word nudge each time, stop after emptyTurnStop in a row (spec 4.2).
           emptyStreak++;
