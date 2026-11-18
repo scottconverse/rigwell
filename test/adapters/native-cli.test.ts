@@ -52,6 +52,8 @@ if(process.env.FAKE_BRIDGE){
    }
   }else if(current.includes('NATIVE_STDIN_BODY')){
    await Bun.write('native-stdin.txt',current);
+   const handoff=await call('tools/call',{name:'ListAgents',arguments:{}});
+   await Bun.write('native-backlog.json',JSON.stringify(handoff.result.content));
   }else if(current==='RUN_NEXT_WAIT'){
    const first=await call('tools/call',{name:'WaitForEvents',arguments:{timeoutMs:5000}});
    const second=await call('tools/call',{name:'ListAgents',arguments:{}});
@@ -140,11 +142,18 @@ for (const backend of ["claude-cli", "codex-cli"] as const) {
       await until(() => existsSync(started));
       const nextPrompt = attached.methods.workstream_send({ id: store.id, to: "lead", message: "NATIVE_STDIN_BODY", priority: "next" });
       expect(store.messages().find((m) => m.id === nextPrompt.messageId)).not.toHaveProperty("nativeSubmittedAt");
+      const backlog = attached.methods.workstream_send({ id: store.id, to: "lead", message: "NEXT_BACKLOG_BODY", priority: "next" });
+      attached.methods.workstream_send({ id: store.id, to: "lead", message: "LATER_BACKLOG_BODY", priority: "later" });
       writeFileSync(join(s.cwd, "release-native-only.txt"), "continue");
       await s.session.idle();
       expect((await Bun.file(join(s.cwd, "native-stdin.txt")).text()).match(/NATIVE_STDIN_BODY/g)).toHaveLength(1);
       expect(store.messages().find((m) => m.id === nextPrompt.messageId)).toHaveProperty("nativeSubmittedAt", expect.any(Number));
       expect(notes.some((n) => n.type === "native_workstream_submitted" && n.boundary === "stdin" && n.messageIds.includes(nextPrompt.messageId))).toBe(true);
+      const backlogReply = await Bun.file(join(s.cwd, "native-backlog.json")).text();
+      expect(backlogReply.match(/NEXT_BACKLOG_BODY/g)).toHaveLength(1);
+      expect(backlogReply).not.toContain("LATER_BACKLOG_BODY");
+      expect(s.session.uiMessages().filter((m) => m.id === backlog.messageId)).toHaveLength(1);
+      expect(notes.some((n) => n.type === "native_workstream_submitted" && n.boundary === "coordination" && n.messageIds.includes(backlog.messageId))).toBe(true);
     } finally {
       s.session.interrupt(true); await s.session.idle(); attached.close(); await service.stop();
       env.cleanup(); rmSync(s.cwd, { recursive: true, force: true });
