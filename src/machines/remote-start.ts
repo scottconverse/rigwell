@@ -17,10 +17,15 @@ export async function startRemoteBuild(root: string, expectedBuild: string) {
   if (!manifest.hashes || typeof manifest.hashes !== "object") throw new Error("Missing remote file manifest");
   const hashes = manifest.hashes as Record<string, string>;
   if (createHash("sha256").update(JSON.stringify(hashes)).digest("hex") !== manifest.build) throw new Error("Remote build identity mismatch");
+  const checkedDirectories = new Set([root]);
   for (const [path, expected] of Object.entries(hashes)) {
     const target = resolve(root, path), rel = relative(root, target);
-    if (!rel || rel.startsWith("..") || isAbsolute(rel)) throw new Error("Remote manifest path escaped its build");
-    for (let current = target; current !== root; current = dirname(current)) if (lstatSync(current).isSymbolicLink()) throw new Error("Remote build contains a linked file");
+    if (isAbsolute(path) || !rel || rel.startsWith("..") || isAbsolute(rel)) throw new Error("Remote manifest path escaped its build");
+    if (!lstatSync(target).isFile()) throw new Error("Remote build contains a non-regular file");
+    for (let dir = dirname(target); !checkedDirectories.has(dir); dir = dirname(dir)) {
+      if (!lstatSync(dir).isDirectory()) throw new Error("Remote build contains a linked or invalid directory");
+      checkedDirectories.add(dir);
+    }
     if (createHash("sha256").update(readFileSync(target)).digest("hex") !== expected) throw new Error(`Remote build file mismatch: ${path}`);
   }
   const socket = remoteSocketPath(root, manifest.build, process.platform as "win32" | "linux" | "darwin");

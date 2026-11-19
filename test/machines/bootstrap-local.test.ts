@@ -1,9 +1,10 @@
 // SSH itself is fake: run the generated remote commands against an isolated local fixture.
 // This exercises the real archive, shell quoting, copied runtime and owned daemon, headlessly.
-import { expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { existsSync, mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdtempSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { tmpEnv, writeJson } from "../storage/helpers.ts";
@@ -20,7 +21,33 @@ import type { Transport } from "../../src/sdk/transport.ts";
 import { fileURLToPath } from "node:url";
 import { closeSessionIndexes } from "../../src/storage/session-list.ts";
 
-test("generated bootstrap installs and starts a verified build, preserving daemon discovery and remote Files", async () => {
+let prepared: { bundle: Awaited<ReturnType<typeof buildRemoteBundle>>; file: string; digest: string } | undefined;
+let archiveDir: string | undefined;
+let windowsFixture: Promise<void> | undefined;
+const staged = Promise.withResolvers<void>();
+const launch = Promise.withResolvers<boolean>();
+// The pinned Bun runtime supports a hook timeout. The older Bun types omit it.
+const prepareFixture = beforeAll as (run: () => Promise<void>, timeoutMs: number) => void;
+prepareFixture(async () => {
+  if (process.platform !== "win32") return;
+  const bundle = await buildRemoteBundle({ platform: "win32", arch: process.arch === "arm64" ? "arm64" : "x64" });
+  archiveDir = mkdtempSync(join(tmpdir(), "rw-bootstrap-input-"));
+  const file = join(archiveDir, "build.tar");
+  prepared = { bundle, file, digest: createHash("sha256").update(bundle.bytes).digest("hex") };
+  await Bun.write(file, bundle.bytes);
+  // Wait for the genuine install commands to prepare the verified archive before
+  // starting the clock on daemon launch and all routed RPC assertions.
+  windowsFixture = exerciseFixture();
+  await Promise.race([staged.promise, windowsFixture]);
+}, 20_000);
+afterAll(async () => {
+  launch.resolve(false);
+  await windowsFixture?.catch(() => {});
+  if (prepared && existsSync(prepared.file)) unlinkSync(prepared.file);
+  if (archiveDir) rmdirSync(archiveDir);
+});
+
+async function exerciseFixture() {
   const env = tmpEnv(), base = process.platform === "win32" ? tmpdir() : "/tmp", home = mkdtempSync(join(base, "rw-")), store = new MachineStore();
   writeFileSync(join(home, "fixture.txt"), "initial");
   const discovery = join(env.rigwellHome, "daemon.json");
@@ -34,7 +61,12 @@ test("generated bootstrap installs and starts a verified build, preserving daemo
   let calls = 0;
   try {
     const machine = await bootstrapMachine("fixture", { store,
-      bundle: async (opts) => { const result = await buildRemoteBundle(opts); build = result.build; root = join(home, ".rigwell/remote", build.slice(0, 16)); return result; },
+      bundle: async (opts) => { const result = prepared?.bundle ?? await buildRemoteBundle(opts); build = result.build; root = join(home, ".rigwell/remote", build.slice(0, 16)); return result; },
+      upload: async (_machine, bytes, remote) => {
+        if (!prepared) throw new Error("Missing Windows archive fixture");
+        expect(createHash("sha256").update(bytes).digest("hex")).toBe(prepared.digest);
+        linkSync(prepared.file, remote);
+      },
       run: async (_m, command, opts) => {
         calls++;
         if (calls === 1) return process.platform === "win32" ? { code: 1, stdout: "", stderr: "fixture: no uname" } : { code: 0, stdout: `${process.platform === "darwin" ? "Darwin" : "Linux"}\n${process.arch === "arm64" ? "arm64" : "x86_64"}\n${home}\n`, stderr: "" };
@@ -47,6 +79,11 @@ test("generated bootstrap installs and starts a verified build, preserving daemo
         const closed = new Promise<number | null>((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
         child.stdin.end(opts?.input);
         const code = await closed;
+        if (prepared && code === 0 && encoded && Buffer.from(encoded, "base64").toString("utf16le").includes("& tar.exe -xmf ")) {
+          expect(stdout.trim()).toBe("installed");
+          staged.resolve();
+          if (!await launch.promise) throw new Error("Windows bootstrap fixture closed before launch");
+        }
         try { const info = JSON.parse(stdout.trim()); if (info.build === build && typeof info.pid === "number") pid = info.pid; } catch {}
         return { code, stdout, stderr };
       },
@@ -121,10 +158,15 @@ test("generated bootstrap installs and starts a verified build, preserving daemo
       // Use the native filesystem implementation for the copied executable tree.
       // Bun's recursive rm returned EPERM here after the daemon and socket were gone.
       const literal = (s: string) => "'" + s.replace(/'/g, "''") + "'";
-      const cleanup = `$p=(Resolve-Path -LiteralPath ${literal(home)}).Path;if($p -ne ${literal(home)} -or !(Split-Path -Parent $p).Equals(${literal(base)},[StringComparison]::OrdinalIgnoreCase)){throw 'Unsafe fixture cleanup'};Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction Stop`;
+      const cleanup = `$ErrorActionPreference='Stop';$p=(Resolve-Path -LiteralPath ${literal(home)}).Path;if($p -ne ${literal(home)} -or !(Split-Path -Parent $p).Equals(${literal(base)},[StringComparison]::OrdinalIgnoreCase) -or ((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Unsafe fixture cleanup'};[IO.Directory]::Delete($p,$true)`;
       await new Promise<void>((resolve, reject) => execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(cleanup, "utf16le").toString("base64")], { windowsHide: true }, (e) => e ? reject(e) : resolve()));
     } else await rm(home, { recursive: true, force: true });
     expect(existsSync(home)).toBe(false);
     closeSessionIndexes(); env.cleanup();
   }
+}
+
+test("generated bootstrap installs and starts a verified build, preserving daemon discovery and remote Files", async () => {
+  launch.resolve(true);
+  await (windowsFixture ?? exerciseFixture());
 }, 20_000);

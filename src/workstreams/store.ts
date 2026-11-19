@@ -3,6 +3,7 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { join } from "node:path";
 import type { AutonomyLevel, ReasoningEffort, TokenUsage } from "../core/types.ts";
 import { rigwellHome } from "../storage/paths.ts";
+import type { MemberWriteScope } from "./write-scope.ts";
 
 export type WorkstreamState = "proposed" | "active" | "paused" | "completed" | "archived";
 export type AgentStatus = "starting" | "working" | "idle" | "waiting_input" | "interrupted" | "failed" | "archived";
@@ -19,6 +20,7 @@ export interface Workstream {
   state: WorkstreamState; createdAt: number; updatedAt: number;
   budget?: { maxTokens?: number; maxCostUsd?: number; maxWallMinutes?: number };
   settings: WorkstreamSettings;
+  writeScopes?: MemberWriteScope[];
 }
 export interface AgentEntry {
   machine?: string;
@@ -29,6 +31,7 @@ export interface AgentEntry {
   worktreePath?: string; branch?: string; model: string; reasoningEffort: ReasoningEffort;
   autonomyLevel: AutonomyLevel; status: AgentStatus; lastActivityAt: number;
   lastSummary?: string; tokens: number; costUsd: number; tools?: string[];
+  writeFiles?: string[];
   parentAgentId?: string; depth: number;
 }
 export interface WorkstreamEvent { id: string; ts: number; type: string; [key: string]: unknown }

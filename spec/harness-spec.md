@@ -2909,7 +2909,7 @@ Lead tools (given to the lead session; members get the member set below):
 
 | Tool | Does | Inputs, outputs |
 | --- | --- | --- |
-| `ProposeWorkstream` | Asks the user to approve a workstream; nothing spawns until they accept | `title`, `goal`, markdown `plan`, `agents?[{name, role, task}]` → `accepted`, `workstreamId`, `isEdited`, user's edits |
+| `ProposeWorkstream` | Asks the user to approve a workstream; nothing spawns until they accept | `title`, `goal`, markdown `plan`, `agents?[{name, role, task, writeFiles?}]` → `accepted`, `workstreamId`, `isEdited`, user's edits |
 | `SpawnAgent` | Starts a member session | `name`, `role`, `prompt`, `model?`, `reasoningEffort?`, `worktree?: boolean \| {branch}` (default true in a git repo), `cwd?`, `machine?` (§20.6), `autonomyLevel?` (never above the lead's), `tools?` (allow-list) → `agentId`, `sessionId`, `worktreePath?` |
 | `ListAgents` | Reads the roster | `status?` → roster entries with last summary and unread counts |
 | `SendMessage` | Messages a member, `all`, or the user | `to`, `message`, `priority?: now \| next \| later` (default `next`) → `messageId`, `delivered` |
@@ -2947,6 +2947,11 @@ so a lead can spawn three agents and wait for all of them without polling.
 - Pausing a workstream interrupts working members and holds queued messages; resuming delivers them.
 - Members default to their own worktree and branch (§18) so they do not edit the same files. The built-in
   `overlap-check` skill is offered to the lead before it merges members' work.
+- When a proposal contains `writeFiles`, each named member must have an explicit list of exact relative file
+  paths. Approval covers those lists separately from the editable plan prose. Scoped members use local Git
+  worktrees and direct adapters, can read files for review, and can write only their listed files with the
+  managed file tools. The lead handles commands and additional writes. The daemon records denied writes in
+  the Workstream journal, and the desktop roster shows the most recent denial for each member.
 - A member that exits on an error is `failed`; the lead gets an `agent_failed` event and may respawn it with the same
   name (a new agentId, history kept in `events.jsonl`).
 
@@ -3483,7 +3488,8 @@ Factory runs sessions on managed cloud computers. Rigwell runs them on the user'
 - **Machines:** `rigwell machine add <name> <user@host>` (or a Settings page). Auth through the user's ssh-agent
   or key file; host keys checked against `known_hosts`.
 - **Bootstrap:** `rigwell machine bootstrap <name>` copies the matching Rigwell build, starts `rigwell daemon`
-  there, and records its version.
+  there, and records its version. A Windows destination receives the archive through OpenSSH SFTP.
+  Verify the archive before extracting it and keep the verified daemon running after the SSH launch channel closes.
 - **Transport:** the local daemon talks to the remote daemon's JSON-RPC over an SSH channel (stdio); no port is
   opened on the remote.
 - **Use:** new session, automation, mission worker or Workstream member can target a machine

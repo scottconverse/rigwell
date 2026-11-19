@@ -1,11 +1,20 @@
 import { chmodSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
+let tokenSid: string | undefined;
+function windowsTokenSid(): string | undefined {
+  if (tokenSid) return tokenSid;
+  const result = spawnSync("whoami.exe", ["/user", "/fo", "csv", "/nh"], { encoding: "utf8", windowsHide: true });
+  if (result.status !== 0) return undefined;
+  tokenSid = /,"(S-1-(?:\d+-)*\d+)"\s*$/i.exec(result.stdout)?.[1];
+  return tokenSid;
+}
+
 /**
  * Owner-only files (spec: credential file, secrets index, daemon.json, setup-script env files).
  * POSIX: mode 0600 for files, 0700 for folders.
  * Windows has no mode bits (chmod only toggles read-only), so the equivalent is an NTFS ACL: inheritance is removed
- * and only the current user is granted access (`icacls <path> /inheritance:r /grant:r <user>:F`). Best effort:
+ * and the current user's SID receives access. The process token also identifies SSH sessions correctly. Best effort:
  * if icacls is missing or fails the file stays as created (it lives under the user's profile, which other
  * non-admin users cannot read by default) and the function returns false.
  */
@@ -14,12 +23,11 @@ export function makePrivate(target: string, opts: { dir?: boolean; platform?: No
   if (platform !== "win32") {
     try { chmodSync(target, opts.dir ? 0o700 : 0o600); return true; } catch { return false; }
   }
-  const user = opts.user ?? process.env.USERNAME;
-  if (!user) return false;
-  const domain = process.env.USERDOMAIN;
-  const who = domain ? `${domain}\\${user}` : user;
-  const grant = opts.dir ? `${who}:(OI)(CI)F` : `${who}:F`;
   try {
+    const sid = opts.user ? undefined : windowsTokenSid();
+    const who = opts.user ?? (sid ? `*${sid}` : undefined);
+    if (!who) return false;
+    const grant = opts.dir ? `${who}:(OI)(CI)F` : `${who}:F`;
     const r = spawnSync("icacls", [target, "/inheritance:r", "/grant:r", grant], { stdio: "ignore", windowsHide: true });
     return r.status === 0;
   } catch {

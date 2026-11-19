@@ -55,10 +55,22 @@ describe("owner-only files", () => {
     require("node:fs").chmodSync(f, 0o644);
     expect(isPrivate(f)).toBe(false);
   });
-  test("Windows without a user name cannot set an ACL and reports false instead of throwing", () => {
-    const saved = process.env.USERNAME;
-    delete process.env.USERNAME;
-    try { expect(makePrivate(join(root, "nope"), { platform: "win32" })).toBe(false); } finally { if (saved !== undefined) process.env.USERNAME = saved; }
+  test("Windows reports an unavailable ACL target without throwing", () => {
+    expect(makePrivate(join(root, "nope"), { platform: "win32" })).toBe(false);
+  });
+  test("Windows protects a file using the token when the SSH environment supplies a workgroup domain", () => {
+    if (process.platform !== "win32") return;
+    const file = join(root, "ssh-identity-privacy.txt");
+    writeFileSync(file, "isolated ACL fixture");
+    const domain = process.env.USERDOMAIN;
+    process.env.USERDOMAIN = "WORKGROUP";
+    try {
+      expect(makePrivate(file)).toBe(true);
+      expect(isPrivate(file)).toBe(true);
+    } finally {
+      if (domain === undefined) delete process.env.USERDOMAIN;
+      else process.env.USERDOMAIN = domain;
+    }
   });
 });
 

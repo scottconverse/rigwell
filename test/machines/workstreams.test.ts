@@ -17,9 +17,12 @@ test("persistent remote Workstream members exchange acknowledged messages and sh
   const env = tmpEnv(), remoteHome = join(env.root, "remote-state");
   const repo = join(env.root, "remote-repo"), bare = join(env.root, "origin.git"); mkdirSync(repo);
   const git = (args: string[]) => execFileSync("git", args, { cwd: repo, windowsHide: true, stdio: "ignore" });
-  git(["init", "-q", "-b", "main"]); git(["config", "user.name", "Fixture"]); git(["config", "user.email", "fixture@example.invalid"]);
-  writeFileSync(join(repo, "fixture.txt"), "fixture"); git(["add", "."]); git(["commit", "-qm", "Fixture"]);
-  git(["init", "-q", "--bare", bare]); git(["remote", "add", "origin", bare]); git(["push", "-qu", "origin", "main"]);
+  git(["init", "-q", "-b", "main"]);
+  writeFileSync(join(repo, "fixture.txt"), "fixture");
+  git(["add", "fixture.txt"]);
+  git(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "Fixture"]);
+  git(["clone", "-q", "--bare", repo, bare]);
+  git(["remote", "add", "origin", bare]);
   const local = await startFakeAnthropic([{ text: "Lead received file event" }, { text: "Lead received remote progress" }, { text: "Lead received recovery event" }, { text: "Lead received recovered progress" }]);
   let sharedFile = "", sharedRequests = 0;
   const remote = await startFakeAnthropic([{ text: "Initial remote task complete" }, () => ({ toolCalls: [{ name: "Read", input: { path: sharedFile } }] }), () => ({ toolCalls: [{ name: "Edit", input: { path: sharedFile, old_text: "Initial shared note", new_text: "Updated by remote member" } }] }), { toolCalls: [{ name: "SendMessage", input: { to: "lead", message: "Remote progress" } }] }, { text: "Remote reply complete" }, { toolCalls: [{ name: "SendMessage", input: { to: "lead", message: "Recovered progress" } }] }, { text: "Recovered reply complete" }]);

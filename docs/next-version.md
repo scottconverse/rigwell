@@ -25,3 +25,10 @@ This is the tracked list of owner-requested work for the version after the shipp
 
 - Cancelled by the owner on 2026-11-15. The plan was discarded before implementation.
 - No integration, reduced verification feature or follow-up investigation is scheduled. Revisit only if the owner explicitly requests it.
+
+## NV-004: Workstream member write boundaries
+
+- Requested by the owner on 2026-11-18. Included in the Windows 0.4.4 candidate for local direct-model members with approved structured assignments.
+- Observed in the headless live Dispatch Lab run on installed Windows 0.4.3. Verifier's assigned project file was `test/acceptance.test.js`. Before integration approval, Verifier created a temporary harness outside its assigned files that referred to code from multiple worktrees. Its own Git worktree still showed only the assigned file, so checking the worktree diff alone missed the external writes.
+- The daemon denies and records writes outside assigned files. Members can review peer worktrees and ask the lead to perform operations beyond their assignment. The scoped path uses direct file tools; signed-in native clients can coordinate as lead.
+- The daemon regression verified denied writes and their records. The headless live Dispatch Lab completed review and approved integration with all three members staying within their assigned files. Evidence is recorded in the [Rigwell handoff](handoff/HANDOFF.md#state).

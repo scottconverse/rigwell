@@ -1,4 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { mkdtempSync, rmdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { LineSplitter, toLine, type Transport } from "../sdk/transport.ts";
 import { machineDefinition, type Machine } from "./store.ts";
 
@@ -23,6 +26,29 @@ export function sshArgs(input: Machine): string[] {
   if (m.identityFile) args.push("-i", m.identityFile, "-o", "IdentitiesOnly=yes");
   if (m.knownHostsFile) args.push("-o", `UserKnownHostsFile="${m.knownHostsFile.replace(/\\/g, "/").replace(/"/g, '\\"')}"`);
   return args;
+}
+
+/** OpenSSH SFTP uses the machine's existing identity and pinned host. */
+export async function uploadSftp(input: Machine, bytes: Uint8Array, remote: string): Promise<void> {
+  const machine = machineDefinition(input);
+  // ssh's -T is unrelated to scp's -T, which relaxes filename checking.
+  const args = sshArgs(machine).slice(1).map((arg) => arg === "-p" ? "-P" : arg);
+  const dir = mkdtempSync(join(tmpdir(), "rigwell-remote-upload-"));
+  const local = join(dir, "build.tar");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Bun.write(local, bytes);
+    const result = Bun.spawn(["scp", "-qs", ...args, "-o", "ClearAllForwardings=yes", local, `${machine.host}:${remote.replaceAll("\\", "/")}`], {
+      stdin: "ignore", stdout: "ignore", stderr: "pipe", windowsHide: true,
+    });
+    timer = setTimeout(() => result.kill("SIGKILL"), 120_000);
+    const [code, error] = await Promise.all([result.exited, new Response(result.stderr).text()]);
+    if (code !== 0) throw new Error(`Remote archive upload failed (${code}): ${error.trim().slice(-8000)}`);
+  } finally {
+    clearTimeout(timer);
+    rmSync(local, { force: true });
+    rmdirSync(dir);
+  }
 }
 
 /** An SSH channel carries protocol lines in both directions, including user permission requests. */
