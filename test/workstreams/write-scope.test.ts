@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { linkSync, readFileSync, writeFileSync } from "node:fs";
+import { linkSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolContext } from "../../src/core/types.ts";
 import { createApplyPatchTool } from "../../src/tools/apply-patch.ts";
@@ -33,4 +33,15 @@ test("mixed patches and hard-linked destinations are denied before any write", a
   expect((await patch.run({ input }, ctx)).isError).toBe(true);
   expect(() => readFileSync(join(cwd, "owned.txt"))).toThrow();
   expect(denials).toEqual([["linked.txt"], ["owned.txt", "unassigned.txt"]]);
+});
+
+test("assigned files can be created through the system temp path but not through worktree junctions or symlinks", async () => {
+  const cwd = tmp("ws-assigned-root");
+  const linked = join(tmp("ws-linked-root"), "worktree");
+  symlinkSync(realpathSync(cwd), linked, process.platform === "win32" ? "junction" : "dir");
+  const ctx: ToolContext = { cwd, sessionId: "test", readFiles: new Map(), signal: new AbortController().signal };
+  const create = guardMemberWrites(createCreateTool(), ["owned.txt"], () => {});
+  expect((await create.run({ path: "owned.txt", content: "allowed" }, ctx)).isError).not.toBe(true);
+  expect((await create.run({ path: "owned.txt", overwrite: true, content: "unexpected" }, { ...ctx, cwd: linked })).isError).toBe(true);
+  expect(readFileSync(join(cwd, "owned.txt"), "utf8")).toBe("allowed");
 });

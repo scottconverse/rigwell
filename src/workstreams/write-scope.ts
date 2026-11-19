@@ -1,5 +1,5 @@
-import { lstatSync, realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { lstatSync, readlinkSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { Tool } from "../core/types.ts";
 import { parsePatch } from "../tools/apply-patch.ts";
 import { resolvePath } from "../tools/util.ts";
@@ -33,6 +33,21 @@ export function approvedWriteScopes(agents: unknown): MemberWriteScope[] | undef
 // are separate execution paths and cannot inherit a file allowlist merely by displaying it to the model.
 export const scopedMemberTools = ["Read", "LS", "Grep", "Glob", "Create", "Edit", "ApplyPatch", "AskUser", "TodoWrite", "ListAgents", "SendMessage", "CreateListener"];
 
+function hasUnlinkedRoot(cwd: string): boolean {
+  const root = resolve(cwd);
+  const actual = realpathSync(root);
+  if (process.platform === "win32") return actual.toLowerCase() === root.toLowerCase();
+  if (actual === root) return true;
+
+  // macOS temporary directories can be reached through these fixed system aliases.
+  const alias = ["/var", "/tmp"].find((path) => root.startsWith(`${path}/`));
+  if (process.platform !== "darwin" || !alias || actual !== `/private${root}`) return false;
+  for (let current = root; current !== alias; current = dirname(current)) {
+    if (!lstatSync(current).isDirectory()) return false;
+  }
+  return resolve("/", readlinkSync(alias)) === `/private${alias}`;
+}
+
 function fileInScope(raw: string, cwd: string, files: string[]): boolean {
   const target = resolvePath(raw, cwd);
   const rel = relative(cwd, target);
@@ -41,7 +56,7 @@ function fileInScope(raw: string, cwd: string, files: string[]): boolean {
   const canonical = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
   if (!files.some((file) => canonical(file) === canonical(parts.join("/")))) return false;
   // Check the root and each existing component. A symlink, junction or hard link can write outside the assignment.
-  if (canonical(realpathSync(cwd)) !== canonical(resolve(cwd))) return false;
+  if (!hasUnlinkedRoot(cwd)) return false;
   let current = cwd;
   for (const [index, component] of parts.entries()) {
     current = resolve(current, component);
