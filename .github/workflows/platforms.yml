@@ -48,7 +48,19 @@ jobs:
         run: brew install ripgrep
       - name: Install ripgrep (Windows)
         if: runner.os == 'Windows'
-        run: choco install ripgrep -y
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name = 'ripgrep-15.2.0-x86_64-pc-windows-msvc'
+          $archive = Join-Path $env:RUNNER_TEMP "$name.zip"
+          Invoke-WebRequest -Uri "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/$name.zip" -OutFile $archive
+          $expected = '71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5'
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ine $expected) { throw 'ripgrep archive checksum mismatch' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $env:RUNNER_TEMP
+          $directory = Join-Path $env:RUNNER_TEMP $name
+          & (Join-Path $directory 'rg.exe') --version
+          if ($LASTEXITCODE -ne 0) { throw 'ripgrep failed to start' }
+          $directory | Out-File -LiteralPath $env:GITHUB_PATH -Encoding utf8 -Append
       - run: bun install --frozen-lockfile
       - name: Install desktop dependencies
         working-directory: desktop
