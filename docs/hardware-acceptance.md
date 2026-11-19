@@ -31,4 +31,4 @@ Release follow-up: signed Windows installation, version upgrade and rollback pas
 
 Previous Windows patch: [0.4.1](release-0.4.1.md) passed a settings-preserving signed Halo upgrade, installed approval/proposal-reconnect checks and clean-runner installation. Its installed verification was headless. The broader 0.4.0 native probe and signed rollback evidence above remain historical evidence, rather than a new interactive 0.4.1 trial.
 
-The [Windows 0.4.3 release notes](release-0.4.3.md) record the current package and headless Workstream acceptance.
+The [Windows 0.4.4 release notes](release-0.4.4.md) record the current package and headless Workstream acceptance.

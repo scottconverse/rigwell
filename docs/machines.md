@@ -11,6 +11,10 @@ provider logins or credentials. Configure model profiles and sign-ins on the oth
 uses a local socket, with WebSocket, automation webhook and background schedulers disabled for this bootstrap.
 The local application reaches that socket through SSH stdio. No inbound daemon port is opened remotely.
 
+For a Windows target, the local OpenSSH client also needs `scp` with SFTP support and the destination needs its
+SFTP subsystem enabled. Rigwell verifies the uploaded archive before extracting it. Windows starts the daemon
+under the SSH user's account so the daemon stays available after the bootstrap connection closes.
+
 Concurrent bootstraps serialize startup through an owner-only SQLite transaction. A process exit releases its OS
 lock, including an abrupt Windows exit. A waiting bootstrap rechecks the daemon's build identity before starting
 anything. It never removes a guessed stale PID lock or terminates an unrelated process.
@@ -64,8 +68,7 @@ starts in view-only mode; explicitly enable input when needed. VNC passwords rem
 its session releases its owned tunnel and viewer connections. These tunnels use SSH direct channels to remote
 loopback, with configured SSH forwarding disabled.
 
-Acceptance uses fake SSH services, a real copied build and daemon, local bare repositories, fake providers and a
-fake RFB service. Windows headless checks cover selected-machine Files and Terminal I/O, durable remote automation,
-mission handoffs/library transfer, persistent remote members, messages and listeners, browser tunnelling and the
-viewer. This does not establish a real host's SSH/keychain configuration, real remote screen interaction or a
-signed release installation.
+Headless fixture checks cover selected-machine Files and Terminal I/O, durable remote automation, mission
+handoffs and library transfer, persistent remote members, messages and listeners, browser tunnelling and the
+viewer. A separate run bootstrapped the source candidate over real SSH to a Windows host and verified that a
+session reloaded with its original transcript and Git worktree. That run used a deterministic model fixture.

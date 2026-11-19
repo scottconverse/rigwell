@@ -191,6 +191,36 @@ test("failed member status survives the session's final idle notification", asyn
   } finally { await service.stop(); fake.stop(); }
 });
 
+test("an approved member can create its assigned file but cannot write outside its assignment", async () => {
+  const outside = join(tmp("ws-unassigned"), "unexpected.txt");
+  const fake = await startFakeAnthropic([
+    { toolCalls: [{ name: "Create", input: { path: "owned.txt", content: "permitted" } },
+      { name: "Create", input: { path: "unassigned.txt", content: "denied" } },
+      { name: "Create", input: { path: outside, content: "denied" } }] },
+    { text: "Work complete" },
+  ]);
+  process.env.RIGWELL_HOME = makeHome([{ provider: "anthropic", url: fake.url, displayName: "Fixture" }]);
+  const session = lead(makeGitRepo()), service = createWorkstreamService();
+  const conn = { session: () => session, notify() {}, request: async (_method: string, params: any) => {
+    expect(params.toolUses[0].details.agents).toEqual([{ name: "Verifier", writeFiles: ["owned.txt"] }]);
+    return { selectedOption: "proceed_once" };
+  } };
+  const attached = service.attach(conn);
+  try {
+    const approved = await service.propose(conn, { ...proposal, agents: [{ name: "Verifier", writeFiles: ["owned.txt"] }] });
+    const store = new WorkstreamStore(approved.workstreamId!);
+    await expect(service.spawn(session, { name: "Other", role: "review", prompt: "Try another name" })).rejects.toThrow("approved member name");
+    const agent = await service.spawn(session, { name: "Verifier", role: "review", prompt: "Try the assigned and unassigned writes" });
+    await service.members.get(agent.agentId)!.connection.session!.idle();
+    expect(readFileSync(join(agent.worktreePath!, "owned.txt"), "utf8")).toBe("permitted");
+    expect(existsSync(join(agent.worktreePath!, "unassigned.txt"))).toBe(false);
+    expect(existsSync(outside)).toBe(false);
+    expect(store.agent(agent.agentId)).toMatchObject({ writeFiles: ["owned.txt"], status: "idle" });
+    expect(store.events().filter((event) => event.type === "member_write_denied").map((event) => event.paths)).toEqual([["unassigned.txt"], [outside]]);
+    expect(JSON.stringify(fake.requests[0])).not.toContain('"name":"Execute"');
+  } finally { attached.close(); await service.stop(); fake.stop(); }
+}, 15_000);
+
 test("proposal belongs to Session pending prompts and accepts a reattached answer", async () => {
   process.env.RIGWELL_HOME = tmp("ws-pending-proposal");
   const fixture = makeStubSession(() => ({ content: [] }));

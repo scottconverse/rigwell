@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { AgentEntry, Workstream, WorkstreamMessage } from "../../../src/workstreams/store.ts";
+import type { AgentEntry, Workstream, WorkstreamEvent, WorkstreamMessage } from "../../../src/workstreams/store.ts";
 import { workstreamMessageStatus } from "../../../src/workstreams/message-status.ts";
 import { useApp } from "../lib/app-model.ts";
 import { DaemonConn, RpcFailure } from "../lib/rpc.ts";
@@ -8,7 +8,7 @@ import { Dialog } from "./Dialogs.tsx";
 import { Prompts } from "./Prompts.tsx";
 import { live } from "./SessionScreen.tsx";
 
-interface Detail { workstream: Workstream; roster: AgentEntry[]; messages: WorkstreamMessage[]; pendingPrompts: (Omit<Prompt, "resolve"> & { agentId: string })[] }
+interface Detail { workstream: Workstream; roster: AgentEntry[]; messages: WorkstreamMessage[]; events: WorkstreamEvent[]; pendingPrompts: (Omit<Prompt, "resolve"> & { agentId: string })[] }
 
 export function Workstreams({ id, go }: { id?: string; go(route: string): void }) {
   const a = useApp(), conn = useRef<DaemonConn | undefined>(undefined);
@@ -85,6 +85,9 @@ export function Workstreams({ id, go }: { id?: string; go(route: string): void }
       <p aria-label="Budget use">{tokens.toLocaleString()} tokens{w.budget?.maxTokens != null && ` / ${w.budget.maxTokens.toLocaleString()}`} · {detail.roster.some((r) => r.costKnown === false) ? "Cost unpriced" : `$${cost.toFixed(4)} estimated`}{w.budget?.maxCostUsd != null && ` / $${w.budget.maxCostUsd}`}{w.budget?.maxWallMinutes != null && ` · ${Math.floor((Date.now() - w.createdAt) / 60000)} / ${w.budget.maxWallMinutes} minutes`}</p>
       <h2>Agents</h2><ul className="plain-list cards" aria-label="Agents">{detail.roster.map((r) => <li className="pad" key={r.agentId}>
         <h3>{r.name} <span className="badge">{r.status}</span></h3><p>{r.role}</p><p className="muted small">{r.model} · {r.branch ?? "Shared directory"} · {r.tokens.toLocaleString()} tokens · {r.costKnown === false ? "Cost unpriced" : `$${r.costUsd.toFixed(4)} estimated`}</p><p>{r.lastSummary}</p>
+        {r.writeFiles && <p className="small">{r.writeFiles.length ? `Approved write files: ${r.writeFiles.join(", ")}` : "Read-only assignment"}</p>}
+        {(detail.events ?? []).filter((event) => event.type === "member_write_denied" && event.agentId === r.agentId).slice(-1).map((event) =>
+          <p className="small" key={event.id}>Write denied: {Array.isArray(event.paths) ? event.paths.join(", ") : "outside the approved assignment"}</p>)}
         <div className="row"><button onClick={() => void open(r)}>Open transcript</button><button disabled={archived || r.status === "archived"} onClick={() => { setText(""); setMessageTo(r); }}>Message</button><button disabled={archived || r.status === "archived"} onClick={() => void act("workstream_interrupt", { agentId: r.agentId })}>Interrupt</button><button disabled={r.status === "archived"} onClick={() => { setCleanup(false); setArchive(r); }}>Archive</button></div>
       </li>)}</ul>
       {!!detail.pendingPrompts.length && <section aria-label="Member prompts"><h2>Waiting for your answer</h2><Prompts prompts={detail.pendingPrompts.map((p) => ({ ...p, resolve() {} }))} onAnswer={(requestId, answer) => { const p = detail.pendingPrompts.find((p) => p.requestId === requestId)!; void act("workstream_answer_request", { agentId: p.agentId, requestId, answer }); }} /></section>}

@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto";
 import { posix, win32 } from "node:path";
 import { buildRemoteBundle } from "./bundle.ts";
 import { MachineStore, type Machine, type RemotePlatform } from "./store.ts";
-import { remoteCommand, runSsh, shellQuote, SshTransport } from "./ssh.ts";
+import { remoteCommand, runSsh, shellQuote, SshTransport, uploadSftp } from "./ssh.ts";
 import { RpcClient } from "../sdk/client.ts";
 import { remoteSocketPath } from "./endpoint.ts";
 
@@ -24,7 +25,7 @@ export async function probeRemote(machine: Machine, run: Run = runSsh): Promise<
   return { platform, arch, home };
 }
 
-export async function bootstrapMachine(name: string, opts: { store?: MachineStore; run?: Run; bundle?: typeof buildRemoteBundle } = {}): Promise<Machine> {
+export async function bootstrapMachine(name: string, opts: { store?: MachineStore; run?: Run; bundle?: typeof buildRemoteBundle; upload?: typeof uploadSftp } = {}): Promise<Machine> {
   const store = opts.store ?? new MachineStore(), original = store.get(name), run = opts.run ?? runSsh;
   const probe = await probeRemote(original, run), paths = probe.platform === "win32" ? win32 : posix;
   const bundle = await (opts.bundle ?? buildRemoteBundle)({ platform: probe.platform, arch: probe.arch });
@@ -37,17 +38,27 @@ export async function bootstrapMachine(name: string, opts: { store?: MachineStor
     if (result.code !== 0) throw new Error(`Remote bootstrap failed: ${result.stderr || result.stdout}`);
     return result;
   };
+  let launcher = unpacked;
   if (probe.platform === "win32") {
     const parents = [paths.join(probe.home, ".rigwell"), parent];
-    await checked(ps(parents.map((p) => `$p=${literal(p)};if(Test-Path -LiteralPath $p){if((Get-Item -LiteralPath $p).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Linked remote installation directory'}}else{New-Item -ItemType Directory -Path $p|Out-Null};`).join("") + `$p=${literal(stage)};if(Test-Path -LiteralPath $p){throw 'Remote staging collision'};New-Item -ItemType Directory -Path $p|Out-Null;$f=[IO.File]::Open(${literal(archive)},[IO.FileMode]::CreateNew);try{[Console]::OpenStandardInput().CopyTo($f)}finally{$f.Dispose()}`), bundle.bytes);
-    await checked(ps(`New-Item -ItemType Directory -Path ${literal(unpacked)}|Out-Null;& tar.exe -xf ${literal(archive)} -C ${literal(unpacked)};if($LASTEXITCODE -ne 0){throw 'Archive extraction failed'};$r=${literal(root)};if(Test-Path -LiteralPath $r){if((Get-Item -LiteralPath $r).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Linked remote build'}}else{Copy-Item -LiteralPath ${literal(unpacked)} -Destination $r -Recurse}`));
+    await checked(ps(parents.map((p) => `$p=${literal(p)};if(Test-Path -LiteralPath $p){if((Get-Item -LiteralPath $p).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Linked remote installation directory'}}else{New-Item -ItemType Directory -Path $p|Out-Null};`).join("") + `$p=${literal(stage)};if(Test-Path -LiteralPath $p){throw 'Remote staging collision'};New-Item -ItemType Directory -Path $p|Out-Null`));
+    await (opts.upload ?? uploadSftp)(m, bundle.bytes, archive);
+    const checksum = createHash("sha256").update(bundle.bytes).digest("hex");
+    const verifyArchive = `$sha=[Security.Cryptography.SHA256]::Create();$f=[IO.File]::OpenRead(${literal(archive)});try{$hash=[BitConverter]::ToString($sha.ComputeHash($f)).Replace('-','')}finally{$f.Dispose();$sha.Dispose()};if($hash -ine ${literal(checksum)}){throw 'Remote archive hash mismatch'};`;
+    // The archive hash authenticates the staged launcher. Publish a new tree with
+    // a same-volume rename. If the destination already exists, run the freshly
+    // extracted launcher and have it verify the existing tree before using it.
+    const result = await checked(ps(verifyArchive + `$u=${literal(unpacked)};$r=${literal(root)};New-Item -ItemType Directory -Path $u|Out-Null;& tar.exe -xmf ${literal(archive)} -C $u;if($LASTEXITCODE -ne 0){throw 'Archive extraction failed'};if(!(Test-Path -LiteralPath $r)){try{[IO.Directory]::Move($u,$r);'installed';exit 0}catch [IO.IOException]{if(!(Test-Path -LiteralPath $r)){throw}}};$item=Get-Item -LiteralPath $r -Force;if(!$item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Invalid existing remote build'};'existing'`));
+    const installation = result.stdout.trim();
+    if (installation === "installed") launcher = root;
+    else if (installation !== "existing") throw new Error("Remote bootstrap returned invalid installation status");
   } else {
     await checked(`umask 077; test ! -L ${shellQuote(paths.join(probe.home, ".rigwell"))} && test ! -L ${shellQuote(parent)} && mkdir -p ${shellQuote(parent)} && mkdir ${shellQuote(stage)} && cat > ${shellQuote(archive)}`, bundle.bytes);
     await checked(`mkdir ${shellQuote(unpacked)} && tar -xf ${shellQuote(archive)} -C ${shellQuote(unpacked)} && chmod 700 ${shellQuote(paths.join(unpacked, "bun"))} && test ! -L ${shellQuote(root)} && if test ! -e ${shellQuote(root)}; then cp -R ${shellQuote(unpacked)} ${shellQuote(root)}; fi`);
   }
   const runtime = paths.join(root, probe.platform === "win32" ? "bun.exe" : "bun");
   // The copied launcher verifies every file, then connects to or starts this exact build.
-  const started = await checked(remoteCommand(m, [paths.join(unpacked, probe.platform === "win32" ? "bun.exe" : "bun"), paths.join(unpacked, "src/machines/remote-start.ts"), root, bundle.build]));
+  const started = await checked(remoteCommand(m, [paths.join(launcher, probe.platform === "win32" ? "bun.exe" : "bun"), paths.join(launcher, "src/machines/remote-start.ts"), root, bundle.build]));
   let info: { build?: string; version?: string; pid?: number };
   try { info = JSON.parse(started.stdout.trim()); } catch { throw new Error("Remote bootstrap returned invalid build information"); }
   if (info.build !== bundle.build || info.version !== bundle.version) throw new Error("Remote daemon does not match the copied build");

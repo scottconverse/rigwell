@@ -21,6 +21,19 @@ messages to pass interface contracts and require acknowledgement before
 implementation. Have a verifier run independent checks and route findings to
 the responsible member. Review branches before copying or merging work.
 
+For enforced assignments on local direct-model members, ask the lead to put
+every member's name and exact worktree-relative `writeFiles` in the proposal.
+An empty list gives that member a read-only assignment. Review **Members** in
+the approval panel. A plan edit changes the prose only. Reject and request a new
+proposal to change the displayed assignments.
+
+Scoped members can use direct file tools in their own worktree and read peer
+files. The lead handles commands, integration and any additional writes. The
+roster shows the approved files and recent denied writes. The lead can use its
+signed-in client. Scoped members require a direct model adapter and a local
+worktree. Existing proposals without structured assignments use the original
+member permissions.
+
 ## Desktop controls
 
 | Control | Behavior |

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { dlopen, FFIType } from "bun:ffi";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -50,22 +51,16 @@ test("worktree checks accept canonical temporary paths and Windows short-name al
   try {
     const long = join(env.root, "Academy temporary directory"); mkdirSync(long); let temporary = long;
     if (process.platform === "win32") {
-      const script = join(env.root, "short-path.ps1");
-      writeFileSync(script, `param([string]$Target)
-Add-Type -TypeDefinition @'
-using System;
-using System.Text;
-using System.Runtime.InteropServices;
-public class AcademyShortPath {
- [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
- public static extern uint GetShortPathName(string path, StringBuilder result, uint size);
-}
-'@
-$buffer = New-Object Text.StringBuilder 32768
-if ([AcademyShortPath]::GetShortPathName($Target, $buffer, 32768) -eq 0) { throw 'GetShortPathName failed' }
-$buffer.ToString()
-`);
-      temporary = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", script, long], { encoding: "utf8", windowsHide: true }).trim();
+      const kernel = dlopen("kernel32.dll", {
+        GetShortPathNameW: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32], returns: FFIType.u32 },
+      });
+      try {
+        const capacity = 32768;
+        const output = Buffer.alloc(capacity * 2);
+        const length = kernel.symbols.GetShortPathNameW(Buffer.from(`${long}\0`, "utf16le"), output, capacity);
+        if (length === 0 || length >= capacity) throw new Error("GetShortPathNameW failed");
+        temporary = output.toString("utf16le", 0, length * 2);
+      } finally { kernel.close(); }
     }
     process.env.TEMP = temporary; process.env.TMPDIR = temporary;
     const practice = startPractice("worktrees"); id = practice.id;

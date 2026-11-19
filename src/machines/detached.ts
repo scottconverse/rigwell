@@ -7,9 +7,18 @@ const powershell = (script: string) => new Promise<string>((resolve, reject) => 
 export interface DetachedDaemon { pid: number; exited(): Promise<boolean>; kill(): Promise<void> }
 export async function launchDetachedDaemon(executable: string, args: string[]): Promise<DetachedDaemon> {
   if (process.platform === "win32") {
-    // ShellExecute breaks inherited SSH pipe handles. Plain detached spawn on Windows
-    // leaves unused ancestor handles open, preventing SSH stdout EOF after bootstrap.
-    const value = await powershell(`$p=Start-Process -FilePath ${literal(executable)} -ArgumentList ${literal(args.map(windowsArgument).join(" "))} -WindowStyle Hidden -PassThru;[Console]::WriteLine(($p|ForEach-Object{@{pid=$_.Id;started=$_.StartTime.ToUniversalTime().Ticks.ToString()}}|ConvertTo-Json -Compress))`);
+    let start: string;
+    if (process.env.SSH_CONNECTION) {
+      // OpenSSH tears down its job when the bootstrap channel closes. The local
+      // process provider starts the daemon outside that job under the same user.
+      const home = process.env.RIGWELL_HOME;
+      const launchArgs = home ? ["-e", `process.env.RIGWELL_HOME=${JSON.stringify(home)};process.argv=${JSON.stringify([executable, ...args])};await import(${JSON.stringify(args[0]!.replaceAll("\\", "/"))});`] : args;
+      const command = [executable, ...launchArgs].map(windowsArgument).join(" ");
+      start = `$ProgressPreference='SilentlyContinue';$startup=New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0};$created=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=${literal(command)};ProcessStartupInformation=$startup};if($created.ReturnValue -ne 0){throw ('Could not start daemon outside SSH job: '+$created.ReturnValue)};$p=Get-Process -Id $created.ProcessId;`;
+    } else {
+      start = `$p=Start-Process -FilePath ${literal(executable)} -ArgumentList ${literal(args.map(windowsArgument).join(" "))} -WindowStyle Hidden -PassThru;`;
+    }
+    const value = await powershell(start + "[Console]::WriteLine((@{pid=$p.Id;started=$p.StartTime.ToUniversalTime().Ticks.ToString()}|ConvertTo-Json -Compress))");
     const info = JSON.parse(value);
     if (!Number.isSafeInteger(info.pid) || info.pid < 1 || !/^\d+$/.test(info.started)) throw new Error("Invalid owned daemon identity");
     const identify = `$p=Get-Process -Id ${info.pid} -ErrorAction SilentlyContinue;if(!$p){[Console]::WriteLine('exited');exit 0};if($p.StartTime.ToUniversalTime().Ticks.ToString() -ne ${literal(info.started)} -or $p.MainModule.FileName -ine ${literal(executable)}){throw 'Owned daemon identity changed'};`;
