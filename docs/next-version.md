@@ -32,3 +32,9 @@ This is the tracked list of owner-requested work for the version after the shipp
 - Observed in the headless live Dispatch Lab run on installed Windows 0.4.3. Verifier's assigned project file was `test/acceptance.test.js`. Before integration approval, Verifier created a temporary harness outside its assigned files that referred to code from multiple worktrees. Its own Git worktree still showed only the assigned file, so checking the worktree diff alone missed the external writes.
 - The daemon denies and records writes outside assigned files. Members can review peer worktrees and ask the lead to perform operations beyond their assignment. The scoped path uses direct file tools; signed-in native clients can coordinate as lead.
 - The daemon regression verified denied writes and their records. The headless live Dispatch Lab completed review and approved integration with all three members staying within their assigned files. Evidence is recorded in the [Rigwell handoff](handoff/HANDOFF.md#state).
+
+## NV-005: Dispatch Lab partial-write recovery
+
+- Requested by the owner on 2026-11-19. Status: tracked for the next version. Implementation is deferred.
+- The final review on installed Windows 0.4.4 identified an untested case in the Dispatch Lab CLI. If the plan write succeeds and the filesystem rejects the summary write, the two outputs may be left in different states. The live run verified existing-output preservation for malformed and invalid input. It did not simulate failure during the writes.
+- Reproduce a write failure after the plan write and before the summary finishes. Define and verify a recoverable outcome for both destinations with a deterministic fault-injection check. Keep coverage for normal writes and invalid-input preservation. See the [live 0.4.4 result and evidence locations](handoff/HANDOFF.md#state).
