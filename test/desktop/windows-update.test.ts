@@ -26,3 +26,20 @@ test("downloaded updates cannot install on quit or after signature refusal, incl
   updater.emit("update-downloaded", { downloadedFile: "cached-unsigned.exe" }); expect(updater.installs).toBe(0); expect(refused).toHaveLength(1);
   updater.emit("update-downloaded", { downloadedFile: "valid.exe" }); expect(updater.installs).toBe(1); expect(verified).toEqual(["cached-unsigned.exe", "valid.exe"]);
 });
+
+test("a held install waits for the click and verifies the file again", () => {
+  const updater = Object.assign(new EventEmitter(), { autoInstallOnAppQuit: true, installs: 0, quitAndInstall() { this.installs++; } });
+  const refused: unknown[] = [], held: (() => void)[] = [];
+  let valid = true, checks = 0;
+  guardWindowsInstallation(updater, error => refused.push(error), () => { checks++; if (!valid) throw new Error("signature refused"); }, install => held.push(install));
+  expect(updater.autoInstallOnAppQuit).toBe(false);
+  updater.emit("update-downloaded", { downloadedFile: "valid.exe" });
+  expect(held).toHaveLength(1); expect(updater.installs).toBe(0); expect(checks).toBe(1);
+  valid = false;
+  expect(() => held[0]!()).toThrow("signature refused"); expect(updater.installs).toBe(0);
+  valid = true;
+  held[0]!(); expect(updater.installs).toBe(1); expect(checks).toBe(3);
+  valid = false;
+  updater.emit("update-downloaded", { downloadedFile: "cached-unsigned.exe" });
+  expect(held).toHaveLength(1); expect(refused).toHaveLength(1);
+});

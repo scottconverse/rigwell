@@ -268,6 +268,8 @@ Implement request handlers for real user approval and questions when building a 
 
 Pause work before copying its data. Back up repositories and Rigwell profile data separately. Repositories contain code and branches; the profile contains sessions, definitions and other coordination data. Credential stores and official-client logins require their own recovery mechanisms and are not portable just because a profile folder is copied.
 
+When a new version is available, an `Update available` button shows at the top right of the window. Click it to download. The button shows `Downloading`, then `Restart to install`. Rigwell installs only after you click `Restart to install`. If the button shows `Update failed` or `Update refused`, point to it to read the reason, or click it to try again. File > Check for Updates runs the same steps.
+
 Keep the previous installer and a profile backup before upgrading. A binary rollback does not undo data migrations or agent edits. Linux AppImage rollback restores the retained previous application after confirmation. Windows rollback reinstalls a retained signed installer; inspect the profile before resuming work. See [release updates](release-updates.md).
 
 ## Architecture

@@ -95,6 +95,9 @@ kbd { font: 11px var(--font-code); background: var(--bg-sunken); border: 1px sol
 .titlebar button { border: none; background: none; padding: 4px 6px; display: inline-flex; align-items: center; }
 .titlebar button:not(:disabled):hover { background: var(--bg-hover); }
 .mac.no-sidebar .titlebar { padding-left: 78px; }
+.titlebar .update-button { margin-left: auto; padding: 3px 10px; border: 1px solid var(--border); border-radius: 4px; font-size: 12px; white-space: nowrap; -webkit-app-region: no-drag; }
+.titlebar .update-button.ready { font-weight: 600; }
+.titlebar .update-button.error { border-style: dashed; }
 .sidebar[hidden] { display: none; }
 .no-sidebar .sidepane.max { left: 0; }
 .nav-icon { flex: none; }
