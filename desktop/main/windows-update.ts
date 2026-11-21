@@ -31,8 +31,10 @@ export function verifyWindowsUpdate(path: string, run: SignatureRunner = nativeR
 export interface WindowsUpdateInstaller {
   autoInstallOnAppQuit: boolean;
   on(event: "update-downloaded", listener: (event: { downloadedFile: string }) => void): unknown;
-  quitAndInstall(): void;
+  quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
 }
+// The installer is an assisted wizard. Without silent mode it stops and waits for a person.
+const installNow = (updater: WindowsUpdateInstaller) => updater.quitAndInstall(true, true);
 /**
  * Gate cached and freshly downloaded updates alike, independently of library publisher defaults.
  * With `verified`, the install waits for the caller, and the file is verified again right before it runs.
@@ -42,8 +44,8 @@ export function guardWindowsInstallation(updater: WindowsUpdateInstaller, refuse
   updater.on("update-downloaded", event => {
     try {
       verify(event.downloadedFile);
-      if (verified) verified(() => { verify(event.downloadedFile); updater.quitAndInstall(); });
-      else updater.quitAndInstall();
+      if (verified) verified(() => { verify(event.downloadedFile); installNow(updater); });
+      else installNow(updater);
     } catch (error) { refused(error); }
   });
 }

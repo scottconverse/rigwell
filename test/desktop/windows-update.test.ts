@@ -43,3 +43,13 @@ test("a held install waits for the click and verifies the file again", () => {
   updater.emit("update-downloaded", { downloadedFile: "cached-unsigned.exe" });
   expect(held).toHaveLength(1); expect(refused).toHaveLength(1);
 });
+
+test("the update installs silently and starts the app again, so no setup wizard waits for a person", () => {
+  const calls: unknown[][] = [];
+  const updater = Object.assign(new EventEmitter(), { autoInstallOnAppQuit: true, quitAndInstall(...args: unknown[]) { calls.push(args); } });
+  const held: (() => void)[] = [];
+  guardWindowsInstallation(updater, () => {}, () => {}, install => held.push(install));
+  updater.emit("update-downloaded", { downloadedFile: "valid.exe" });
+  held[0]!();
+  expect(calls).toEqual([[true, true]]);
+});

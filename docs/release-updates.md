@@ -77,7 +77,8 @@ for Updates uses the same download and install steps.
 | `Update refused` | The signature check refused the file. | Downloads and checks again. |
 
 On Windows, Rigwell verifies the signature after the download and again at the
-click on `Restart to install`. On Linux AppImage, the Ed25519 check and the file
+click on `Restart to install`. The installer then runs silently, with no setup
+wizard, and starts the new version. On Linux AppImage, the Ed25519 check and the file
 replacement occur before the button shows `Restart to install`. The click only
 restarts the app.
 
