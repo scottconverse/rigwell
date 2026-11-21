@@ -122,6 +122,8 @@ The side pane provides files, a terminal, browser and side chat. Use Files to in
 
 When the model asks a question or needs approval, use the prompt controls in the session. Inbox and Workstream attention can help find work waiting on you. The displayed activity and transcript are evidence of reported execution; use actual files, command output and external readbacks to confirm results.
 
+Two or more tool calls in a row fold into one line, such as `Activity · 31 events`. Click the line to open or close the list. A group stays open while one of its tools runs, and when a tool fails. During a turn, the status line names the current step, such as `Running 1 command` or `Making 1 file change`.
+
 ### Workstreams
 
 See the [Workstreams reference](workstreams.md) for member controls, delivery priorities, budgets and recovery.
