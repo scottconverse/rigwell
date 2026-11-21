@@ -5,7 +5,7 @@ import { applyAgentEvent, memberRows, needsAgentReload, workerAgentRows, type Ag
 import { elapsed } from "../lib/missions.ts";
 import type { SessionController } from "../lib/session.ts";
 
-export function AgentsTab({ ctl, sessionId, active }: { ctl: SessionController; sessionId: string; active: boolean }) {
+export function AgentsTab({ ctl, sessionId, active }: { ctl: SessionController; sessionId?: string; active: boolean }) {
   const [rows, setRows] = useState<AgentRow[]>([]), [now, setNow] = useState(Date.now()), [loaded, setLoaded] = useState(false);
   const generation = useRef(0);
   useEffect(() => {
@@ -15,7 +15,7 @@ export function AgentsTab({ ctl, sessionId, active }: { ctl: SessionController; 
       let members: AgentRow[] = [], workers: AgentRow[] = [];
       try {
         const list = await app.request<{ workstreams: { id: string; leadSessionId: string; state: string }[] }>("list_workstreams");
-        const w = list.workstreams.find((x) => x.leadSessionId === sessionId && x.state !== "archived");
+        const w = sessionId ? list.workstreams.find((x) => x.leadSessionId === sessionId && x.state !== "archived") : undefined;
         if (w) members = memberRows((await app.request("get_workstream", { id: w.id })).roster ?? []);
       } catch { /* no workstream data */ }
       try {
