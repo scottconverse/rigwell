@@ -116,6 +116,8 @@ You can interrupt an active turn. Saved sessions can be resumed later. A stopped
 
 ### Sessions, files and terminal
 
+The sidebar shows `New Session`, `Search` and `Mission Control`. `More` opens the other pages: Inbox, Workstreams, Review, Automations, Machines, Import session, Sync, Plugins, Wiki, Analytics and Evaluations. `Search` (`Ctrl+K`) finds every page, every Settings page and your sessions. The buttons at the top of the window go `Back`, go `Forward`, and hide or show the sidebar. Rigwell remembers the sidebar choice the next time it starts. In Settings, type in `Find a setting` to find a page by its name or by an option on it, such as `theme` or `tokens`.
+
 A session records a conversation and its activity in a selected working folder. Use clear tasks and continue the same session when its context is relevant. Resume an existing session rather than repeating its work blindly; fork when you want an independent conversation based on an earlier one.
 
 The side pane provides files, a terminal, browser and side chat. Use Files to inspect the current folder and Review to compare changes. A terminal command runs real code with the selected machine's permissions. Inspect command effects before authorizing installation, deletion or deployment.

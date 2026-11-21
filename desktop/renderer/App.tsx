@@ -7,7 +7,7 @@ import { Wiki } from "./components/Wiki.tsx";
 import { Academy } from "./components/Academy.tsx";
 import { Analytics } from "./components/Analytics.tsx";
 import { Evaluations } from "./components/Evaluations.tsx";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { Automations, AutomationDetail } from "./components/Automations.tsx";
@@ -22,6 +22,8 @@ import { Palette, Sidebar } from "./components/Shell.tsx";
 import { app, useApp } from "./lib/app-model.ts";
 import { applyAppearance } from "./lib/appearance.ts";
 import { bridge } from "./lib/rpc.ts";
+import { canGoBack, canGoForward, currentRoute, startHistory, stepBack, stepForward, visit, type NavHistory } from "./lib/nav-history.ts";
+import { NavIcon } from "./components/NavIcon.tsx";
 import { installRendererCrashCapture } from "./lib/crashes.ts";
 installRendererCrashCapture((value) => bridge().diagnostics.rendererCrash(value));
 
@@ -29,9 +31,16 @@ installRendererCrashCapture((value) => bridge().diagnostics.rendererCrash(value)
 function useRoute() {
   const read = () => window.location.hash.replace(/^#/, "") || "/";
   const [route, setRoute] = useState(read());
-  useEffect(() => { const h = () => setRoute(read()); window.addEventListener("hashchange", h); return () => window.removeEventListener("hashchange", h); }, []);
+  const history = useRef<NavHistory>(startHistory(route));
+  const [, redraw] = useState(0);
+  const record = useCallback((next: NavHistory) => { history.current = next; redraw((n) => n + 1); }, []);
+  // Back and Forward move the index first, so the hash change that follows is not a new visit.
+  useEffect(() => { const h = () => { const r = read(); setRoute(r); record(visit(history.current, r)); }; window.addEventListener("hashchange", h); return () => window.removeEventListener("hashchange", h); }, [record]);
   const go = useCallback((r: string) => { window.location.hash = r; }, []);
-  return { route, go };
+  const move = useCallback((next: NavHistory) => { if (next === history.current) return; record(next); window.location.hash = currentRoute(next); }, [record]);
+  const back = useCallback(() => move(stepBack(history.current)), [move]);
+  const forward = useCallback(() => move(stepForward(history.current)), [move]);
+  return { route, go, back, forward, canBack: canGoBack(history.current), canForward: canGoForward(history.current) };
 }
 
 function Audio() {
@@ -54,7 +63,8 @@ function Audio() {
 
 function App() {
   const a = useApp();
-  const { route, go } = useRoute();
+  const { route, go, back, forward, canBack, canForward } = useRoute();
+  const sidebarHidden = a.settings?.sidebarHidden === true;
   const [palette, setPalette] = useState(false);
   const [path, query] = route.split("?");
   const parts = path.split("/").filter(Boolean);
@@ -82,10 +92,14 @@ function App() {
   const sessionId = parts[0] === "sessions" ? parts[1] : undefined;
   const folder = new URLSearchParams(query ?? "").get("folder") ?? undefined;
   return (
-    <div className="app">
-      <Sidebar sessions={a.sessions} current={sessionId} daemon={a.daemon.state} route={path} go={go} openPalette={() => setPalette(true)} />
+    <div className={`app ${sidebarHidden ? "no-sidebar" : ""} ${navigator.userAgent.includes("Mac") ? "mac" : ""}`}>
+      <Sidebar hidden={sidebarHidden} sessions={a.sessions} current={sessionId} daemon={a.daemon.state} route={path} go={go} openPalette={() => setPalette(true)} />
       <main className="content">
-        <div className="titlebar drag" aria-hidden />
+        <div className="titlebar drag" role="toolbar" aria-label="Navigation">
+          <button aria-label="Back" title="Back" disabled={!canBack} onClick={back}><NavIcon d="M10 3L5 8l5 5" /></button>
+          <button aria-label="Forward" title="Forward" disabled={!canForward} onClick={forward}><NavIcon d="M6 3l5 5-5 5" /></button>
+          <button aria-label={sidebarHidden ? "Show Sidebar" : "Hide Sidebar"} title={sidebarHidden ? "Show Sidebar" : "Hide Sidebar"} onClick={() => void app.updateSettings({ sidebarHidden: !sidebarHidden })}><NavIcon d="M2 3h12v10H2zM6 3v10" /></button>
+        </div>
         {parts[0] === "settings" ? <Settings page={parts[1] ?? "general"} go={go} />
           : parts[0] === "missions" ? (parts[1] ? <MissionDetailPage key={parts[1]} sessionId={parts[1]} go={go} /> : <Missions go={go} />)
           : parts[0] === "workstreams" ? <Workstreams key={parts[1] ?? "list"} id={parts[1]} go={go} />

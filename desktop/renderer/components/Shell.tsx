@@ -5,8 +5,42 @@ import { app } from "../lib/app-model.ts";
 import { projectArchiveTargets } from "../lib/sessions.ts";
 import { ConfirmDialog } from "./Dialogs.tsx";
 import { useAddFolder } from "./Home.tsx";
+import { MORE_PAGES, PALETTE_PAGES, SETTINGS_PAGES, matchesSettings } from "../lib/nav-pages.ts";
 
-export function Sidebar({ sessions, current, daemon, route, go, openPalette }: { sessions: SessionRow[]; current?: string; daemon: string; route?: string; go(r: string): void; openPalette(): void }) {
+/** The other pages. Arrow keys move, Enter opens, Esc closes and returns to the button. */
+function MoreMenu({ route, go }: { route?: string; go(r: string): void }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const active = MORE_PAGES.some((p) => route?.startsWith(p.route));
+  useEffect(() => {
+    if (!open) return;
+    wrap.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    const outside = (e: MouseEvent) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", outside);
+    return () => document.removeEventListener("mousedown", outside);
+  }, [open]);
+  const onKey = (e: React.KeyboardEvent) => {
+    const items = [...(wrap.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    if (e.key === "Escape") { e.preventDefault(); setOpen(false); button.current?.focus(); }
+    else if (e.key === "Tab") setOpen(false);
+    else if (e.key === "ArrowDown") { e.preventDefault(); items[(at + 1) % items.length]?.focus(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); items[(at - 1 + items.length) % items.length]?.focus(); }
+    else if (e.key === "Home") { e.preventDefault(); items[0]?.focus(); }
+    else if (e.key === "End") { e.preventDefault(); items.at(-1)?.focus(); }
+  };
+  return (
+    <div className="side-more" ref={wrap} onKeyDown={open ? onKey : undefined}>
+      <button ref={button} className={`side-btn ${active ? "on" : ""}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>More</button>
+      {open && <div className="menu" role="menu" aria-label="More pages">
+        {MORE_PAGES.map((p) => <button key={p.id} role="menuitem" className={`menu-item ${route?.startsWith(p.route) ? "on" : ""}`} onClick={() => { setOpen(false); go(p.route); }}>{p.label}</button>)}
+      </div>}
+    </div>
+  );
+}
+
+export function Sidebar({ hidden, sessions, current, daemon, route, go, openPalette }: { hidden?: boolean; sessions: SessionRow[]; current?: string; daemon: string; route?: string; go(r: string): void; openPalette(): void }) {
   const [group, setGroup] = useState(true);
   const [lookback, setLookback] = useState(30);
   const [project, setProject] = useState("");
@@ -19,22 +53,12 @@ export function Sidebar({ sessions, current, daemon, route, go, openPalette }: {
   const projects = useMemo(() => [...new Set(sessions.map((s) => s.cwd).filter(Boolean) as string[])], [sessions]);
   const groups = useMemo(() => (group ? groupByProject(rows) : ([["all", rows]] as [string, SessionRow[]][])), [rows, group]);
   return (
-    <nav className="sidebar" aria-label="Sidebar">
+    <nav className="sidebar" aria-label="Sidebar" hidden={hidden}>
       <div className="side-top drag">
         <button className="side-btn primary" onClick={() => go("/")}>New Session</button>
-        <button className={`side-btn ${route?.startsWith("/inbox") ? "on" : ""}`} onClick={() => go("/inbox")}>Inbox</button>
-        <button className={`side-btn ${route?.startsWith("/missions") ? "on" : ""}`} onClick={() => go("/missions")}>Mission Control</button>
-        <button className={`side-btn ${route?.startsWith("/workstreams") ? "on" : ""}`} onClick={() => go("/workstreams")}>Workstreams</button>
-        <button className={`side-btn ${route?.startsWith("/review") ? "on" : ""}`} onClick={() => go("/review")}>Review</button>
-        <button className={`side-btn ${route?.startsWith("/automations") ? "on" : ""}`} onClick={() => go("/automations")}>Automations</button>
-        <button className={`side-btn ${route?.startsWith("/machines") ? "on" : ""}`} onClick={() => go("/machines")}>Machines</button>
-        <button className={`side-btn ${route?.startsWith("/imports") ? "on" : ""}`} onClick={() => go("/imports")}>Import session</button>
-        <button className={`side-btn ${route?.startsWith("/sync") ? "on" : ""}`} onClick={() => go("/sync")}>Sync</button>
-        <button className={`side-btn ${route?.startsWith("/plugins") ? "on" : ""}`} onClick={() => go("/plugins")}>Plugins</button>
-        <button className={`side-btn ${route?.startsWith("/wiki") ? "on" : ""}`} onClick={() => go("/wiki")}>Wiki</button>
-        <button className={`side-btn ${route?.startsWith("/analytics") ? "on" : ""}`} onClick={() => go("/analytics")}>Analytics</button>
-        <button className={`side-btn ${route?.startsWith("/eval") ? "on" : ""}`} onClick={() => go("/eval")}>Evaluations</button>
         <button className="side-btn" onClick={openPalette}>Search <kbd>Ctrl+K</kbd></button>
+        <button className={`side-btn ${route?.startsWith("/missions") ? "on" : ""}`} onClick={() => go("/missions")}>Mission Control</button>
+        <MoreMenu route={route} go={go} />
       </div>
       <div className="side-filters">
         <select value={lookback} onChange={(e) => setLookback(Number(e.target.value))} aria-label="Last activity"><option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option><option value={0}>All</option></select>
@@ -86,8 +110,7 @@ export function Palette({ sessions, go, close, actions }: { sessions: SessionRow
   const [sel, setSel] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => input.current?.focus(), []);
-  const pages = [{ id: "eval", label: "Go to Evaluations", run: () => go("/eval") }, { id: "analytics", label: "Go to Analytics", run: () => go("/analytics") }, { id: "wiki", label: "Go to Wiki", run: () => go("/wiki") }, { id: "sync", label: "Sync between machines", run: () => go("/sync") }, { id: "imports", label: "Import shared session", run: () => go("/imports") }, { id: "machines", label: "Go to Machines", run: () => go("/machines") }, { id: "home", label: "Home", run: () => go("/") }, { id: "missions", label: "Go to Mission Control", run: () => go("/missions") }, { id: "workstreams", label: "Go to Workstreams", run: () => go("/workstreams") }, { id: "review", label: "Go to Review", run: () => go("/review") }, { id: "automations", label: "Go to Automations", run: () => go("/automations") }];
-  const settingsPages = ["general", "appearance", "notifications", "session-defaults", "missions", "custom-models", "worktrees", "connectors", "session-management", "usage", "support"].map((p) => ({ id: p, label: `Settings: ${p.split("-").map((w, i) => (i ? w : w[0].toUpperCase() + w.slice(1))).join(" ")}`, run: () => go(`/settings/${p}`) }));
+  const pages = PALETTE_PAGES.map((p) => ({ id: p.id, label: p.palette, run: () => go(p.route) }));
   const items = useMemo(() => {
     const ql = q.toLowerCase();
     const sess = sessions.filter((s) => s.archivedAt == null && !s.isSubagent && (!look || Date.now() - s.updatedAt < look * 86400_000) && `${s.title} ${s.cwd ?? ""}`.toLowerCase().includes(ql)).slice(0, 30).map((s) => ({ id: s.id, label: s.title, sub: projectName(s.cwd), kind: "Sessions" as PalTab, run: () => go(`/sessions/${s.id}`) }));
@@ -95,7 +118,7 @@ export function Palette({ sessions, go, close, actions }: { sessions: SessionRow
     const all = [
       ...sess,
       ...pages.filter((p) => match(p.label)).map((p) => ({ ...p, sub: "", kind: "Pages" as PalTab })),
-      ...settingsPages.filter((p) => match(p.label)).map((p) => ({ ...p, sub: "", kind: "Settings" as PalTab })),
+      ...SETTINGS_PAGES.filter((p) => match(`Settings: ${p.label}`) || matchesSettings(p, q)).map((p) => ({ id: p.id, label: `Settings: ${p.label}`, run: () => go(`/settings/${p.id}`), sub: "", kind: "Settings" as PalTab })),
       ...actions.filter((p) => match(p.label)).map((p) => ({ ...p, sub: "", kind: "Actions" as PalTab })),
     ];
     return tab === "All" ? all : all.filter((x) => x.kind === tab);

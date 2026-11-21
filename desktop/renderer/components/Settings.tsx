@@ -12,12 +12,9 @@ import { PhoneAccessPage } from "./PhoneAccess.tsx";
 import { DelegationPage } from "./Delegation.tsx";
 import { EmailAlerts } from "./Inbox.tsx";
 import { ConnectorSettings, CustomModels, MissionSettings, SessionDefaults, SessionManagement, UsagePage, WorktreeSettings } from "./SettingsAgent.tsx";
+import { NavIcon } from "./NavIcon.tsx";
+import { SETTINGS_PAGES, matchesSettings } from "../lib/nav-pages.ts";
 
-const PAGES = [
-  ["general", "General"], ["appearance", "Appearance"], ["notifications", "Notifications and sounds"], ["email-alerts", "Email alerts"], ["session-defaults", "Session Defaults"], ["missions", "Missions"], ["delegation", "Slack and Teams"],
-  ["custom-models", "Custom Models"], ["machines", "Remote machines"], ["worktrees", "Worktrees"], ["connectors", "Connectors"], ["session-management", "Session Management"], ["usage", "Usage"],
-  ["api-keys", "API keys"], ["environments", "Environments"], ["accounts", "Accounts"], ["profiles", "Local profiles"], ["labs", "Labs"], ["code-providers", "Code providers"], ["voice", "Voice dictation"], ["phone-access", "Phone access"], ["support", "Support"],
-] as const;
 const AGENT_PAGES: Record<string, () => React.ReactElement | null> = {
   "session-defaults": SessionDefaults, missions: MissionSettings, "custom-models": CustomModels, worktrees: WorktreeSettings,
   machines: RemoteMachines,
@@ -33,10 +30,15 @@ const AGENT_PAGES: Record<string, () => React.ReactElement | null> = {
 export function Settings({ page, go }: { page: string; go(r: string): void }) {
   const a = useApp();
   const s = a.settings;
+  const [query, setQuery] = useState("");
+  const shown = SETTINGS_PAGES.filter((p) => matchesSettings(p, query));
   return (
     <div className="settings">
       <nav className="settings-nav" aria-label="Settings">
-        {PAGES.map(([id, label]) => <button key={id} className={page === id ? "on" : ""} aria-current={page === id} onClick={() => go(`/settings/${id}`)}>{label}</button>)}
+        <input type="search" aria-label="Find a setting" placeholder="Find a setting" value={query} onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && shown[0]) go(`/settings/${shown[0].id}`); else if (e.key === "Escape") setQuery(""); }} />
+        {shown.map((p) => <button key={p.id} className={page === p.id ? "on" : ""} aria-current={page === p.id} onClick={() => go(`/settings/${p.id}`)}><NavIcon d={p.icon} />{p.label}</button>)}
+        {!shown.length && <div className="muted small pad" role="status">No settings match "{query.trim()}".</div>}
       </nav>
       <div className="settings-body">
         {!s ? <div className="muted">Loading</div> : AGENT_PAGES[page] ? (() => { const P = AGENT_PAGES[page]; return <P />; })() : page === "appearance" ? <Appearance s={s} /> : page === "notifications" ? <Notifications s={s} /> : page === "support" ? <Support /> : <General s={s} />}

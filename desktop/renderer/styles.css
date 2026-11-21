@@ -78,7 +78,16 @@ kbd { font: 11px var(--font-code); background: var(--bg-sunken); border: 1px sol
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-muted); }
 .dot.running { background: var(--ok); } .dot.failed { background: var(--danger); } .dot.restarting, .dot.starting { background: #d9a400; }
 .content { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
-.titlebar { height: 36px; flex: none; }
+.titlebar { height: 36px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 8px; }
+.titlebar button { border: none; background: none; padding: 4px 6px; display: inline-flex; align-items: center; }
+.titlebar button:not(:disabled):hover { background: var(--bg-hover); }
+.mac.no-sidebar .titlebar { padding-left: 78px; }
+.sidebar[hidden] { display: none; }
+.no-sidebar .sidepane.max { left: 0; }
+.nav-icon { flex: none; }
+.side-more { position: relative; -webkit-app-region: no-drag; }
+.side-more .menu { top: calc(100% + 4px); bottom: auto; right: 0; max-height: min(420px, 70vh); }
+.menu-item.on { background: var(--bg-hover); font-weight: 600; }
 
 .center-note { margin: auto; color: var(--fg-muted); }
 .home { flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px; overflow: auto; }
@@ -188,8 +197,9 @@ kbd { font: 11px var(--font-code); background: var(--bg-sunken); border: 1px sol
 .sc-entry { display: flex; flex-direction: column; gap: 6px; }
 
 /* Settings */
-.settings { flex: 1; display: flex; min-height: 0; } .settings-nav { width: 200px; padding: 12px; display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--border); }
-.settings-nav button { text-align: left; border: none; background: none; } .settings-nav button.on { background: var(--bg-hover); font-weight: 600; }
+.settings { flex: 1; display: flex; min-height: 0; } .settings-nav { width: 220px; flex: none; padding: 12px; display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--border); overflow-y: auto; }
+.settings-nav input { width: 100%; flex: none; margin-bottom: 6px; }
+.settings-nav button { text-align: left; border: none; background: none; display: flex; align-items: center; gap: 8px; flex: none; } .settings-nav button.on { background: var(--bg-hover); font-weight: 600; }
 .settings-body { flex: 1; overflow: auto; padding: 8px 28px 40px; max-width: 760px; }
 .row { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--border); } .row-ctl { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .seg { display: flex; } .seg button { border-radius: 0; } .seg button:first-child { border-radius: 6px 0 0 6px; } .seg button:last-child { border-radius: 0 6px 6px 0; } .seg button.on { background: var(--accent); color: var(--accent-fg); }

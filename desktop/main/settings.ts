@@ -55,6 +55,8 @@ export interface DesktopSettings {
   sounds: SoundSettings;
   /** Shortcuts that can be switched off by id. */
   disabledShortcuts: string[];
+  /** The user hid the sidebar. Kept between launches. */
+  sidebarHidden: boolean;
   windowBounds?: { x?: number; y?: number; width: number; height: number; maximized?: boolean };
 }
 
@@ -85,6 +87,7 @@ export const DEFAULT_SETTINGS: DesktopSettings = {
   notifications: { finished: true, needsInput: true },
   sounds: { completionSound: "off", awaitingInputSound: "ack", soundVolume: 100, soundFocusMode: "always", subagentSounds: "off" },
   disabledShortcuts: [],
+  sidebarHidden: false,
 };
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -109,6 +112,7 @@ export function sanitize(s: DesktopSettings): DesktopSettings {
   if (!["off", "quiet"].includes(s.sounds.subagentSounds)) s.sounds.subagentSounds = "off";
   if (!["off", "command", "remote"].includes(s.dictation.backend)) s.dictation.backend = "off";
   for (const k of ["command", "model", "language", "remoteEndpoint", "remoteApiKeyEnv"] as const) if (typeof s.dictation[k] !== "string") s.dictation[k] = "";
+  s.sidebarHidden = s.sidebarHidden === true;
   return s;
 }
 
