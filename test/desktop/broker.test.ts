@@ -50,6 +50,12 @@ describe("DaemonBroker", () => {
     for (const d of otherWindow) {
       expect(d.channel).toBe("daemon:message");
       const message = JSON.parse(d.payload.message);
+      if (message.method === "rigwell.session_state_changed") {
+        // The sidebar state: only the session id and one of three words.
+        expect(Object.keys(message.params).sort()).toEqual(["sessionId", "state"]);
+        expect(["idle", "working", "waiting"]).toContain(message.params.state);
+        continue;
+      }
       expect(message.method).toBe("rigwell.inbox_changed"); expect(message.params).toEqual({});
     }
     expect(delivered.filter((d) => { const m = JSON.parse(d.payload.message); return m.method === "rigwell.session_notification" || m.type === "request"; }).every((d) => d.w === 1)).toBe(true);

@@ -76,6 +76,7 @@ export type SetupOptions = CreateOptions & { templateId?: string; templateParame
 export class SessionController extends Store<SessionState> {
   conn?: DaemonConn;
   private terminalListeners = new Set<(n: any) => void>();
+  private agentListeners = new Set<(n: any) => void>();
   private handoff: HandoffState = {};
   private handoffListeners = new Set<(specHandoffId: string) => void>();
   /** Sent from this view; the service has not answered yet. */
@@ -142,6 +143,7 @@ export class SessionController extends Store<SessionState> {
   private onNotification(method: string, p: Record<string, any>) {
     if (method !== "session_notification") return;
     const n = p.notification ?? {};
+    if (typeof n.type === "string" && (n.type.startsWith("mission_") || n.type === "workstream_agent_status" || n.type === "workstream_updated")) for (const l of this.agentListeners) l(n);
     switch (n.type) {
       case "workstream_prompt_resolved": {
         const prompt = this.state.prompts.find((x) => x.requestId === n.requestId && x.params.workstreamId === n.workstreamId);
@@ -297,6 +299,8 @@ export class SessionController extends Store<SessionState> {
   request<T = any>(method: string, params: Record<string, unknown> = {}) { if (!this.conn) return Promise.reject(new RpcFailure(-32005, "not connected")); return this.conn.request<T>(method, params); }
 
   onTerminal(cb: (n: any) => void) { this.terminalListeners.add(cb); return () => { this.terminalListeners.delete(cb); }; }
+  /** Workstream and mission changes for the Agents tab. */
+  onAgentEvent(cb: (n: any) => void) { this.agentListeners.add(cb); return () => { this.agentListeners.delete(cb); }; }
 
   // ---- side chat
   private upsertSide(e: SideEntry) {

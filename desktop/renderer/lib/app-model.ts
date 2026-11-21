@@ -4,13 +4,14 @@ import type { DesktopSettings } from "../../main/settings.ts";
 import { DaemonConn, RpcFailure, bridge } from "./rpc.ts";
 import { Store } from "./session.ts";
 import { normalizeModel, type ModelRow } from "./models.ts";
-import { actionCall, normalizeSession, projectArchiveTargets, type SessionAction, type SessionRow } from "./sessions.ts";
+import { actionCall, applySessionState, clearSessionStates, normalizeSession, projectArchiveTargets, type SessionAction, type SessionRow, type WorkstreamRow } from "./sessions.ts";
 
 export type { ModelRow, SessionRow };
 
 export interface AppState {
   daemon: { state: string; error?: string };
   sessions: SessionRow[];
+  workstreams: WorkstreamRow[];
   models: ModelRow[];
   settings?: DesktopSettings;
   recentFolders: string[];
@@ -24,11 +25,35 @@ const loadRecent = (): string[] => { try { return JSON.parse(localStorage.getIte
 export class AppModel extends Store<AppState> {
   private control?: DaemonConn;
   private refreshVersion = 0;
-  constructor() { super({ daemon: { state: "stopped" }, sessions: [], models: [], recentFolders: loadRecent(), userSettings: {} }); }
+  constructor() { super({ daemon: { state: "stopped" }, sessions: [], workstreams: [], models: [], recentFolders: loadRecent(), userSettings: {} }); }
+
+  /** Opens the control connection. It listens for list, state and workstream changes. */
+  private async openControl() {
+    const c = await DaemonConn.open();
+    this.control = c;
+    c.onNotification = (method, p) => {
+      if (method === "session_list_changed") void this.refresh();
+      else if (method === "session_state_changed") {
+        // A new session is not in the list yet. Only then does the list load again.
+        if (p.state !== "idle" && !this.state.sessions.some((r) => r.id === p.sessionId)) void this.refresh();
+        else this.set({ sessions: applySessionState(this.state.sessions, String(p.sessionId), p.state) });
+      }
+      else if (method === "session_notification" && p.notification?.type === "workstream_updated") void this.refreshWorkstreams();
+    };
+    c.onClose = () => { if (this.control === c) this.control = undefined; this.set({ sessions: clearSessionStates(this.state.sessions) }); };
+    void this.refreshWorkstreams();
+    return c;
+  }
+
+  /** `list_workstreams` also asks the daemon to send this connection every workstream change. */
+  private async refreshWorkstreams() {
+    try { this.set({ workstreams: ((await this.control?.request("list_workstreams"))?.workstreams ?? []) as WorkstreamRow[] }); }
+    catch { /* the daemon is restarting; the next refresh reads the list again */ }
+  }
 
   async start() {
     const b = bridge();
-    b.daemon.onStatus((s) => { this.set({ daemon: s }); if (s.state === "running") void this.refresh(); });
+    b.daemon.onStatus((s) => { this.set({ daemon: s, ...(s.state === "running" ? {} : { sessions: clearSessionStates(this.state.sessions) }) }); if (s.state === "running") void this.refresh(); });
     this.set({ daemon: await b.daemon.status() });
     this.set({ settings: (await b.settings.get()) as DesktopSettings });
     b.settings.onChanged((s) => this.set({ settings: s as DesktopSettings }));
@@ -39,13 +64,8 @@ export class AppModel extends Store<AppState> {
   async refresh() {
     const version = ++this.refreshVersion;
     try {
-      if (!this.control || this.control.closed) {
-        this.control = await DaemonConn.open();
-        this.control.onNotification = (method) => { if (method === "session_list_changed") void this.refresh(); };
-        this.control.onClose = () => { this.control = undefined; };
-        void this.control.request("list_workstreams").catch(() => {});
-      }
-      const [s, m] = await Promise.all([this.listSessions(this.control), this.control.request("list_models")]);
+      if (!this.control || this.control.closed) await this.openControl();
+      const [s, m] = await Promise.all([this.listSessions(this.control!), this.control!.request("list_models")]);
       if (version !== this.refreshVersion) return;
       this.set({ sessions: s, models: (m.models ?? []).map(normalizeModel) });
       void this.refreshUserSettings();
@@ -66,13 +86,8 @@ export class AppModel extends Store<AppState> {
 
   /** A request on the app's control connection (methods that need no session: automations, missions list, models). */
   async request<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-    if (!this.control || this.control.closed) {
-      this.control = await DaemonConn.open();
-      this.control.onNotification = (method) => { if (method === "session_list_changed") void this.refresh(); };
-      this.control.onClose = () => { this.control = undefined; };
-      void this.control.request("list_workstreams").catch(() => {});
-    }
-    return this.control.request<T>(method, params);
+    if (!this.control || this.control.closed) await this.openControl();
+    return this.control!.request<T>(method, params);
   }
 
   async refreshUserSettings() { try { this.set({ userSettings: await bridge().userSettings.get() }); } catch { /* keep the old copy */ } }

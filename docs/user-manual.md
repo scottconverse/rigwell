@@ -120,7 +120,11 @@ The sidebar shows `New Session`, `Search` and `Mission Control`. `More` opens th
 
 A session records a conversation and its activity in a selected working folder. Use clear tasks and continue the same session when its context is relevant. Resume an existing session rather than repeating its work blindly; fork when you want an independent conversation based on an earlier one.
 
-The side pane provides files, a terminal, browser and side chat. Use Files to inspect the current folder and Review to compare changes. A terminal command runs real code with the selected machine's permissions. Inspect command effects before authorizing installation, deletion or deployment.
+The side pane provides files, a terminal, browser, side chat and agents. Use Files to inspect the current folder and Review to compare changes. A terminal command runs real code with the selected machine's permissions. Inspect command effects before authorizing installation, deletion or deployment.
+
+The `Agents` tab lists the Workstream members and Mission workers of the session. Each row shows the full name, the status, the current step and the running time. Click `Details` to see the tokens, cost, branch and allowed files.
+
+Each session in the sidebar shows `Working`, `Waiting for you` or `Idle`. When a Workstream runs or is paused, it shows under `Running workstreams` at the top of the list. Click it to open it. Archived and finished Workstreams do not show there.
 
 When the model asks a question or needs approval, use the prompt controls in the session. Inbox and Workstream attention can help find work waiting on you. The displayed activity and transcript are evidence of reported execution; use actual files, command output and external readbacks to confirm results.
 

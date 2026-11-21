@@ -18,7 +18,7 @@ import { createMissionService } from "../missions/index.ts";
 import { createWorkstreamService } from "../workstreams/index.ts";
 import { createSidePane, type ConnCtx, type SidePaneOptions } from "../sidepane/index.ts";
 import { DEFAULT_WS_PORT, removeDaemonInfo, startWsServer, writeDaemonInfo } from "./ws.ts";
-import { runningSessionCount, stopLiveSessions } from "../machines/live-sessions.ts";
+import { runningSessionCount, stopLiveSessions, watchLiveStates } from "../machines/live-sessions.ts";
 import { machineRuntimeInfo } from "../machines/runtime-info.ts";
 import { listWorkstreamStores } from "../workstreams/store.ts";
 import { PhoneAccess } from "../phone/server.ts";
@@ -72,6 +72,8 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
   // Worktrees (spec 18): removal and branch-change broadcasts, and the 5-minute housekeeping pass.
   const offWorktree = onWorktreeNotification((method, params) => { for (const c of conns) c.peer.notify(METHOD_PREFIX + method, params); });
   const housekeeping = opts.backgroundServices === false ? undefined : startWorktreeHousekeeping({ log: opts.log });
+  // One small message per change, so the clients do not reload the full session list.
+  const offLiveStates = watchLiveStates((sessionId, state) => { for (const c of conns) c.peer.notify(METHOD_PREFIX + "session_state_changed", { sessionId, state }); });
   // Side pane (spec §17): files, terminals, browser control and side chat. The app's CDP proxy port and endpoint
   // arrive through the environment (RIGWELL_BROWSER_CDP_PORT / RIGWELL_BROWSER_CDP_URL) or `daemon.browser_attach`.
   const sidepane = opts.sidepane === false ? undefined : createSidePane({
@@ -226,6 +228,7 @@ export async function startDaemon(opts: { socketPath: string; onShutdown?: () =>
       pending.push(workstreams.stop());
       auto?.stop();
       offWorktree();
+      offLiveStates();
       housekeeping?.stop();
       if (sidepane) pending.push(sidepane.closeAll());
       server.stop(true);

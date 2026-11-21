@@ -1,4 +1,5 @@
 import type { Session } from "../agent/session.ts";
+import { stepFrom } from "../agent/step.ts";
 import { relative, resolve } from "node:path";
 import { abortable } from "../core/abort.ts";
 import { zeroUsage, type AutonomyLevel, type ReasoningEffort, type Tool, type ToolContext, type ToolOutput, type TokenUsage } from "../core/types.ts";
@@ -207,7 +208,8 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
   }
   function updateStatus(store: WorkstreamStore, agentId: string, status: AgentEntry["status"], extra: Partial<AgentEntry> = {}) {
     const previous = store.agent(agentId)?.status;
-    const agent = store.updateAgent(agentId, { ...extra, status, lastActivityAt: Date.now() });
+    const active = status === "starting" || status === "working" || status === "waiting_input";
+    const agent = store.updateAgent(agentId, { ...extra, ...(active ? {} : { currentStep: undefined }), status, lastActivityAt: Date.now() });
     store.event("agent_status", { agentId, status }); notify(store, "workstream_agent_status", { agent });
     if (previous !== status) {
       const on = status === "idle" ? "agent_idle" : status === "failed" ? "agent_failed" : status === "waiting_input" ? "agent_waiting_input" : undefined;
@@ -333,6 +335,10 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
       notify: (n) => {
         const current = member.view;
         if (current) observe(current, n);
+        const step = stepFrom(n);
+        if (step !== undefined && step !== (store.agent(agentId)?.currentStep ?? "")) {
+          notify(store, "workstream_agent_status", { agent: store.updateAgent(agentId, { currentStep: step || undefined }) });
+        }
         if (n.type === "agent_working_state_changed") {
           // A final idle notification follows the outcome; retain failure/interruption until another turn starts.
           const terminal = ["failed", "interrupted", "archived"].includes(store.agent(agentId)!.status);
@@ -411,7 +417,7 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
     const agentId = crypto.randomUUID(), sessionId = crypto.randomUUID();
     const model = typeof input.model === "string" ? input.model : w.settings.defaultMemberModel ?? lead.settings.modelId;
     const reasoningEffort = (typeof input.reasoningEffort === "string" ? input.reasoningEffort : w.settings.defaultMemberReasoningEffort ?? lead.settings.reasoningEffort) as ReasoningEffort;
-    const row: AgentEntry = { agentId, sessionId, name, role, cwd, model, reasoningEffort, autonomyLevel: level, status: "starting", lastActivityAt: Date.now(), tokens: 0, costUsd: 0, depth: parent ? parent.depth + 1 : 1, ...(parent ? { parentAgentId: parent.agentId } : {}) };
+    const row: AgentEntry = { agentId, sessionId, name, role, cwd, model, reasoningEffort, autonomyLevel: level, status: "starting", startedAt: Date.now(), lastActivityAt: Date.now(), tokens: 0, costUsd: 0, depth: parent ? parent.depth + 1 : 1, ...(parent ? { parentAgentId: parent.agentId } : {}) };
     if (machine) row.machine = machine;
     if (Array.isArray(input.tools)) row.tools = parent?.tools ? input.tools.filter((id) => parent.tools!.includes(id)) : [...input.tools];
     else if (parent?.tools) row.tools = [...parent.tools];

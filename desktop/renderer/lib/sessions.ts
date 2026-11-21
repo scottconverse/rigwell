@@ -4,7 +4,29 @@ export interface SessionRow {
   machine?: string;
   id: string; title: string; cwd?: string; updatedAt: number;
   pinned?: boolean; archivedAt?: number | null; isSubagent?: boolean; hasUserVisibleMessages?: boolean;
+  /** Live state. No value means Idle. */
+  state?: "working" | "waiting";
 }
+
+export const sessionStateLabel = (s: Pick<SessionRow, "state">) => s.state === "working" ? "Working" : s.state === "waiting" ? "Waiting for you" : "Idle";
+
+/** Changes one row from a `session_state_changed` message. The list keeps its order. */
+export function applySessionState(rows: SessionRow[], sessionId: string, state: unknown): SessionRow[] {
+  const next = state === "working" || state === "waiting" ? state : undefined;
+  const at = rows.findIndex((r) => r.id === sessionId);
+  if (at < 0 || rows[at].state === next) return rows;
+  const { state: _old, ...rest } = rows[at];
+  const copy = [...rows];
+  copy[at] = next ? { ...rest, state: next } : rest;
+  return copy;
+}
+
+/** The connection closed, so no state is known. No row may stay Working. */
+export const clearSessionStates = (rows: SessionRow[]): SessionRow[] => rows.some((r) => r.state) ? rows.map(({ state: _old, ...rest }) => rest) : rows;
+
+export interface WorkstreamRow { id: string; title: string; state: string; leadSessionId?: string; updatedAt?: number }
+/** The sidebar list: work that has not finished. Archived, completed and proposed workstreams stay out. */
+export const runningWorkstreams = (rows: WorkstreamRow[]) => rows.filter((w) => w.state === "active" || w.state === "paused");
 
 const asMs = (v: unknown): number => (typeof v === "number" ? v : typeof v === "string" ? Date.parse(v) || 0 : 0);
 
@@ -15,6 +37,7 @@ export function normalizeSession(r: any): SessionRow {
     id: String(r.sessionId ?? r.id), title: String(r.title || "Untitled"), cwd: r.cwd, machine: r.machine, updatedAt: asMs(r.updatedAt),
     pinned: r.pinned === true, archivedAt: archived, isSubagent: r.isSubagent === true, hasUserVisibleMessages: r.hasUserVisibleMessages !== false,
     ...(r.source === "slack" || r.source === "teams" ? { source: r.source } : {}),
+    ...(r.state === "working" || r.state === "waiting" ? { state: r.state } : {}),
   };
 }
 

@@ -38,6 +38,7 @@ import { RewindError, rewindSession } from "../snapshots/index.ts";
 import { automationSetupParams } from "../automations/setup.ts";
 import type { RpcClient } from "../sdk/client.ts";
 import { RemoteSessionStore } from "../machines/sessions.ts";
+import { liveStates } from "../machines/live-sessions.ts";
 
 /** Sessions whose client went away while a prompt was open: kept for a reconnecting load_session (spec 3.1.5 pending lists). */
 const parked = new Map<string, { session: Session; files: SessionFiles; worktree?: SessionWorktree; timer: ReturnType<typeof setTimeout> }>();
@@ -715,7 +716,8 @@ export function createConnection(write: (line: string) => void, opts: Connection
         const local = listSessionEntries({ cwd: typeof p.cwd === "string" ? resolve(p.cwd) : undefined, includeArchived: p.includeArchived === true, includeBtwForks: p.includeBtwForks === true });
         const remote = new RemoteSessionStore().list().filter((r) => !r.isSubagent && (!p.cwd || r.cwd === p.cwd) && (p.includeArchived === true || !r.archivedAt) && r.hasUserVisibleMessages);
         const rows = [...local, ...remote].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt));
-        return { sessions: limit ? rows.slice(0, limit) : rows };
+        const states = liveStates();
+        return { sessions: (limit ? rows.slice(0, limit) : rows).map((r) => ({ ...r, state: states.get(r.sessionId) ?? "idle" })) };
       }
       case "search_sessions": {
         if (typeof p.query !== "string" || !p.query.trim()) throw new RpcError(ErrorCodes.INVALID_PARAMS, "query must be a non-empty string");
