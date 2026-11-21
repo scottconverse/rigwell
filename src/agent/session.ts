@@ -815,11 +815,45 @@ export class Session {
     if (opts.placement === "now") { this.interrupt(); this.queue.unshift(entry); }
     else if (opts.placement === "end_of_loop" && this.running) this.steer.push(entry);
     else this.queue.push(entry);
+    this.notifyQueued();
     this.kick();
   }
 
+  /** Messages taken from a queue whose transcript write has not finished. They stay visible as waiting until it does. */
+  private delivering: QueuedUserMessage[] = [];
+
   /** Messages accepted but not yet sent to the model (load_session queuedMessages). */
-  queuedMessages(): QueuedUserMessage[] { return [...this.steer, ...this.queue]; }
+  queuedMessages(): QueuedUserMessage[] { return [...this.delivering, ...this.steer, ...this.queue]; }
+
+  /** Tells views the waiting list changed. Attachments stay out of it; `delivered` carries the stored message once. */
+  private notifyQueued(delivered?: Message) {
+    this.notify({
+      type: "queued_messages_changed",
+      queuedMessages: this.queuedMessages().map((m) => ({ text: m.text, messageId: m.messageId, requestId: m.messageId })),
+      ...(delivered ? { delivered } : {}),
+    });
+  }
+
+  private finishDelivery(entry: QueuedUserMessage, delivered?: Message) {
+    const at = this.delivering.indexOf(entry);
+    if (at < 0) return;
+    this.delivering.splice(at, 1);
+    this.notifyQueued(delivered);
+  }
+
+  private async recordSteeringBatch(entries: QueuedUserMessage[]) {
+    this.delivering.push(...entries);
+    for (const entry of entries) {
+      try { await this.recordSteering(entry); }
+      finally { this.finishDelivery(entry); }
+    }
+  }
+
+  private steerToQueue() {
+    if (!this.steer.length) return;
+    this.queue.push(...this.steer.splice(0));
+    this.notifyQueued();
+  }
 
   private async recordSteering(entry: QueuedUserMessage) {
     const message: Message = { id: entry.messageId, role: "user",
@@ -889,7 +923,7 @@ export class Session {
   async idle() { while (this.currentRun) await this.currentRun; }
 
   interrupt(clearQueued = false) {
-    if (clearQueued) { this.queue.length = 0; this.steer.length = 0; }
+    if (clearQueued && (this.queue.length || this.steer.length)) { this.queue.length = 0; this.steer.length = 0; this.notifyQueued(); }
     this.admissionAbort?.abort();
     this.abort?.abort();
     // An interrupted turn stops waiting on the client.
@@ -901,12 +935,13 @@ export class Session {
     try {
       for (;;) {
         // Steering that arrived too late for a tool batch becomes an ordinary next message.
-        if (this.steer.length) this.queue.push(...this.steer.splice(0));
+        this.steerToQueue();
         while (this.queue.length) {
           const next = this.queue.shift()!;
+          this.delivering.push(next);
           await this.runTurn(next.text, next.messageId, undefined, next);
           if (this.fleetStopping) break;
-          if (this.steer.length) this.queue.push(...this.steer.splice(0));
+          this.steerToQueue();
         }
         // A background job finished while the model was asleep: wake it with a reminder (spec §4.3).
         if (this.fleetStopping) break;
@@ -1007,7 +1042,12 @@ export class Session {
       this.notify({ type: "agent_turn_completed", reason, turnId, tokenUsage: zeroUsage(), cumulativeTokenUsage: this.inclusiveUsage(), durationMs: 0 });
       this.setState("idle");
     }
-    finally { release?.(); if (this.admissionAbort === admission) this.admissionAbort = undefined; }
+    finally {
+      release?.();
+      if (this.admissionAbort === admission) this.admissionAbort = undefined;
+      // A turn that ended before the transcript write (blocked, refused, cancelled) must not leave its message waiting.
+      if (entry) this.finishDelivery(entry);
+    }
   }
 
   private async runAdmittedTurn(text: string, turnId: string, visibility?: "llm_only", entry?: QueuedUserMessage) {
@@ -1087,7 +1127,9 @@ export class Session {
         for (const n of [...this.deferred.takeNotices(), this.deferred.announcement()]) {
           if (n) await this.push({ id: `deferred-${crypto.randomUUID()}`, role: "user", visibility: "llm_only", content: [{ type: "text", text: n }] });
         }
-        await this.push({ id: turnId, role: "user", ...(visibility ? { visibility } : {}), ...(entry?.source ? { userMessageSource: entry.source } : {}), content: entry?.content ?? [{ type: "text", text: prompt }] });
+        const turnMessage: Message = { id: turnId, role: "user", ...(visibility ? { visibility } : {}), ...(entry?.source ? { userMessageSource: entry.source } : {}), content: entry?.content ?? [{ type: "text", text: prompt }] };
+        await this.push(turnMessage);
+        if (entry) this.finishDelivery(entry, turnMessage);
       }
 
       const repeat = new RepeatTracker();
@@ -1203,7 +1245,7 @@ export class Session {
           break;
         }
         // Steering (queuePlacement end_of_loop): delivered right after the tool results (spec 13.3).
-        for (const s of this.steer.splice(0)) await this.recordSteering(s);
+        await this.recordSteeringBatch(this.steer.splice(0));
         if (n >= g.repeatStopAt) {
           await this.guardStop("guard_repeat_stop_user", "guard_repeat_stop_transcript", vars);
           break;
@@ -1644,7 +1686,7 @@ export class Session {
             if (!ready.length) return [];
             this.queue = this.queue.filter((entry) => !isWorkstreamNext(entry));
             this.steer = this.steer.filter((entry) => !isWorkstreamNext(entry));
-            for (const entry of ready) await this.recordSteering(entry);
+            await this.recordSteeringBatch(ready);
             return ready.map((entry) => ({ id: entry.messageId, text: entry.text }));
           },
           workstreamSubmitted: (messageIds: string[], boundary: "coordination" | "stdin") => {

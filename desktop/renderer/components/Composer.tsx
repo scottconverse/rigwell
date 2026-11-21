@@ -6,6 +6,7 @@ import { Text } from "@tiptap/extension-text";
 import { Placeholder, UndoRedo } from "@tiptap/extensions";
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { SessionController } from "../lib/session.ts";
+import type { QueuedMessage, QueuePlacement } from "../lib/queued.ts";
 import { ConnectorsDialog, SkillsDialog } from "./Dialogs.tsx";
 import { ModelPicker } from "./ModelPicker.tsx";
 import { DictateButton } from "./DictateButton.tsx";
@@ -38,8 +39,10 @@ export function Composer(props: {
   autoFocus?: boolean;
   disabledShortcuts?: string[];
   onChange(patch: ComposerSettings): void;
-  onSend(text: string, attachments?: Attachment[]): void;
+  onSend(text: string, attachments?: Attachment[], placement?: QueuePlacement): void;
   onStop(): void;
+  /** Messages that wait for the agent, shown above the input. */
+  queued?: QueuedMessage[];
   extra?: React.ReactNode;
   /** The live session, when there is one: enables the Connectors dialog. */
   session?: SessionController;
@@ -95,10 +98,10 @@ export function Composer(props: {
   const clearText = () => { editor?.commands.clearContent(true); setText(""); };
 
   const cycle = (list: string[], cur: string | undefined) => list[(Math.max(0, list.indexOf(cur ?? "")) + 1) % list.length];
-  const send = () => {
+  const send = (placement?: QueuePlacement) => {
     const t = (editor ? editor.getText({ blockSeparator: "\n" }) : text).trim();
     if ((!t && !atts.length) || props.disabled) return;
-    props.onSend(t || defaultText(atts), atts.length ? atts : undefined);
+    props.onSend(t || defaultText(atts), atts.length ? atts : undefined, placement);
     clearText(); setAtts([]); setAttachError("");
   };
 
@@ -122,7 +125,7 @@ export function Composer(props: {
   };
 
   const onKey = (e: KeyboardEvent): boolean => {
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); return true; }
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(props.busy ? (e.ctrlKey ? "end_of_loop" : "end_of_turn") : undefined); return true; }
     if (e.key === "Escape") {
       e.preventDefault();
       const now = Date.now();
@@ -144,6 +147,14 @@ export function Composer(props: {
   return (
     <div className={dragging ? "composer dragging" : "composer"} data-ready={!props.disabled}
       onDragOver={(e) => { if (e.dataTransfer?.types?.includes("Files")) { e.preventDefault(); setDragging(true); } }} onDragLeave={() => setDragging(false)} onDrop={onDrop}>
+      {!!props.queued?.length && (
+        <section className="waiting" aria-label="Waiting list">
+          <div className="waiting-head">Waiting ({props.queued.length})</div>
+          <ol className="waiting-list">
+            {props.queued.map((m) => <li key={m.messageId} className="waiting-item" title={m.text}>{m.text}</li>)}
+          </ol>
+        </section>
+      )}
       {(atts.length > 0 || attachError) && (
         <div className="attachments" aria-label="Attachments">
           {atts.map((a) => (
@@ -185,7 +196,7 @@ export function Composer(props: {
         <span className="spacer" />
         {props.busy
           ? <button className="send stop" onClick={props.onStop} aria-label="Stop">Stop</button>
-          : <button className="send" disabled={(!text.trim() && !atts.length) || props.disabled} onClick={send} aria-label="Send">Send</button>}
+          : <button className="send" disabled={(!text.trim() && !atts.length) || props.disabled} onClick={() => send()} aria-label="Send">Send</button>}
       </div>
       {dialog === "connectors" && props.session && <ConnectorsDialog ctl={props.session} onClose={() => setDialog(null)} />}
       {dialog === "skills" && <SkillsDialog ctl={props.session} cwd={props.cwd ?? ""} onClose={() => setDialog(null)} />}
@@ -195,6 +206,7 @@ export function Composer(props: {
             <h3>Shortcuts and modes</h3>
             <ul>
               <li><kbd>Enter</kbd> send, <kbd>Shift+Enter</kbd> new line</li>
+              <li>During a turn: <kbd>Enter</kbd> adds to the waiting list, <kbd>Ctrl+Enter</kbd> delivers after the current tool step</li>
               <li><kbd>Esc</kbd> stop, <kbd>Esc Esc</kbd> clear</li>
               <li><kbd>Ctrl+Alt+M</kbd> toggle Spec mode, <kbd>Ctrl+Alt+R</kbd> cycle reasoning, <kbd>Ctrl+L</kbd> cycle autonomy</li>
               <li><kbd>Ctrl+K</kbd> palette, <kbd>Ctrl+P</kbd> files, <kbd>Ctrl+J</kbd> terminal, <kbd>Shift+Ctrl+B</kbd> browser, <kbd>Alt+Ctrl+S</kbd> side chat</li>

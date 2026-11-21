@@ -4,6 +4,7 @@ import { normalizeModel } from "./models.ts";
 import { actionCall } from "./sessions.ts";
 import { fromMessages, reduce, stampNew, type Item } from "./transcript.ts";
 import { nextHandoff, type HandoffState } from "./handoff.ts";
+import { mergeQueued, type QueuedMessage, type QueuePlacement } from "./queued.ts";
 
 export class Store<S> {
   protected state: S;
@@ -43,6 +44,8 @@ export interface SessionState {
   cwd: string;
   title: string;
   items: Item[];
+  /** Messages sent during a turn that the agent has not taken yet. */
+  queued: QueuedMessage[];
   working: string;
   settings: { modelId?: string; reasoningEffort?: string; interactionMode?: string; autonomyLevel?: string; tags?: { name: string }[] };
   models: { id: string; displayName?: string; provider?: string }[];
@@ -56,7 +59,7 @@ export interface SessionState {
 }
 
 const empty = (cwd: string): SessionState => ({
-  phase: "connecting", cwd, title: "New Session", items: [], working: "idle", settings: {}, models: [], tokens: { input: 0, output: 0 }, prompts: [], sideChat: [], sideWrites: false, pinned: false, archived: false,
+  phase: "connecting", cwd, title: "New Session", items: [], queued: [], working: "idle", settings: {}, models: [], tokens: { input: 0, output: 0 }, prompts: [], sideChat: [], sideWrites: false, pinned: false, archived: false,
 });
 
 export type CreateOptions = {
@@ -75,6 +78,11 @@ export class SessionController extends Store<SessionState> {
   private terminalListeners = new Set<(n: any) => void>();
   private handoff: HandoffState = {};
   private handoffListeners = new Set<(specHandoffId: string) => void>();
+  /** Sent from this view; the service has not answered yet. */
+  private unacknowledged = new Map<string, string>();
+  /** The text this view showed for a message, with its attachment names. */
+  private shownText = new Map<string, string>();
+  private serverQueued: { messageId: string; text: string }[] = [];
 
   constructor(cwd: string) { super(empty(cwd)); }
 
@@ -107,11 +115,18 @@ export class SessionController extends Store<SessionState> {
       this.conn = conn;
       conn.onNotification = (m, p) => this.onNotification(m, p);
       conn.onRequest = (m, p) => this.onRequest(m, p);
-      conn.onClose = () => { this.resolveAllPrompts(false); this.set({ phase: this.state.phase === "error" ? "error" : "disconnected", working: "idle" }); };
+      conn.onClose = () => {
+        this.resolveAllPrompts(false);
+        this.unacknowledged.clear(); this.shownText.clear(); this.serverQueued = [];
+        this.set({ phase: this.state.phase === "error" ? "error" : "disconnected", working: "idle", queued: [] });
+      };
       const r = await init(conn);
       const models = (r.availableModels ?? []).map(normalizeModel);
+      const items = fromMessages(r.session?.messages ?? [], r.messageTimes);
+      this.serverQueued = r.queuedMessages ?? [];
       this.set({
-        phase: "ready", sessionId: r.sessionId, machine: r.machine, cwd: r.cwd ?? this.state.cwd, items: fromMessages(r.session?.messages ?? [], r.messageTimes),
+        phase: "ready", sessionId: r.sessionId, machine: r.machine, cwd: r.cwd ?? this.state.cwd, items,
+        queued: mergeQueued(items, this.serverQueued, this.unacknowledged, this.shownText),
         settings: r.settings ?? {}, models, working: r.workingState ?? "idle",
         title: this.state.title,
       });
@@ -141,6 +156,19 @@ export class SessionController extends Store<SessionState> {
         }
         return;
       }
+      case "queued_messages_changed": {
+        this.serverQueued = n.queuedMessages ?? [];
+        const items = n.delivered ? this.addDelivered(n.delivered) : this.state.items;
+        this.set({ items, queued: mergeQueued(items, this.serverQueued, this.unacknowledged, this.shownText) });
+        return;
+      }
+      case "create_message":
+        if (n.message?.role === "user") {
+          const items = this.addDelivered(n.message);
+          this.set({ items, queued: mergeQueued(items, this.serverQueued, this.unacknowledged, this.shownText) });
+          return;
+        }
+        break;
       case "daemon.terminal_data": case "daemon.terminal_exit": for (const l of this.terminalListeners) l(n); return;
       case "daemon.side_chat_entry": this.upsertSide(n.entry); return;
       case "agent_working_state_changed": this.set({ working: n.newState }); return;
@@ -158,6 +186,15 @@ export class SessionController extends Store<SessionState> {
     }
     const items = stampNew(this.state.items, reduce(this.state.items, n), Date.now());
     if (items !== this.state.items) this.set({ items });
+  }
+
+  /** Adds a delivered user message once. This view keeps the text it showed, with attachment names. */
+  private addDelivered(message: any): Item[] {
+    const next = stampNew(this.state.items, reduce(this.state.items, { type: "create_message", message }), Date.now());
+    const shown = this.shownText.get(message.id);
+    this.shownText.delete(message.id);
+    if (shown === undefined) return next;
+    return next.map((item) => item.kind === "user" && item.id === `${message.id}:0` ? { ...item, text: shown } : item);
   }
 
   /** An approved spec handoff: once the notification and the ending turn were both seen, the new session is opened by the listener. */
@@ -208,15 +245,32 @@ export class SessionController extends Store<SessionState> {
 
   // ---- actions
 
-  async send(text: string, attach: { images?: { mediaType: string; data: string }[]; files?: { name: string; mediaType: string; data: string }[] } = {}) {
+  /** During a turn the message waits: `end_of_turn` adds it to the end, `end_of_loop` delivers it after the current tool step. */
+  async send(text: string, attach: { images?: { mediaType: string; data: string }[]; files?: { name: string; mediaType: string; data: string }[] } = {}, placement: QueuePlacement = "end_of_turn") {
     if (!this.conn || !text.trim()) return;
     const names = [...(attach.images ?? []).map((_, i) => `image ${i + 1}`), ...(attach.files ?? []).map((f) => f.name)];
     const shown = names.length ? `${text}\n[Attached: ${names.join(", ")}]` : text;
     if (this.attaching) await Promise.race([this.attaching, new Promise((r) => setTimeout(r, 3000))]);
     const messageId = crypto.randomUUID();
-    this.set({ items: [...this.state.items, { kind: "user", id: `${messageId}:0`, text: shown }], working: "thinking" });
+    const waits = this.state.working !== "idle";
+    if (waits) {
+      this.unacknowledged.set(messageId, shown);
+      this.shownText.set(messageId, shown);
+      this.set({ queued: mergeQueued(this.state.items, this.serverQueued, this.unacknowledged, this.shownText) });
+    } else {
+      this.set({ items: [...this.state.items, { kind: "user", id: `${messageId}:0`, text: shown }], working: "thinking" });
+    }
     if (this.state.title === "New Session") this.set({ title: text.split("\n")[0].slice(0, 60) });
-    try { await this.conn.request("add_user_message", { text, messageId, ...(attach.images?.length ? { images: attach.images } : {}), ...(attach.files?.length ? { files: attach.files } : {}) }); } catch (e) { this.set({ items: [...this.state.items, { kind: "info", id: `e-${Date.now()}`, text: (e as Error).message, level: "error" }], working: "idle" }); }
+    try {
+      await this.conn.request("add_user_message", { text, messageId, ...(waits ? { queuePlacement: placement } : {}), ...(attach.images?.length ? { images: attach.images } : {}), ...(attach.files?.length ? { files: attach.files } : {}) });
+      this.unacknowledged.delete(messageId);
+      if (waits) this.set({ queued: mergeQueued(this.state.items, this.serverQueued, this.unacknowledged, this.shownText) });
+    } catch (e) {
+      this.unacknowledged.delete(messageId);
+      this.shownText.delete(messageId);
+      const items: Item[] = [...this.state.items, { kind: "info", id: `e-${Date.now()}`, text: (e as Error).message, level: "error" }];
+      this.set({ items, queued: mergeQueued(items, this.serverQueued, this.unacknowledged, this.shownText), ...(waits ? {} : { working: "idle" }) });
+    }
   }
   interrupt() { void this.conn?.request("interrupt_session").catch(() => {}); }
   async updateSettings(patch: Record<string, unknown>) { await this.conn?.request("update_session_settings", patch); }

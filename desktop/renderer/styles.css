@@ -221,6 +221,10 @@ kbd { font: 11px var(--font-code); background: var(--bg-sunken); border: 1px sol
 
 /* Composer attachments, spec comment box, side chat controls */
 .composer.dragging { outline: 2px dashed var(--accent, #6b8afd); outline-offset: -2px; }
+.waiting { padding: 2px 4px 6px; margin-bottom: 4px; border-bottom: 1px solid var(--border); font-family: var(--font-ui); font-size: 12px; }
+.waiting-head { color: var(--fg-muted); font-weight: 600; margin-bottom: 2px; }
+.waiting-list { list-style: none; margin: 0; padding: 0; max-height: 96px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.waiting-item { padding: 2px 8px; border-radius: 6px; background: var(--bubble); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
 .attachments { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px 6px; align-items: center; }
 .attachment { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 8px; padding: 2px 6px; font-size: 12px; }
 .attachment img { width: 24px; height: 24px; object-fit: cover; border-radius: 4px; }
