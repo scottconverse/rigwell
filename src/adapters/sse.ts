@@ -1,6 +1,7 @@
 // Minimal SSE parser + request helper shared by both adapters (fetch only, no SDKs).
 import { ModelError } from "../core/types.ts";
 import { classifyThrown, errorFromResponse, networkError } from "./errors.ts";
+import { recordProviderLimits } from "./provider-limits.ts";
 
 export interface SSEEvent { event?: string; data: string }
 
@@ -108,6 +109,7 @@ export async function* guardedRequest<T>(
     } catch (e) {
       throw timeoutError() ?? classifyThrown(e, userSignal);
     }
+    recordProviderLimits(url, res.headers);
     const hdr = Number(res.headers.get(RESPONSE_LIMIT_HEADER));
     if (Number.isFinite(hdr) && hdr > 0) {
       limit = hdr;

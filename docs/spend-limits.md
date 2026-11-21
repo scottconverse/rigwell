@@ -23,4 +23,10 @@ Every Session checks admission before claiming execution ownership and checks ag
 
 This is a limit on new work based on recorded estimates, not a provider billing ceiling. Requests already in flight, concurrent requests and retries may finish above a cap. No cost forecast or reservation is invented. An already running native subscription client owns its internal tools and requests; Rigwell checks its next invocation and records reported aggregate usage. Changing a cap cannot revoke work already sent to that client.
 
+## Usage bars and provider limits
+
+Settings > Usage shows a bar for each daily and monthly cap, with the next reset in your local time. Periods stay UTC.
+
+The Provider limits section shows the request and token limits that a provider sends in its response headers, with reset times in your local time. Rigwell reads the Anthropic and OpenAI header formats, and any compatible endpoint that sends the OpenAI format. A provider that sends none of these headers, such as Google Gemini or Amazon Bedrock today, shows "Not available from this provider". Rigwell does not estimate these values. It keeps only the numbers, reset times and the host name, in memory, until the daemon stops. After a reset time passes, the old remaining count is hidden until the next response. Requests through a native subscription client or the OpenAI WebSocket path do not report here.
+
 Acceptance uses temporary stores, fake providers, actual Session engines, an evaluator and the production Usage controls connected to a real daemon in headless Chromium. No real-provider or installed desktop billing acceptance is claimed.
