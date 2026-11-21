@@ -31,6 +31,7 @@ import { localProfileController, profileDesktopData, rememberDefaultProfileData 
 import { applyProfileOption } from "../../src/storage/local-profiles.ts";
 import { appendDiagnosticLog, installProcessCrashCapture, recordCrash } from "../../src/diagnostics/reports.ts";
 import { rendererCrashReceiver, saveBugReport } from "./bug-report.ts";
+import { UpdateController, type UpdateFetched, type UpdateOffer, type UpdateState } from "./update-state.ts";
 import { guardWindowsInstallation } from "./windows-update.ts";
 
 // The bundle lives in <app>/dist next to preload.cjs and renderer/. app.getAppPath() is the folder with package.json
@@ -487,6 +488,13 @@ function registerIpc() {
   }));
 }
 
+function registerUpdateIpc() {
+  ipcMain.handle("updates:state", guard(() => updates.state));
+  ipcMain.handle("updates:check", guard(async () => { await updates.check(); return updates.state; }));
+  ipcMain.handle("updates:download", guard(() => downloadUpdate()));
+  ipcMain.handle("updates:install", guard(() => installUpdate()));
+}
+
 function applyKeepAwake() {
   if (settings.keepAwakeEnabled && blockerId === undefined) blockerId = powerSaveBlocker.start("prevent-app-suspension");
   else if (!settings.keepAwakeEnabled && blockerId !== undefined) { powerSaveBlocker.stop(blockerId); blockerId = undefined; }
@@ -495,54 +503,82 @@ function applyKeepAwake() {
 // ------------------------------------------------------------------ updates (spec 14.5)
 
 const feedUrl = () => process.env.RIGWELL_UPDATE_URL || settings.updateFeedUrl;
-let lastOffered: string | undefined;
 
-/** Checks the configured feed. `manual` shows every outcome; the automatic check only speaks up for a new version. */
-async function runUpdateCheck(manual: boolean): Promise<UpdateCheck> {
-  const r = await checkForUpdate({ feedUrl: feedUrl(), currentVersion: app.getVersion() });
-  log(`update check: ${r.status}${r.status === "available" ? " " + r.version : ""}`);
-  if (r.status !== "available") {
-    if (manual) void dialog.showMessageBox({ message: "Updates", detail: describeCheck(r) });
-    return r;
-  }
-  if (!manual && lastOffered === r.version) return r;
-  lastOffered = r.version;
-  const linux = process.platform === "linux";
-  const canInstall = app.isPackaged && !linux;
-  const choice = await dialog.showMessageBox({
-    message: "Update available", detail: describeCheck(r),
-    buttons: linux ? (r.downloadUrl ? ["Download and verify", "Later"] : ["OK"]) : canInstall ? ["Download and install", "Later"] : r.downloadUrl ? ["Open download", "Later"] : ["OK"], cancelId: 1,
-  });
-  if (choice.response !== 0) return r;
-  if (linux && r.downloadUrl) {
-    // Linux: the artifact is installed only when its Ed25519 signature verifies against the configured public key (update-verify.ts).
-    try {
-      const v = await downloadAndVerify({ url: r.downloadUrl, publicKey: process.env.RIGWELL_UPDATE_PUBLIC_KEY || settings.updatePublicKey, signature: r.signature, sha512: r.sha512, size: r.size, destDir: join(HOME, "updates") });
-      if (process.env.APPIMAGE) {
-        installLinuxUpdate(v.path, process.env.APPIMAGE);
-        const again = await dialog.showMessageBox({ message: "Update installed", detail: `Rigwell ${r.version} was verified and installed. Restart to use it.`, buttons: ["Restart now", "Later"], cancelId: 1 });
-        if (again.response === 0) { app.relaunch(); app.quit(); }
-      } else {
-        void dialog.showMessageBox({ message: "Update verified", detail: `The signature of Rigwell ${r.version} verified. It was saved to ${v.path}; install it from there.` });
-        shell.showItemInFolder(v.path);
-      }
-    } catch (e) {
-      log(`update refused: ${(e as Error).message}`);
-      void dialog.showMessageBox({ type: "error", message: e instanceof UpdateRefused ? "The update was not installed" : "The update could not be downloaded", detail: String(e instanceof Error ? e.message : e) });
+// electron-updater reports through events. One set of listeners serves every download.
+let nativeDownload: { resolve: (install: () => void) => void; reject: (error: unknown) => void; progress: (percent: number) => void } | undefined;
+let nativeListeners = false;
+async function nativeUpdater() {
+  const { autoUpdater } = await import("electron-updater");
+  autoUpdater.setFeedURL({ provider: "generic", url: feedUrl() });
+  autoUpdater.autoDownload = false;
+  if (!nativeListeners) {
+    nativeListeners = true;
+    autoUpdater.on("download-progress", (p) => nativeDownload?.progress(p.percent));
+    const verified = (install: () => void) => { nativeDownload?.resolve(install); nativeDownload = undefined; };
+    if (process.platform === "win32") {
+      guardWindowsInstallation(autoUpdater, (e) => { nativeDownload?.reject(new UpdateRefused(String(e instanceof Error ? e.message : e), "bad-signature")); nativeDownload = undefined; }, undefined, (install) => verified(() => {
+        try { install(); } catch (e) { throw new UpdateRefused(String(e instanceof Error ? e.message : e), "bad-signature"); }
+      }));
+    } else {
+      autoUpdater.autoInstallOnAppQuit = false;
+      autoUpdater.on("update-downloaded", () => verified(() => autoUpdater.quitAndInstall()));
     }
-  } else if (canInstall) {
-    try {
-      const { autoUpdater } = await import("electron-updater");
-      autoUpdater.setFeedURL({ provider: "generic", url: feedUrl() });
-      if (process.platform === "win32") {
-        guardWindowsInstallation(autoUpdater, e => { void dialog.showMessageBox({ type: "error", message: "The update signature was refused", detail: String(e) }); });
-      } else autoUpdater.on("update-downloaded", () => autoUpdater.quitAndInstall());
-      autoUpdater.autoDownload = false;
-      await autoUpdater.checkForUpdates();
-      await autoUpdater.downloadUpdate();
-    } catch (e) { void dialog.showMessageBox({ type: "error", message: "The update could not be installed", detail: String(e instanceof Error ? e.message : e) }); }
-  } else if (r.downloadUrl) void shell.openExternal(r.downloadUrl);
+  }
+  return autoUpdater;
+}
+
+/** The single download path for the Update button and the File menu. */
+async function fetchUpdate(r: UpdateOffer, progress: (percent: number) => void): Promise<UpdateFetched> {
+  if (!r.downloadUrl && (process.platform === "linux" || !app.isPackaged)) throw new Error("This release has no download for this computer.");
+  if (process.platform === "linux") {
+    // Linux: the artifact is installed only when its Ed25519 signature verifies against the configured public key (update-verify.ts).
+    const v = await downloadAndVerify({ url: r.downloadUrl!, publicKey: process.env.RIGWELL_UPDATE_PUBLIC_KEY || settings.updatePublicKey, signature: r.signature, sha512: r.sha512, size: r.size, destDir: join(HOME, "updates") });
+    if (process.env.APPIMAGE) {
+      installLinuxUpdate(v.path, process.env.APPIMAGE);
+      return { kind: "ready", install: () => { app.relaunch(); app.quit(); } };
+    }
+    void dialog.showMessageBox({ message: "Update verified", detail: `The signature of Rigwell ${r.version} verified. It was saved to ${v.path}; install it from there.` });
+    shell.showItemInFolder(v.path);
+    return { kind: "handed-off" };
+  }
+  if (!app.isPackaged) { void shell.openExternal(r.downloadUrl!); return { kind: "handed-off" }; }
+  const updater = await nativeUpdater();
+  await updater.checkForUpdates();
+  return new Promise<UpdateFetched>((resolve, reject) => {
+    nativeDownload = { resolve: (install) => resolve({ kind: "ready", install }), reject, progress };
+    updater.downloadUpdate().catch((e) => { nativeDownload = undefined; reject(e); });
+  });
+}
+
+const updates = new UpdateController({
+  check: () => checkForUpdate({ feedUrl: feedUrl(), currentVersion: app.getVersion() }),
+  fetch: fetchUpdate,
+  isRefusal: (e) => e instanceof UpdateRefused,
+  publish: (state) => broadcast("updates:state", state),
+});
+
+function showUpdateError(state: UpdateState) {
+  if (state.phase !== "error") return;
+  log(`update ${state.refused ? "refused" : "failed"}: ${state.message}`);
+  void dialog.showMessageBox({ type: "error", message: state.refused ? "The update was not installed" : "The update could not be downloaded", detail: state.message ?? "" });
+}
+async function downloadUpdate() { const state = await updates.download(); showUpdateError(state); return state; }
+function installUpdate() { const state = updates.install(); showUpdateError(state); return state; }
+
+/** Checks the configured feed. `manual` (the File menu) shows every outcome; the automatic check only sets the Update button. */
+async function runUpdateCheck(manual: boolean): Promise<UpdateCheck> {
+  const r = await updates.check();
+  log(`update check: ${r.status}${r.status === "available" ? " " + r.version : ""}`);
+  if (!manual) return r;
+  if (r.status !== "available") { void dialog.showMessageBox({ message: "Updates", detail: describeCheck(r) }); return r; }
+  if (updates.state.phase === "ready") { installUpdateChoice(r.version); return r; }
+  if (updates.state.phase === "downloading") return r;
+  const choice = await dialog.showMessageBox({ message: "Update available", detail: describeCheck(r), buttons: ["Download", "Later"], cancelId: 1 });
+  if (choice.response === 0) void downloadUpdate();
   return r;
+}
+function installUpdateChoice(version: string) {
+  void dialog.showMessageBox({ message: "Update ready", detail: `Rigwell ${version} is ready. Restart to install it.`, buttons: ["Restart to install", "Later"], cancelId: 1 }).then((c) => { if (c.response === 0) installUpdate(); });
 }
 
 // ------------------------------------------------------------------ menu
@@ -677,6 +713,7 @@ async function boot() {
   });
 
   registerIpc();
+  registerUpdateIpc();
   buildMenu();
   updateTray();
   applyKeepAwake();

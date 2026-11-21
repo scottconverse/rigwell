@@ -62,6 +62,26 @@ Back up profile data before upgrading: binary rollback does not reverse data
 format changes. Both installation and rollback refuse symbolic links or
 nonregular files in their replacement paths.
 
+## The Update button
+
+The title bar shows an Update button when a newer version is available. The
+automatic check only sets this button and does not open a dialog. File > Check
+for Updates uses the same download and install steps.
+
+| Button | Meaning | A click does this |
+|---|---|---|
+| `Update available` | The feed offers a newer version. | Starts the download. |
+| `Downloading` | The download runs. Windows and macOS show a percentage. | Nothing. |
+| `Restart to install` | The update passed its checks. | Restarts and installs. |
+| `Update failed` | The download failed. | Tries the download again. |
+| `Update refused` | The signature check refused the file. | Downloads and checks again. |
+
+On Windows, Rigwell verifies the signature after the download and again at the
+click on `Restart to install`. The installer then runs silently, with no setup
+wizard, and starts the new version. On Linux AppImage, the Ed25519 check and the file
+replacement occur before the button shows `Restart to install`. The click only
+restarts the app.
+
 ## Current published platform versions
 
 Windows uses 0.4.4. Its `latest.yml` and blockmap are generated from the final

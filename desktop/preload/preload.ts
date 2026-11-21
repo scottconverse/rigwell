@@ -74,6 +74,13 @@ const api = {
     openPath: (p: string): Promise<string> => ipcRenderer.invoke("shell:openPath", p),
   },
   app: { info: (): Promise<any> => ipcRenderer.invoke("app:info"), testSound: (kind: "awaiting" | "completion"): Promise<boolean> => ipcRenderer.invoke("alerts:test", kind) },
+  updates: {
+    state: (): Promise<import("../main/update-state.ts").UpdateState> => ipcRenderer.invoke("updates:state"),
+    check: (): Promise<import("../main/update-state.ts").UpdateState> => ipcRenderer.invoke("updates:check"),
+    download: (): Promise<import("../main/update-state.ts").UpdateState> => ipcRenderer.invoke("updates:download"),
+    install: (): Promise<import("../main/update-state.ts").UpdateState> => ipcRenderer.invoke("updates:install"),
+    onState: (cb: Cb<import("../main/update-state.ts").UpdateState>) => on("updates:state", cb),
+  },
   diagnostics: { rendererCrash: (value: { kind: string; detail: string }): Promise<boolean> => ipcRenderer.invoke("diagnostics:rendererCrash", value) },
   audio: { onPlay: (cb: Cb<{ kind: string; url?: string; volume: number }>) => on("audio:play", cb) },
   nav: { onGo: (cb: Cb<string>) => on("nav:go", cb) },

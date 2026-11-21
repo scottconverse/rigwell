@@ -24,6 +24,7 @@ import { applyAppearance } from "./lib/appearance.ts";
 import { bridge } from "./lib/rpc.ts";
 import { canGoBack, canGoForward, currentRoute, startHistory, stepBack, stepForward, visit, type NavHistory } from "./lib/nav-history.ts";
 import { NavIcon } from "./components/NavIcon.tsx";
+import { UpdateButton } from "./components/UpdateButton.tsx";
 import { installRendererCrashCapture } from "./lib/crashes.ts";
 installRendererCrashCapture((value) => bridge().diagnostics.rendererCrash(value));
 
@@ -99,6 +100,7 @@ function App() {
           <button aria-label="Back" title="Back" disabled={!canBack} onClick={back}><NavIcon d="M10 3L5 8l5 5" /></button>
           <button aria-label="Forward" title="Forward" disabled={!canForward} onClick={forward}><NavIcon d="M6 3l5 5-5 5" /></button>
           <button aria-label={sidebarHidden ? "Show Sidebar" : "Hide Sidebar"} title={sidebarHidden ? "Show Sidebar" : "Hide Sidebar"} onClick={() => void app.updateSettings({ sidebarHidden: !sidebarHidden })}><NavIcon d="M2 3h12v10H2zM6 3v10" /></button>
+          <UpdateButton />
         </div>
         {parts[0] === "settings" ? <Settings page={parts[1] ?? "general"} go={go} />
           : parts[0] === "missions" ? (parts[1] ? <MissionDetailPage key={parts[1]} sessionId={parts[1]} go={go} /> : <Missions go={go} />)
