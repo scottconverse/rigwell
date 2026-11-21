@@ -2,6 +2,11 @@
 export interface Caps { dailyUsd?: number; monthlyUsd?: number }
 export interface SpendLimits extends Caps { warnAt?: number; models?: Record<string, Caps> }
 const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+/** Spend periods are UTC: the next UTC midnight, or the first moment of the next UTC month. */
+export function spendPeriodResetAt(period: "day" | "month", now = new Date()): number {
+  const y = now.getUTCFullYear(), m = now.getUTCMonth();
+  return period === "day" ? Date.UTC(y, m, now.getUTCDate() + 1) : Date.UTC(y, m + 1, 1);
+}
 export function parseSpendLimits(value: unknown): SpendLimits {
   if (value === undefined || value === null) return {};
   if (!plain(value) || Object.keys(value).some((k) => !["dailyUsd", "monthlyUsd", "warnAt", "models"].includes(k))) throw new Error("Invalid spendLimits object");

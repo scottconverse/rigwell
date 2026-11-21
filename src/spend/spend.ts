@@ -5,6 +5,7 @@ import { ModelError, type TokenUsage } from "../core/types.ts";
 import { appendAnalyticsMetric, createSession } from "../storage/transcript.ts";
 import { updateSessionSettings } from "../storage/session-settings.ts";
 import { hasSpendCaps, parseSpendLimits, type SpendLimits } from "./config.ts";
+import { readProviderLimits } from "../adapters/provider-limits.ts";
 
 export class SpendLimitError extends ModelError {
   constructor(message: string, readonly scope: "overall" | "model", readonly modelId?: string) { super("rejected", message, { retryable: false }); this.name = "SpendLimitError"; }
@@ -38,7 +39,7 @@ export function assertSpend(model?: string): ReturnType<typeof readSpendStatus> 
   if (model && relevant.length && !status.prices[model]) throw new SpendLimitError(`Spend caps require an explicit analytics.prices entry for ${model}; unknown prices are not zero.`, "model", model);
   return status;
 }
-export const spendMethods = { get_spend_status: () => readSpendStatus() };
+export const spendMethods = { get_spend_status: () => readSpendStatus(), get_provider_limits: () => ({ providers: readProviderLimits() }) };
 
 /** Non-agent evaluator requests still enter the same dated accounting source of truth. */
 export async function recordJudgeUsage(id: string, model: string, usage: TokenUsage) {
