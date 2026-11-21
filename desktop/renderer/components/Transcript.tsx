@@ -3,6 +3,7 @@ import { bridge } from "../lib/rpc.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
 import { enhance } from "../lib/enhance.ts";
 import { mainArg, toolIcon, type Item } from "../lib/transcript.ts";
+import { activityLabel, groupActivity, liveStep, type TranscriptRow } from "../lib/activity.ts";
 
 export function Markdown({ text }: { text: string }) {
   const html = useMemo(() => renderMarkdown(text), [text]);
@@ -47,23 +48,40 @@ function ToolRow({ item }: { item: Extract<Item, { kind: "tool" }> }) {
   );
 }
 
+function ItemRow({ item: i }: { item: Item }) {
+  switch (i.kind) {
+    case "user": return <div className="bubble user">{i.text}</div>;
+    case "assistant": return <div className="assistant"><Markdown text={i.text} /></div>;
+    case "thinking": return <details className="thinking"><summary>Thinking</summary><pre>{i.text}</pre></details>;
+    case "tool": return <ToolRow item={i} />;
+    case "info": return <div className={`notice ${i.level}`}>{i.text}</div>;
+  }
+}
+
+function ActivityGroup({ group }: { group: Extract<TranscriptRow, { kind: "group" }> }) {
+  const [choice, setChoice] = useState<boolean>();
+  const open = choice ?? group.autoOpen;
+  return (
+    <div className={`activity${group.failed ? " error" : ""}`}>
+      <button className="activity-head" onClick={() => setChoice(!open)} aria-expanded={open}>
+        <span className="activity-caret" aria-hidden>{open ? "v" : ">"}</span>
+        <span>{activityLabel(group)}</span>
+      </button>
+      {open && <div className="activity-body">{group.items.map((x) => <ItemRow key={x.id} item={x} />)}</div>}
+    </div>
+  );
+}
+
 export function Transcript({ items, working }: { items: Item[]; working: string }) {
   const end = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  const rows = useMemo(() => groupActivity(items, working !== "idle"), [items, working]);
   useEffect(() => { if (stick.current) end.current?.scrollIntoView({ block: "end" }); }, [items, working]);
   return (
     <div className="transcript" ref={box} onScroll={() => { const b = box.current!; stick.current = b.scrollHeight - b.scrollTop - b.clientHeight < 80; }}>
-      {items.map((i) => {
-        switch (i.kind) {
-          case "user": return <div key={i.id} className="bubble user">{i.text}</div>;
-          case "assistant": return <div key={i.id} className="assistant"><Markdown text={i.text} /></div>;
-          case "thinking": return <details key={i.id} className="thinking"><summary>Thinking</summary><pre>{i.text}</pre></details>;
-          case "tool": return <ToolRow key={i.id} item={i} />;
-          case "info": return <div key={i.id} className={`notice ${i.level}`}>{i.text}</div>;
-        }
-      })}
-      {working !== "idle" && <div className="working" aria-live="polite">{working === "waiting_for_tool_confirmation" ? "Waiting for your approval" : "Working"}<span className="dots" /></div>}
+      {rows.map((r) => r.kind === "group" ? <ActivityGroup key={r.id} group={r} /> : <ItemRow key={r.item.id} item={r.item} />)}
+      {working !== "idle" && <div className="working" aria-live="polite">{working === "waiting_for_tool_confirmation" ? "Waiting for your approval" : liveStep(items)}<span className="dots" /></div>}
       <div ref={end} />
     </div>
   );

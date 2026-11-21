@@ -124,6 +124,11 @@ kbd { font: 11px var(--font-code); background: var(--bg-sunken); border: 1px sol
 .tool-name { font-weight: 600; } .tool-arg { color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; font-family: var(--font-code); }
 .tool-state { color: var(--fg-muted); font-size: 12px; } .tool.error .tool-state { color: var(--danger); }
 .tool-body { margin: 0; padding: 8px 10px; max-height: 260px; overflow: auto; font: var(--size-code) var(--font-code); border-top: 1px solid var(--border); white-space: pre-wrap; }
+.activity { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-panel); font-family: var(--font-ui); font-size: 13px; }
+.activity.error { border-color: var(--danger); }
+.activity-head { display: flex; gap: 8px; width: 100%; text-align: left; border: none; background: none; align-items: center; color: var(--fg-muted); }
+.activity-caret { width: 18px; text-align: center; font-family: var(--font-code); }
+.activity-body { display: flex; flex-direction: column; gap: 6px; padding: 6px; border-top: 1px solid var(--border); }
 .thinking { color: var(--fg-muted); font-size: 13px; } .thinking pre { white-space: pre-wrap; margin: 4px 0; }
 .notice { font-size: 13px; color: var(--fg-muted); } .notice.error { color: var(--danger); }
 .working { color: var(--fg-muted); font-size: 13px; } .dots::after { content: "..."; animation: blink 1.2s infinite; } @keyframes blink { 50% { opacity: 0.2; } }
