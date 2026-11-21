@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TokenUsage, Tool } from "../core/types.ts";
 import { zeroUsage } from "../core/types.ts";
+import { stepFrom } from "../agent/step.ts";
 import { parseSkillFile } from "../skills/skills.ts";
 import { isValidatorSkill, needsAttention, type Feature, type HandoffRecord, type MissionState, type MissionStore } from "./store.ts";
 import { skeleton, type WorkerOutcome, type WorkerSpawner } from "./worker.ts";
@@ -98,7 +99,7 @@ const doneStatus = (f: Feature) => f.status === "completed" || f.status === "can
 const attemptsOf = (f: Feature) => f.workerSessionIds?.length ?? 0;
 
 export class MissionRunner {
-  private activeWorker?: { id: string; interrupt(reason: string): void };
+  private activeWorker?: { id: string; interrupt(reason: string): void; featureId: string; description: string; startedAt: number; step?: string };
   private pauseRequest?: string;
   private startedAt = Date.now();
   private lastBilling = false;
@@ -173,6 +174,7 @@ export class MissionRunner {
       },
       featureWindow: { previous: brief(lastDone), focus: brief(fs[focusIdx]), next: brief(fs.slice(focusIdx + 1).find((f) => f.status === "pending")) },
       currentWorkerId: this.activeWorker?.id ?? null,
+      currentWorker: this.activeWorker ? { workerSessionId: this.activeWorker.id, featureId: this.activeWorker.featureId, description: this.activeWorker.description, startedAt: this.activeWorker.startedAt, step: this.activeWorker.step } : null,
     };
   }
 
@@ -357,16 +359,22 @@ export class MissionRunner {
       s.log("worker_selected_feature", { workerSessionId: workerId, featureId: f.id });
       s.log("worker_started", { workerSessionId: workerId, featureId: f.id, modelId: pick.modelId, ...(pick.substitutedFrom ? { substitutedFromModelId: pick.substitutedFrom } : {}) });
     }
-    this.d.notify({ type: "mission_worker_started", workerSessionId: workerId });
+    const startedAt = Date.now();
+    let step: string | undefined;
+    this.d.notify({ type: "mission_worker_started", workerSessionId: workerId, featureId: f.id, description: f.description, startedAt });
     const h = this.d.spawn({
       sessionId: workerId, resume, cwd, modelId: pick.modelId, reasoningEffort: pick.effort, missionId: st.missionId, role: "worker",
       ...(machine ? { machine, missionDir: s.dir, feature: f, extraMessage: input.messageToWorker } : {}),
       prompt: resume ? resumePrompt(input.messageToWorker) : workerPrompt(s.dir, f, workerId, cwd, input.messageToWorker),
       wrapTools: this.d.workerWrap(workerId), inactivityMs: this.d.limits.inactivityMs, startGraceMs: this.d.limits.startGraceMs,
       retryBaseDelayMs: this.d.retryBaseDelayMs, log: this.d.log,
-      onActivity: (n) => { this.d.notify({ type: "mission_worker_activity", workerSessionId: workerId, activity: n.type }); },
+      onActivity: (n) => {
+        const next = stepFrom(n);
+        if (next !== undefined) { step = next || undefined; if (this.activeWorker?.id === workerId) this.activeWorker.step = step; }
+        this.d.notify({ type: "mission_worker_activity", workerSessionId: workerId, activity: n.type, ...(next !== undefined ? { step: next } : {}) });
+      },
     });
-    this.activeWorker = { id: workerId, interrupt: h.interrupt };
+    this.activeWorker = { id: workerId, interrupt: h.interrupt, featureId: f.id, description: f.description, startedAt, step };
     this.emitProgress();
     if (this.pauseRequest) h.interrupt("pause");
     const outcome = await h.done;

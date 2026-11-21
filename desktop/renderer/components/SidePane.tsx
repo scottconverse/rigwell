@@ -2,14 +2,15 @@
 // terminal keeps its state and the browser stays drivable while another tab is showing.
 import { useState } from "react";
 import type { SessionController, SessionState } from "../lib/session.ts";
+import { AgentsTab } from "./AgentsTab.tsx";
 import { BrowserTab } from "./BrowserTab.tsx";
 import { FilesTab } from "./FilesTab.tsx";
 import { SideChatTab } from "./SideChatTab.tsx";
 import { TerminalTab } from "./TerminalTab.tsx";
 import { RemoteViewer } from "./RemoteViewer.tsx";
 
-export type PaneTab = "files" | "terminal" | "browser" | "side" | "desktop";
-const LABELS: Record<PaneTab, string> = { files: "Files", terminal: "Terminal", browser: "Browser", side: "Side chat", desktop: "Remote desktop" };
+export type PaneTab = "files" | "terminal" | "browser" | "side" | "agents" | "desktop";
+const LABELS: Record<PaneTab, string> = { files: "Files", terminal: "Terminal", browser: "Browser", side: "Side chat", agents: "Agents", desktop: "Remote desktop" };
 const KEYS: Partial<Record<PaneTab, string>> = { files: "Ctrl+P", terminal: "Ctrl+J", browser: "Shift+Ctrl+B", side: "Alt+Ctrl+S" };
 
 export function SidePane(props: {
@@ -35,6 +36,7 @@ export function SidePane(props: {
         {mounted.has("browser") && <div className="pane-page" style={show("browser")}>{state.machine ? <RemoteViewer key={state.sessionId} machine={state.machine} kind="browser" visible={tab === "browser"} /> : <BrowserTab key={state.sessionId} sessionId={state.sessionId} visible={tab === "browser"} onWantVisible={() => props.onTab("browser")} />}</div>}
         {mounted.has("desktop") && state.machine && <div className="pane-page" style={show("desktop")}><RemoteViewer key={state.sessionId} machine={state.machine} kind="desktop" visible={tab === "desktop"} /></div>}
         {mounted.has("side") && <div className="pane-page" style={show("side")}><SideChatTab ctl={ctl} entries={state.sideChat} writes={state.sideWrites} prefill={props.prefill} onPrefillUsed={props.onPrefillUsed} onPromoted={props.onPromoted} /></div>}
+        {mounted.has("agents") && <div className="pane-page" style={show("agents")}><AgentsTab key={state.sessionId} ctl={ctl} sessionId={state.sessionId} active={tab === "agents"} /></div>}
       </div>
     </aside>
   );

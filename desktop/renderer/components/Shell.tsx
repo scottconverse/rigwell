@@ -1,7 +1,7 @@
 // Sidebar and command palette (spec §14.3).
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ago, groupByProject, projectName, sidebarRows, type SessionRow } from "../lib/sessions.ts";
-import { app } from "../lib/app-model.ts";
+import { ago, groupByProject, projectName, runningWorkstreams, sessionStateLabel, sidebarRows, type SessionRow } from "../lib/sessions.ts";
+import { app, useApp } from "../lib/app-model.ts";
 import { projectArchiveTargets } from "../lib/sessions.ts";
 import { ConfirmDialog } from "./Dialogs.tsx";
 import { useAddFolder } from "./Home.tsx";
@@ -52,6 +52,7 @@ export function Sidebar({ hidden, sessions, current, daemon, route, go, openPale
   const rows = useMemo(() => sidebarRows(sessions, { lookbackDays: lookback, project }), [sessions, lookback, project]);
   const projects = useMemo(() => [...new Set(sessions.map((s) => s.cwd).filter(Boolean) as string[])], [sessions]);
   const groups = useMemo(() => (group ? groupByProject(rows) : ([["all", rows]] as [string, SessionRow[]][])), [rows, group]);
+  const workstreams = runningWorkstreams(useApp().workstreams);
   return (
     <nav className="sidebar" aria-label="Sidebar" hidden={hidden}>
       <div className="side-top drag">
@@ -67,6 +68,14 @@ export function Sidebar({ hidden, sessions, current, daemon, route, go, openPale
         <button className="small" title="Add a project folder" aria-label="Add folder" onClick={() => void adder.pick()}>Add folder</button>
       </div>
       <div className="side-list">
+        {workstreams.length > 0 && <section className="side-group" aria-label="Running workstreams">
+          <div className="side-group-head"><span>Running workstreams</span></div>
+          {workstreams.map((w) => (
+            <button key={w.id} className={`side-row ${route === `/workstreams/${w.id}` ? "on" : ""}`} onClick={() => go(`/workstreams/${w.id}`)}>
+              <span className="side-title">{w.title}</span><span className="side-meta"><span className={`live-state ${w.state === "active" ? "working" : ""}`}>{w.state === "active" ? "Running" : "Paused"}</span></span>
+            </button>
+          ))}
+        </section>}
         {groups.map(([k, list]) => (
           <div key={k} className="side-group">
             {group && <div className="side-group-head"><span>{projectName(k)}</span><span className="spacer" />
@@ -77,7 +86,8 @@ export function Sidebar({ hidden, sessions, current, daemon, route, go, openPale
               <button title="New session in this project" aria-label={`New session in ${projectName(k)}`} onClick={() => go(`/?folder=${encodeURIComponent(k)}`)}>+</button></div>}
             {list.map((s) => (
               <button key={s.id} className={`side-row ${s.id === current ? "on" : ""}`} onClick={() => go(`/sessions/${s.id}`)} title={s.cwd}>
-                <span className="side-title">{s.pinned && <span className="pin" title="Pinned" aria-label="Pinned">* </span>}{s.title}{s.source && <span className="badge" aria-label="Session source">{s.source === "slack" ? "Slack" : "Teams"}</span>}</span><span className="muted small">{ago(s.updatedAt)}</span>
+                <span className="side-title">{s.pinned && <span className="pin" title="Pinned" aria-label="Pinned">* </span>}{s.title}{s.source && <span className="badge" aria-label="Session source">{s.source === "slack" ? "Slack" : "Teams"}</span>}</span>
+                <span className="side-meta"><span className={`live-state ${s.state ?? "idle"}`} data-testid="session-state">{sessionStateLabel(s)}</span><span className="muted small">{ago(s.updatedAt)}</span></span>
               </button>
             ))}
           </div>

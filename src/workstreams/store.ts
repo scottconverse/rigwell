@@ -30,6 +30,10 @@ export interface AgentEntry {
   agentId: string; name: string; role: string; sessionId: string; cwd: string;
   worktreePath?: string; branch?: string; model: string; reasoningEffort: ReasoningEffort;
   autonomyLevel: AutonomyLevel; status: AgentStatus; lastActivityAt: number;
+  /** When the agent was created (ms). Older rows do not have it. */
+  startedAt?: number;
+  /** What the agent does now, such as "Running Edit". Empty when it is not working. */
+  currentStep?: string;
   lastSummary?: string; tokens: number; costUsd: number; tools?: string[];
   writeFiles?: string[];
   parentAgentId?: string; depth: number;

@@ -1,6 +1,6 @@
 // One agent session: holds the transcript, runs turns, emits notifications (spec §3.1.7, §4).
 import { homedir } from "node:os";
-import { fleetIsStopping, registerLiveSession } from "../machines/live-sessions.ts";
+import { fleetIsStopping, publishLiveStates, registerLiveSession } from "../machines/live-sessions.ts";
 import { rigwellHome } from "../storage/paths.ts";
 import { configuredSessionLease, type SessionLease } from "../sync/lease.ts";
 import { readSyncConfig } from "../sync/config.ts";
@@ -599,6 +599,7 @@ export class Session {
     if (this.workingState === s) return;
     this.workingState = s;
     this.notify({ type: "agent_working_state_changed", newState: s, ...(s === "idle" ? { backgroundWork: this.backgroundWork() } : {}) });
+    publishLiveStates();
   }
 
   /** Background jobs (Execute, Task, Script) still running; reported on idle working-state notifications. */
