@@ -536,6 +536,23 @@ export function loadTranscript(files: SessionFiles): LoadedSession {
   return { start: finalStart, compaction, messages: msgs.map((x) => x.msg), rewound, allMessageIds: everyId.map((x) => x.id), outcomes, ...(todos ? { todos } : {}), files, skippedLines, unknownRecords };
 }
 
+/** Stored time of each wanted message, by id. A message with no valid timestamp has no entry. */
+export function readMessageTimes(files: SessionFiles, ids: Iterable<string>): Record<string, string> {
+  const wanted = new Set(ids);
+  const out: Record<string, string> = {};
+  if (!wanted.size) return out;
+  let text: string;
+  try { text = readFileSync(files.transcriptPath, "utf8"); } catch { return out; }
+  for (const line of text.split("\n")) {
+    if (!line.includes('"timestamp"')) continue;
+    try {
+      const o = JSON.parse(line);
+      if (o?.type === "message" && wanted.has(o.id) && typeof o.timestamp === "string" && Number.isFinite(Date.parse(o.timestamp))) out[o.id] = o.timestamp;
+    } catch { /* a bad line has no time */ }
+  }
+  return out;
+}
+
 /** Newest-first (mtime) scan; no index. With `cwd`, only that project's folder. */
 export function listSessions(cwd?: string): SessionSummary[] {
   const root = sessionsDir();

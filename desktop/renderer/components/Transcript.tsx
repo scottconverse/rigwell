@@ -4,6 +4,7 @@ import { renderMarkdown } from "../lib/markdown.ts";
 import { enhance } from "../lib/enhance.ts";
 import { mainArg, toolIcon, type Item } from "../lib/transcript.ts";
 import { activityLabel, groupActivity, liveStep, type TranscriptRow } from "../lib/activity.ts";
+import { withDividers } from "../lib/timeline.ts";
 
 export function Markdown({ text }: { text: string }) {
   const html = useMemo(() => renderMarkdown(text), [text]);
@@ -72,15 +73,33 @@ function ActivityGroup({ group }: { group: Extract<TranscriptRow, { kind: "group
   );
 }
 
+const lastUserBubble = (b: HTMLElement) => [...b.querySelectorAll<HTMLElement>(".bubble.user")].at(-1);
+
 export function Transcript({ items, working }: { items: Item[]; working: string }) {
   const end = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
-  const rows = useMemo(() => groupActivity(items, working !== "idle"), [items, working]);
-  useEffect(() => { if (stick.current) end.current?.scrollIntoView({ block: "end" }); }, [items, working]);
+  const [pinShown, setPinShown] = useState(false);
+  const rows = useMemo(() => withDividers(groupActivity(items, working !== "idle"), Date.now()), [items, working]);
+  const lastUser = useMemo(() => items.findLast((i) => i.kind === "user"), [items]);
+  const checkPin = () => {
+    const b = box.current;
+    const real = b && lastUserBubble(b);
+    setPinShown(!!b && !!real && real.getBoundingClientRect().bottom < b.getBoundingClientRect().top);
+  };
+  useEffect(() => { if (stick.current) end.current?.scrollIntoView({ block: "end" }); checkPin(); }, [items, working]);
   return (
-    <div className="transcript" ref={box} onScroll={() => { const b = box.current!; stick.current = b.scrollHeight - b.scrollTop - b.clientHeight < 80; }}>
-      {rows.map((r) => r.kind === "group" ? <ActivityGroup key={r.id} group={r} /> : <ItemRow key={r.item.id} item={r.item} />)}
+    <div className="transcript" ref={box} onScroll={() => { const b = box.current!; stick.current = b.scrollHeight - b.scrollTop - b.clientHeight < 80; checkPin(); }}>
+      <div className="pin-slot">
+        {pinShown && lastUser && (
+          <button className="pin-message" title="Jump to your last message" aria-label={`Jump to your last message: ${lastUser.text}`} onClick={() => { if (box.current) lastUserBubble(box.current)?.scrollIntoView({ block: "center" }); }}>
+            {lastUser.text}
+          </button>
+        )}
+      </div>
+      {rows.map((r) => r.kind === "divider"
+        ? <div key={r.id} className="time-divider" role="separator"><span>{r.label}</span></div>
+        : r.kind === "group" ? <ActivityGroup key={r.id} group={r} /> : <ItemRow key={r.item.id} item={r.item} />)}
       {working !== "idle" && <div className="working" aria-live="polite">{working === "waiting_for_tool_confirmation" ? "Waiting for your approval" : liveStep(items)}<span className="dots" /></div>}
       <div ref={end} />
     </div>
