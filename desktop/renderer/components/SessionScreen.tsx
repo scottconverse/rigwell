@@ -163,7 +163,7 @@ function Loaded({ ctl }: { ctl: SessionController }) {
           prefill={readinessDraft} onPrefillUsed={() => setReadinessDraft(undefined)}
           settings={state.settings} models={state.models.length ? state.models : a.models} busy={state.working !== "idle"} disabled={state.phase !== "ready"}
           disabledShortcuts={off} autoFocus placeholder="Message the agent" session={ctl} cwd={state.cwd} autoAvailable={!!a.userSettings.autoRouter} onMission={() => void enterMission()}
-          onChange={(p) => void ctl.updateSettings({ ...p })} onSend={(t, atts) => void ctl.send(t, atts ? toParams(atts) : {})} onStop={() => ctl.interrupt()}
+          onChange={(p) => void ctl.updateSettings({ ...p })} queued={state.queued} onSend={(t, atts, placement) => void ctl.send(t, atts ? toParams(atts) : {}, placement)} onStop={() => ctl.interrupt()}
           extra={<button className="chip" onClick={() => { const last = [...state.items].reverse().find((i) => i.kind === "assistant"); setPrefill(last && last.kind === "assistant" ? `About this: "${last.text.slice(0, 200)}"\n\n` : ""); showTab("side"); }}>Side chat</button>}
         />
         {toast && <div className="toast" role="status">{toast}</div>}

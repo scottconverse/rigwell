@@ -910,14 +910,14 @@ export function createConnection(write: (line: string) => void, opts: Connection
       if (remote) { await remote.close(); peer.end(); return; }
       if (sharedRemote) { unsubscribeShared?.(); unsubscribeShared = undefined; peer.end(); return; }
       if (shared) { unsubscribeShared?.(); unsubscribeShared = undefined; peer.end(); return; }
-      // The client went away while a prompt is open: keep the session for a reconnecting load_session.
-      if (o.park && session && !closed && session.isRunning && session.pendingPrompts().length) {
+      // The client went away while a prompt is open or messages wait: keep the session for a reconnecting load_session.
+      if (o.park && session && !closed && session.isRunning && (session.pendingPrompts().length || session.queuedMessages().length)) {
         const s = session;
         const wt = worktree;
         const timer = setTimeout(() => {
           parked.delete(s.id);
           wt?.release();
-          s.interrupt();
+          s.interrupt(true); // nobody came back: waiting messages must not start new turns unattended
           void s.idle().then(() => s.stopBackgroundJobs()).then(() => s.end("other")).catch(() => {});
         }, parkMs());
         timer.unref?.();
