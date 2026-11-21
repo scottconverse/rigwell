@@ -124,6 +124,8 @@ When the model asks a question or needs approval, use the prompt controls in the
 
 Two or more tool calls in a row fold into one line, such as `Activity · 31 events`. Click the line to open or close the list. A group stays open while one of its tools runs, and when a tool fails. During a turn, the status line names the current step, such as `Running 1 command` or `Making 1 file change`.
 
+When your last message scrolls out of view, a copy stays at the top of the transcript. Click it to jump back to the message. The transcript also shows a time line, such as `Today 2:14 PM`, after 30 minutes without activity or when the day changes. Older sessions that have no stored time show no time line.
+
 ### Workstreams
 
 See the [Workstreams reference](workstreams.md) for member controls, delivery priorities, budgets and recovery.

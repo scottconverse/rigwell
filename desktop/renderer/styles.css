@@ -124,6 +124,10 @@ kbd { font: 11px var(--font-code); background: var(--bg-sunken); border: 1px sol
 .tool-name { font-weight: 600; } .tool-arg { color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; font-family: var(--font-code); }
 .tool-state { color: var(--fg-muted); font-size: 12px; } .tool.error .tool-state { color: var(--danger); }
 .tool-body { margin: 0; padding: 8px 10px; max-height: 260px; overflow: auto; font: var(--size-code) var(--font-code); border-top: 1px solid var(--border); white-space: pre-wrap; }
+.pin-slot { position: sticky; top: -12px; height: 0; margin-bottom: -10px; z-index: 5; }
+.pin-message { position: absolute; top: 0; left: 0; right: 0; display: block; padding: 6px 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: left; color: var(--fg); background: var(--bubble); border: 1px solid var(--border); border-top: 0; border-radius: 0 0 8px 8px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18); font-family: var(--font-ui); font-size: 13px; }
+.time-divider { display: flex; align-items: center; gap: 10px; color: var(--fg-muted); font-family: var(--font-ui); font-size: 12px; }
+.time-divider::before, .time-divider::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
 .activity { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-panel); font-family: var(--font-ui); font-size: 13px; }
 .activity.error { border-color: var(--danger); }
 .activity-head { display: flex; gap: 8px; width: 100%; text-align: left; border: none; background: none; align-items: center; color: var(--fg-muted); }

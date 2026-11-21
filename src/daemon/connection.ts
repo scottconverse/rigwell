@@ -12,7 +12,7 @@ import { autonomyAllowed, clampAutonomy, modelAllowed } from "../storage/org.ts"
 import { handoffBrief, isHandoffId, loadHandoff } from "../agent/handoff.ts";
 import { hasProjectConfig, isFolderTrusted, loadSettings, trustFolder } from "../storage/settings.ts";
 import { findModel, listModelInfo, resolveModels, validateCustomModels } from "../storage/models.ts";
-import { appendAnalyticsMetric, appendCompaction, appendMessage, appendTitle, appendTodoState, appendTurnOutcome, createSession, findSession, loadTranscript, type SessionFiles } from "../storage/transcript.ts";
+import { appendAnalyticsMetric, appendCompaction, appendMessage, appendTitle, appendTodoState, appendTurnOutcome, createSession, findSession, loadTranscript, readMessageTimes, type SessionFiles } from "../storage/transcript.ts";
 import { listSessionEntries, searchSessions } from "../storage/session-list.ts";
 import { outputFormatFrom, systemPromptFrom, tagsFrom, toolIdUpdates, toolIdsFrom, userMessageFrom } from "./params.ts";
 import { gitRepoOf } from "./gitrepo.ts";
@@ -312,11 +312,13 @@ export function createConnection(write: (line: string) => void, opts: Connection
     const all = s.uiMessages().filter((m) => m.visibility !== "llm_only");
     const cut = page && !page.loadAll && page.limit !== undefined && all.length > page.limit;
     const git = gitRepoOf(s.cwd);
+    const messages = cut ? all.slice(-page!.limit!) : all;
     return {
       sessionId: s.id, hostId: hostId(),
-      session: { messages: cut ? all.slice(-page!.limit!) : all },
+      session: { messages },
       settings: s.settingsSnapshot(),
       ...(page ? { hasOlderMessages: !!cut } : {}),
+      ...(page && files ? { messageTimes: readMessageTimes(files, messages.map((m) => m.id)) } : {}),
       ...(git ? { gitRepo: git } : {}),
     };
   }

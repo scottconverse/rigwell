@@ -2,7 +2,7 @@
 import { DaemonConn, RpcFailure, bridge } from "./rpc.ts";
 import { normalizeModel } from "./models.ts";
 import { actionCall } from "./sessions.ts";
-import { fromMessages, reduce, type Item } from "./transcript.ts";
+import { fromMessages, reduce, stampNew, type Item } from "./transcript.ts";
 import { nextHandoff, type HandoffState } from "./handoff.ts";
 
 export class Store<S> {
@@ -111,7 +111,7 @@ export class SessionController extends Store<SessionState> {
       const r = await init(conn);
       const models = (r.availableModels ?? []).map(normalizeModel);
       this.set({
-        phase: "ready", sessionId: r.sessionId, machine: r.machine, cwd: r.cwd ?? this.state.cwd, items: fromMessages(r.session?.messages ?? []),
+        phase: "ready", sessionId: r.sessionId, machine: r.machine, cwd: r.cwd ?? this.state.cwd, items: fromMessages(r.session?.messages ?? [], r.messageTimes),
         settings: r.settings ?? {}, models, working: r.workingState ?? "idle",
         title: this.state.title,
       });
@@ -153,10 +153,10 @@ export class SessionController extends Store<SessionState> {
       case "agent_turn_completed":
         this.followHandoff(n);
         this.resolveAllPrompts();
-        this.set({ items: reduce(this.state.items, n), working: "idle" });
+        this.set({ items: stampNew(this.state.items, reduce(this.state.items, n), Date.now()), working: "idle" });
         return;
     }
-    const items = reduce(this.state.items, n);
+    const items = stampNew(this.state.items, reduce(this.state.items, n), Date.now());
     if (items !== this.state.items) this.set({ items });
   }
 

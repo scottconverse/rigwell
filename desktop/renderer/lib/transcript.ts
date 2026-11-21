@@ -1,12 +1,16 @@
 // Pure transcript model for the session screen: stored messages and live notifications become display items.
 // User bubbles, markdown text, tool rows (icon, name, main argument), thinking blocks and notices (spec §14.3).
 
-export type Item =
+export type Item = (
   | { kind: "user"; id: string; text: string }
   | { kind: "assistant"; id: string; text: string }
   | { kind: "thinking"; id: string; text: string }
   | { kind: "tool"; id: string; name: string; input: Record<string, unknown>; status: "running" | "ok" | "error"; output?: string; live?: string; phase?: string }
-  | { kind: "info"; id: string; text: string; level: "info" | "error" };
+  | { kind: "info"; id: string; text: string; level: "info" | "error" }
+) & {
+  /** When the item was stored or arrived (ms). Old sessions can have none. */
+  at?: number;
+};
 
 /** The main argument of a tool call, for the one-line row. */
 export function mainArg(name: string, input: Record<string, unknown>): string {
@@ -40,10 +44,11 @@ function upsertTool(items: Item[], id: string, patch: Partial<Extract<Item, { ki
 }
 
 /** Items for messages stored in the session (load_session). Hidden (llm_only) and system-reminder-only messages are skipped. */
-export function fromMessages(messages: any[]): Item[] {
+export function fromMessages(messages: any[], times?: Record<string, string>): Item[] {
   let items: Item[] = [];
   for (const m of messages) {
     if (m.visibility === "llm_only") continue;
+    const first = items.length;
     for (const [bi, b] of (m.content ?? []).entries()) {
       const id = `${m.id}:${bi}`;
       if (b.type === "text") {
@@ -54,8 +59,18 @@ export function fromMessages(messages: any[]): Item[] {
       else if (b.type === "tool_use") items = upsertTool(items, b.id, { name: b.name, input: b.input ?? {} });
       else if (b.type === "tool_result") items = upsertTool(items, b.tool_use_id, { status: b.is_error ? "error" : "ok", output: text(b.content) });
     }
+    const at = Date.parse(times?.[m.id] ?? "");
+    if (Number.isFinite(at)) for (let i = first; i < items.length; i++) items[i] = { ...items[i]!, at };
   }
   return items;
+}
+
+/** Gives the time `now` to items that a notification just added. Existing items keep their time. */
+export function stampNew(prev: Item[], next: Item[], now: number): Item[] {
+  if (next === prev || next.length <= prev.length) return next;
+  const out = next.slice();
+  for (let i = prev.length; i < out.length; i++) if (out[i]!.at === undefined) out[i] = { ...out[i]!, at: now };
+  return out;
 }
 
 /** Applies one session notification. Unknown types change nothing. */
