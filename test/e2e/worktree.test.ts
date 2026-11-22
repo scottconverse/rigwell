@@ -146,7 +146,7 @@ describe("worktrees end to end", () => {
     const children: RpcChild[] = [];
     const mark = (stage: string) => stages.push({ stage, ms: Date.now() - started });
     const diagnostic = () => console.error("[worktree auto-delete diagnostic]", JSON.stringify({ stages, elapsed: Date.now() - started, children: children.map((c) => ({ stderr: c.stderr, lastMessages: c.messages.slice(-3) })) }));
-    const timer = setTimeout(diagnostic, 4000);
+    const timer = setTimeout(diagnostic, 25_000);
     try {
     const repo = makeRepo();
     const root = tmp("e2e-root");
@@ -176,5 +176,5 @@ describe("worktrees end to end", () => {
     expect(readFileSync(join(pd, "greet.js"), "utf8")).toContain('"Hello, "');
     await finish(third.c); mark("third closed");
     } catch (e) { diagnostic(); throw e; } finally { clearTimeout(timer); }
-  });
+  }, 30_000); // three real sessions and git worktrees can take more than 5 s on Windows
 });
