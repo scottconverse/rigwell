@@ -8,7 +8,7 @@ import { zeroUsage } from "../../src/core/types.ts";
 import { areasOverlap, clampWorkers, pickRunnable } from "../../src/missions/parallel.ts";
 import { DEFAULT_LIMITS, MissionRunner, type MissionSettings, type RunHandle } from "../../src/missions/runner.ts";
 import { MissionStore, type Feature } from "../../src/missions/store.ts";
-import { workerTools } from "../../src/missions/tools.ts";
+import { orchestratorTools, workerTools } from "../../src/missions/tools.ts";
 import { WakeLock } from "../../src/missions/wakelock.ts";
 import type { WorkerOutcome, WorkerRequest } from "../../src/missions/worker.ts";
 import { WorktreeManager } from "../../src/worktree/manager.ts";
@@ -57,7 +57,23 @@ function setup(features: Feature[], settings: MissionSettings, act: (j: Job) => 
     },
   });
   const cleanup = () => { env.cleanup(); rmSync(repo, { recursive: true, force: true, maxRetries: 5 }); };
-  return { store, repo, runner, requests, live, cleanup, handle: () => handle!, run: (input = {}) => runner.run(input, new AbortController().signal) };
+  /** The orchestrator tools against this runner, as the app builds them. */
+  const orchTools = () => orchestratorTools({
+    sessionId: "lead", cwd: repo, store: () => store, runner: () => runner,
+    missionSettings: () => settings, confirm: async () => ({ accepted: true }), runningMissions: () => [], notifyState() {},
+  });
+  /** Dismiss the latest handoff's items, then start the mission through StartMissionRun. */
+  const dismissAndStart = async () => {
+    const tools = orchTools();
+    const d = await tools.find((x) => x.name === "DismissHandoffItems")!.run(
+      { dismissals: [{ type: "discovered_issue", justification: "Reviewed and accepted for this mission." }] }, { sessionId: "lead" } as never,
+    );
+    if (d.isError) throw new Error(d.content as string);
+    const r = await tools.find((x) => x.name === "StartMissionRun")!.run({}, { sessionId: "lead", signal: new AbortController().signal } as never);
+    if (r.isError) throw new Error(r.content as string);
+    return r.data as { state: string; message: string };
+  };
+  return { store, repo, runner, requests, live, cleanup, handle: () => handle!, dismissAndStart, run: (input = {}) => runner.run(input, new AbortController().signal) };
 }
 
 const skip = { skipScrutiny: true, skipUserTesting: true };
@@ -109,6 +125,9 @@ describe("parallel mission run (real git, fake workers)", () => {
       const head = git(t.repo, "rev-parse", "HEAD");
       const r = await t.run();
       expect(r.state).toBe("completed");
+      // A new handoff is in handoffs already; latestHandoff must not send the same object twice.
+      expect(r.handoffs.length).toBe(2);
+      expect(r.latestHandoff).toBeUndefined();
       expect(t.live.peak).toBe(2);
       const branch = t.store.readState()!.missionBranch!;
       expect(r.message).toContain(branch);
@@ -116,6 +135,97 @@ describe("parallel mission run (real git, fake workers)", () => {
       expect(existsSync(join(t.repo, "a.txt"))).toBe(false);
       expect(git(t.repo, "ls-tree", "--name-only", branch).split("\n")).toEqual(expect.arrayContaining(["a.txt", "b.txt"]));
       expect(t.store.features().every((f) => f.mergeStatus === "merged")).toBe(true);
+    } finally { t.cleanup(); }
+  }, 30000);
+
+  /** A worker that records the given handoff through the real EndFeatureRun tool. */
+  const endWith = (t: ReturnType<typeof setup>, j: Job, state: "success" | "partial" | "failure", h: object, returnToOrchestrator = false) => workerTools({ sessionId: j.req.sessionId, store: t.store, workingDirectory: () => j.req.cwd })[0]!.run(
+    { successState: state, returnToOrchestrator, featureId: j.id, validatorsPassed: state === "success", handoff: h },
+    { sessionId: j.req.sessionId } as never,
+  );
+
+  test("a bare returnToOrchestrator still completes a finished mission", async () => {
+    let t!: ReturnType<typeof setup>;
+    t = setup(two(), { ...skip, maxParallelWorkers: 2 }, async (j) => {
+      j.write(`${j.id}.txt`, j.id);
+      const r = await endWith(t, j, "success", handoff, true);
+      if (r.isError) throw new Error(r.content as string);
+      return outcome("ended");
+    });
+    try {
+      const r = await t.run();
+      expect(r.state).toBe("completed");
+      expect(r.message).toContain("Every feature is complete");
+      expect(t.store.stateName()).toBe("completed");
+    } finally { t.cleanup(); }
+  }, 30000);
+
+  test("a last handoff with a discovered issue does not complete until it is dismissed", async () => {
+    let t!: ReturnType<typeof setup>;
+    t = setup([feature("a", { fileAreas: ["src/a"] })], { ...skip, maxParallelWorkers: 2 }, async (j) => {
+      j.write("a.txt", "a");
+      const r = await endWith(t, j, "success", { ...handoff, discoveredIssues: [{ severity: "blocking", description: "The endpoint does not validate input." }] });
+      if (r.isError) throw new Error(r.content as string);
+      return outcome("ended");
+    });
+    try {
+      const first = await t.run();
+      expect(first.state).toBe("orchestrator_turn");
+      expect(first.message).toContain("finished with success");
+      expect(t.store.stateName()).toBe("orchestrator_turn");
+      const second = await t.dismissAndStart();
+      expect(second.state).toBe("completed");
+      expect(t.store.stateName()).toBe("completed");
+    } finally { t.cleanup(); }
+  }, 30000);
+
+  test("undone work in a last handoff does not complete", async () => {
+    let t!: ReturnType<typeof setup>;
+    t = setup([feature("a", { fileAreas: ["src/a"] })], { ...skip, maxParallelWorkers: 2 }, async (j) => {
+      j.write("a.txt", "a");
+      const r = await endWith(t, j, "success", { ...handoff, whatWasLeftUndone: "The migration script is not written." });
+      if (r.isError) throw new Error(r.content as string);
+      return outcome("ended");
+    });
+    try {
+      const first = await t.run();
+      expect(first.state).toBe("orchestrator_turn");
+      expect(t.store.stateName()).toBe("orchestrator_turn");
+    } finally { t.cleanup(); }
+  }, 30000);
+
+  test("in a one-at-a-time mission a non-success handoff does not complete, and dismissal lets StartMissionRun complete it", async () => {
+    let t!: ReturnType<typeof setup>;
+    let attempts = 0;
+    t = setup([feature("a")], { ...skip }, async (j) => {
+      j.write("a.txt", `a ${++attempts}`);
+      const r = await endWith(t, j, attempts === 1 ? "partial" : "success", handoff);
+      if (r.isError) throw new Error(r.content as string);
+      return outcome("ended");
+    });
+    try {
+      const first = await t.run();
+      expect(first.state).toBe("orchestrator_turn");
+      expect(t.store.stateName()).toBe("orchestrator_turn");
+      const second = await t.dismissAndStart();
+      expect(second.state).toBe("completed");
+      expect(t.store.stateName()).toBe("completed");
+    } finally { t.cleanup(); }
+  }, 30000);
+
+  test("a pause request wins over completion", async () => {
+    let t!: ReturnType<typeof setup>;
+    t = setup([feature("a")], { ...skip }, async (j) => {
+      const r = await endWith(t, j, "success", handoff, true);
+      if (r.isError) throw new Error(r.content as string);
+      t.handle().pause("user_paused");
+      return outcome("ended");
+    });
+    try {
+      const r = await t.run();
+      expect(r.state).toBe("paused");
+      expect(r.pauseReason).toBe("user_paused");
+      expect(t.store.stateName()).toBe("paused");
     } finally { t.cleanup(); }
   }, 30000);
 

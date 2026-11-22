@@ -171,7 +171,7 @@ Open `Settings > Missions` and set `Workers at once` from 1 to 4. The default is
 
 Above 1, each worker gets its own code copy (a git worktree). Rigwell runs two features together only when neither depends on the other (`dependsOn`) and their file areas (`fileAreas`) do not overlap. A feature with no file areas runs alone. Each worker must commit its work.
 
-Rigwell merges finished features one at a time into a separate branch named `rigwell/mission-<id>`. Your own branch does not change. When the mission completes, review that branch and merge it yourself. Validators run alone, on the merged code.
+Rigwell merges finished features one at a time into a separate branch named `rigwell/mission-<id>`. Your own branch does not change. When the mission completes, review that branch and merge it yourself. Validators run alone, on the merged code. After a worker's work is merged, Rigwell removes that worker's worktree and branch. It never removes one that still has uncommitted or unmerged work.
 
 If a merge has a conflict, Rigwell stops that feature, keeps its branch, and asks for your attention. Rigwell never resolves a conflict silently. If one worker has a problem, the running workers finish their current feature, no new worker starts, and the mission asks for your attention. `Pause` stops all workers at once.
 

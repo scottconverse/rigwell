@@ -131,7 +131,7 @@ export function checkValidationState(text: string): string | null {
   return null;
 }
 
-const HANDOFF_EXAMPLE = `{"salientSummary":"Added /health.","whatWasImplemented":"Added the /health endpoint and a test.","whatWasLeftUndone":"","verification":{"commandsRun":[{"command":"bun test","exitCode":0,"observation":"all pass"}]},"tests":{"added":[{"file":"health.test.ts","cases":[{"name":"returns 200","verifies":"A1"}]}],"coverage":"endpoint covered"},"discoveredIssues":[]}`;
+export const HANDOFF_EXAMPLE = `{"salientSummary":"Added /health.","whatWasImplemented":"Added the /health endpoint and a test.","whatWasLeftUndone":"","verification":{"commandsRun":[{"command":"bun test","exitCode":0,"observation":"all pass"}]},"tests":{"added":[{"file":"health.test.ts","cases":[{"name":"returns 200","verifies":"A1"}]}],"coverage":"endpoint covered"},"discoveredIssues":[]}`;
 
 /** Validates the EndFeatureRun handoff field; returns an error with an example, or the handoff. */
 export function checkHandoff(h: any): { error: string } | { handoff: Handoff } {
@@ -150,6 +150,10 @@ export function checkHandoff(h: any): { error: string } | { handoff: Handoff } {
 export const hasUndoneWork = (h: Handoff) => { const t = h.whatWasLeftUndone.trim(); return !!t && !/^(none|n\/a|nothing)\.?$/i.test(t); };
 export const needsAttention = (r: HandoffRecord) =>
   r.returnToOrchestrator || r.successState !== "success" || r.handoff.discoveredIssues.length > 0 || hasUndoneWork(r.handoff);
+/** A handoff reports a problem when it did not succeed, recorded issues, or left work undone. Asking to return to
+ * the orchestrator is a request for review, not a problem, so it does not block completion on its own. */
+export const handoffProblem = (r: HandoffRecord) =>
+  r.successState !== "success" || r.handoff.discoveredIssues.length > 0 || hasUndoneWork(r.handoff);
 
 function atomicWrite(file: string, text: string) {
   const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;

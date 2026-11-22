@@ -73,6 +73,23 @@ export function skeleton(messages: Message[], max = 200): unknown[] {
   return out;
 }
 
+/**
+ * How long a finished worker waits for its connection to shut down. Shutdown waits for session idle, background
+ * jobs and session end; if any of those never finishes, the worker outcome must still resolve or the mission hangs.
+ */
+export const WORKER_SHUTDOWN_WAIT_MS = 3_000;
+
+/** Waits for `conn.shutdown()` but never longer than `ms`; a shutdown that is still running keeps going in the background. */
+export async function boundedShutdown(conn: { shutdown(): Promise<unknown> }, ms = WORKER_SHUTDOWN_WAIT_MS): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => { timer = setTimeout(resolve, ms); timer.unref?.(); });
+  try {
+    await Promise.race([conn.shutdown().catch(() => {}), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export const spawnWorkerSession: WorkerSpawner = (req) => {
   if (req.machine && !["local", "default"].includes(req.machine)) return spawnRemoteWorkerSession(req);
   let reqN = 0;
@@ -151,7 +168,10 @@ export const spawnWorkerSession: WorkerSpawner = (req) => {
       finished = true;
       clearTimeout(timer);
       try { await call("close_session", { reason: "other" }); } catch { /* closing */ }
-      void conn.shutdown().catch(() => {});
+      // Wait for shutdown so the connection has released its worktree hold before the runner merges and removes it,
+      // but bound the wait: shutdown waits for session idle, background jobs and session end, and one of those can
+      // never finish. The worktree removal still refuses a folder a live session holds, so a slow shutdown is safe.
+      await boundedShutdown(conn);
     }
   })();
 

@@ -471,7 +471,7 @@ Replaces exact text in an existing file.
 ~~~~text
 Creates a file with the given content, making parent folders as needed.
 - Fails if the file exists, unless overwrite is true. Overwriting also requires that you have read the file in this session. To change part of an existing file, use Edit.
-- Returns a short summary: { path, bytes, lines }.
+- Returns a short summary: { path, bytes, lines, sha256 }.
 - In a Script, pass the content through an input block: tools.Create({ path, content: inputs.body }).
 ~~~~
 

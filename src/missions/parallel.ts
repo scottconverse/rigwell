@@ -106,7 +106,15 @@ export class MissionWorkspace {
 
   /** Removes a worktree after its work is safe. A failure only leaves a folder behind. */
   async removeWorktree(wtPath: string, deleteBranch: boolean) {
-    try { await this.mgr.remove(wtPath, { deleteLocalBranch: deleteBranch }); }
-    catch (e) { this.log?.(`[mission] worktree kept at ${wtPath}: ${(e as Error).message}`); }
+    // A finished worker's connection can still hold the folder for a moment while its session shuts down. Wait for
+    // that hold to clear; dirty or unmerged work is still refused by the manager and is never forced past.
+    for (let attempt = 0; ; attempt++) {
+      try { await this.mgr.remove(wtPath, { deleteLocalBranch: deleteBranch }); return; }
+      catch (e) {
+        if (e instanceof WorktreeError && e.code === "in_use" && attempt < 40) { await Bun.sleep(50); continue; }
+        this.log?.(`[mission] worktree kept at ${wtPath}: ${(e as Error).message}`);
+        return;
+      }
+    }
   }
 }

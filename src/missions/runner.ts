@@ -5,7 +5,7 @@ import type { TokenUsage, Tool } from "../core/types.ts";
 import { zeroUsage } from "../core/types.ts";
 import { stepFrom } from "../agent/step.ts";
 import { parseSkillFile } from "../skills/skills.ts";
-import { dependencyProblem, isValidatorSkill, needsAttention, type Feature, type HandoffRecord, type MissionState, type MissionStore } from "./store.ts";
+import { dependencyProblem, handoffProblem, isValidatorSkill, needsAttention, type Feature, type HandoffRecord, type MissionState, type MissionStore } from "./store.ts";
 import { MissionWorkspace, clampWorkers, isRemoteMachine, pickRunnable } from "./parallel.ts";
 import type { WorktreeManager } from "../worktree/manager.ts";
 import { skeleton, type WorkerOutcome, type WorkerSpawner } from "./worker.ts";
@@ -149,6 +149,17 @@ export class MissionRunner {
       return "The latest handoff reports issues, undone work or a non-success result. Review it, then call DismissHandoffItems with a justification for each item, or edit features.json / mission.md to address it, before StartMissionRun.";
     }
     return null;
+  }
+
+  /** The newest handoff, or any handoff of the latest run, that reports an unaddressed problem. A bare
+   * returnToOrchestrator is not a problem. Validators record failures as discoveredIssues, so this is what keeps
+   * a mission from completing over them. */
+  private unaddressedProblem(): HandoffRecord | undefined {
+    const s = this.store;
+    const all = s.handoffs();
+    const runStart = s.readLog().filter((e) => e.type === "mission_run_started" || e.type === "mission_resumed").at(-1)?.timestamp;
+    const latestRun = runStart ? all.filter((h) => Date.parse(h.timestamp) >= Date.parse(runStart)) : [];
+    return [all.at(-1), ...latestRun].find((h) => h && handoffProblem(h) && !this.handoffDealtWith(h));
   }
 
   private handoffDealtWith(h: HandoffRecord): boolean {
@@ -308,6 +319,12 @@ export class MissionRunner {
       }
       const outcome = await this.runWorker(feature, resume, input);
       const verdict = await this.afterWorker(feature, outcome);
+      // A pause request wins over completion.
+      if (this.pauseRequest) return this.finishPaused(this.pauseRequest);
+      // A handoff that asks for attention must not leave a finished mission in orchestrator_turn: when every
+      // feature is complete and merged there is nothing left to run, so the mission is completed.
+      const done = await this.completeIfDone();
+      if (done) return done;
       if (verdict) return verdict();
     }
   }
@@ -368,14 +385,10 @@ export class MissionRunner {
       }
       if (!running.size) {
         if (this.pauseRequest) return this.finishPaused(this.pauseRequest);
+        // Completed wins over a handoff that asked for attention: nothing is left to run.
+        const done = await this.completeIfDone();
+        if (done) return done;
         if (stop) return stop();
-        const features = s.features();
-        if (features.every(doneStatus)) {
-          await this.workspace().removeWorktree(integration.path, false);
-          s.writeState({ integrationPath: undefined });
-          this.setState("completed");
-          return this.result(true, `Every feature is complete: the mission is completed. The merged work is on branch ${integration.branch}. Your own branch did not change. Review that branch, then merge it when you are ready.`);
-        }
         return this.finishAttention("No feature can start. A feature may wait on a cancelled or unfinished dependency. Review features.json.");
       }
       const done = await Promise.race(running.values());
@@ -429,6 +442,29 @@ export class MissionRunner {
     return problems.length ? () => this.finishAttention(problems.join(" ")) : undefined;
   }
 
+  /**
+   * Completes the mission when every feature is done and merged, removing the integration worktree but keeping
+   * the mission branch. Returns undefined while any work is unfinished. This makes completion independent of a
+   * final StartMissionRun call, so a last handoff that asks for attention cannot leave the mission in
+   * orchestrator_turn forever. A handoff with a real problem (not success, discoveredIssues, or undone work) that
+   * has not been dismissed or addressed by a plan edit blocks completion, so the mission stays in
+   * orchestrator_turn and the problem stays visible. A pause request wins over completion.
+   */
+  private async completeIfDone(): Promise<RunResult | undefined> {
+    if (this.pauseRequest) return undefined;
+    const s = this.store;
+    const fs = s.features();
+    if (!fs.length || !fs.every(doneStatus) || fs.some((f) => f.mergeStatus && f.mergeStatus !== "merged")) return undefined;
+    if (this.unaddressedProblem()) return undefined;
+    const st = s.readState();
+    if (st?.integrationPath) {
+      await this.workspace().removeWorktree(st.integrationPath, false);
+      s.writeState({ integrationPath: undefined });
+    }
+    this.setState("completed");
+    return this.result(true, `Every feature is complete: the mission is completed.${st?.missionBranch ? ` The merged work is on branch ${st.missionBranch}. Your own branch did not change. Review that branch, then merge it when you are ready.` : ""}`);
+  }
+
   private finishPaused(reason: string): RunResult {
     const st = this.store.readState();
     if (st?.state !== "paused") this.pause(reason);
@@ -455,9 +491,12 @@ export class MissionRunner {
     const recent = all.slice(reviewed);
     if (ok && st) this.store.writeState({ lastReviewedHandoffCount: all.length });
     const fs = this.store.features();
+    // Do not send the same handoff twice: latestHandoff is the same object as the last entry of handoffs whenever
+    // that handoff is new. It is kept only when it was reviewed before and is not part of this result.
+    const latest = all.at(-1);
     return {
       ok, ...(refusal ? { refusal } : {}), state: this.store.stateName(), pauseReason: this.store.readState()?.pauseReason, message,
-      handoffs: recent, latestHandoff: all.at(-1),
+      handoffs: recent, ...(latest && !recent.includes(latest) ? { latestHandoff: latest } : {}),
       counts: { total: fs.length, completed: fs.filter((f) => f.status === "completed").length, pending: fs.filter((f) => f.status === "pending").length, cancelled: fs.filter((f) => f.status === "cancelled").length },
       progress: this.snapshot(), tokenUsage: this.tokens(),
     };

@@ -5,7 +5,7 @@ import { bridge } from "../lib/rpc.ts";
 import { readinessText } from "../lib/missions.ts";
 import { MissionReadiness } from "./MissionReadiness.tsx";
 import { Composer } from "./Composer.tsx";
-import { toParams } from "../lib/attachments.ts";
+import { toParams, type Attachment } from "../lib/attachments.ts";
 import { ConfirmDialog, Dialog, TextDialog } from "./Dialogs.tsx";
 import { Prompts } from "./Prompts.tsx";
 import { SidePane, type PaneTab } from "./SidePane.tsx";
@@ -15,6 +15,8 @@ import { Transcript } from "./Transcript.tsx";
 export const live = new Map<string, SessionController>();
 /** Sessions started from Home with the Mission mode chip: enter mission mode once the session is on screen (spec §15.1). */
 export const pendingMission = new Set<string>();
+/** The first message of a mission session, sent only after mission mode is entered (so request 1 has mission tools). */
+export const pendingMissionSend = new Map<string, { text: string; atts?: Attachment[] }>();
 
 const PANE_KEYS: { test(e: KeyboardEvent): boolean; tab: PaneTab; id: string }[] = [
   { id: "files", tab: "files", test: (e) => e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "p" },
@@ -60,20 +62,52 @@ function Loaded({ ctl }: { ctl: SessionController }) {
   const [maximized, setMaximized] = useState(false);
   const [prefill, setPrefill] = useState<string>();
   const [readinessDraft, setReadinessDraft] = useState<string>();
+  /** A first mission message that was not sent: it goes back into the composer, with its attachments. */
+  const [restore, setRestore] = useState<{ text: string; attachments?: Attachment[]; nonce: number }>();
+  const attempted = useRef(false);
   const [menu, setMenu] = useState(false);
   const [toast, setToast] = useState("");
   const [dialog, setDialog] = useState<null | "rename" | { readiness: string }>(null);
   const off = a.settings?.disabledShortcuts ?? [];
 
+  const sid = state.sessionId;
+  /** Takes the stored first mission message out of the send queue and puts it back in the composer. */
+  const restoreFirstMessage = useCallback(() => {
+    if (!sid) return;
+    const p = pendingMissionSend.get(sid);
+    if (!p) return;
+    pendingMissionSend.delete(sid);
+    setRestore({ text: p.text, attachments: p.atts, nonce: Date.now() });
+  }, [sid]);
+
   /** Mode chip: Mission. The readiness check runs first; a folder that is not ready asks before going on (spec §15.7). */
   const enterMission = useCallback(async (anyway = false) => {
     try {
       const r = await ctl.enterMission(anyway);
-      if (!r.entered) setDialog({ readiness: readinessText(r.readiness) }); else { setDialog(null); setToast(r.modelSwitched ? "Mission mode on; switched to the orchestrator model" : "Mission mode on"); setTimeout(() => setToast(""), 2200); }
-    } catch (e) { setToast((e as Error).message); setTimeout(() => setToast(""), 3000); }
-  }, [ctl]);
-  const sid = state.sessionId;
-  useEffect(() => { if (state.phase === "ready" && sid && pendingMission.delete(sid)) void enterMission(); }, [state.phase, sid, enterMission]);
+      if (!r.entered) setDialog({ readiness: readinessText(r.readiness) }); else {
+        setDialog(null);
+        setToast(r.modelSwitched ? "Mission mode on; switched to the orchestrator model" : "Mission mode on");
+        setTimeout(() => setToast(""), 2200);
+        const id = ctl.getSnapshot().sessionId;
+        const pending = id ? pendingMissionSend.get(id) : undefined;
+        if (id && pending) { pendingMissionSend.delete(id); void ctl.send(pending.text, pending.atts?.length ? toParams(pending.atts) : {}); }
+      }
+    } catch (e) {
+      // The message must not stay hidden behind a failed mission-mode switch.
+      restoreFirstMessage();
+      setToast((e as Error).message); setTimeout(() => setToast(""), 3000);
+    }
+  }, [ctl, restoreFirstMessage]);
+  useEffect(() => { if (state.phase === "ready" && sid && pendingMission.delete(sid)) { attempted.current = true; void enterMission(); } }, [state.phase, sid, enterMission]);
+  // Back on this screen with a first message still unsent (the readiness dialog was closed by leaving, or mission
+  // mode failed): show it in the composer instead of keeping it hidden.
+  useEffect(() => {
+    if (!sid || state.phase !== "ready" || attempted.current || pendingMission.has(sid)) return;
+    const p = pendingMissionSend.get(sid);
+    if (!p) return;
+    pendingMissionSend.delete(sid);
+    setRestore({ text: p.text, attachments: p.atts, nonce: Date.now() });
+  }, [sid, state.phase]);
 
   // Approved spec handoff (spec 5.5.7): the old turn ended with reason spec_handoff; this client opens the new session.
   useEffect(() => ctl.onHandoff((specHandoffId) => {
@@ -161,6 +195,7 @@ function Loaded({ ctl }: { ctl: SessionController }) {
         <Prompts prompts={state.prompts} onAnswer={(rid, r) => ctl.answer(rid, r)} />
         <Composer
           prefill={readinessDraft} onPrefillUsed={() => setReadinessDraft(undefined)}
+          restore={restore} onRestoreUsed={() => setRestore(undefined)}
           settings={state.settings} models={state.models.length ? state.models : a.models} busy={state.working !== "idle"} disabled={state.phase !== "ready"}
           disabledShortcuts={off} autoFocus placeholder="Message the agent" session={ctl} cwd={state.cwd} autoAvailable={!!a.userSettings.autoRouter} onMission={() => void enterMission()}
           onChange={(p) => void ctl.updateSettings({ ...p })} queued={state.queued} onSend={(t, atts, placement) => void ctl.send(t, atts ? toParams(atts) : {}, placement)} onStop={() => ctl.interrupt()}
@@ -168,7 +203,7 @@ function Loaded({ ctl }: { ctl: SessionController }) {
         />
         {toast && <div className="toast" role="status">{toast}</div>}
         {dialog === "rename" && <TextDialog title="Rename session" label="Title" initial={state.title} action="Rename" onCancel={() => setDialog(null)} onSubmit={(v) => { setDialog(null); void act(() => ctl.rename(v), "Renamed"); }} />}
-        {dialog && typeof dialog === "object" && <Dialog title="This folder is not ready for a mission" onClose={() => setDialog(null)}><p className="muted pre">{dialog.readiness}</p><MissionReadiness request={(method) => ctl.request(method)} prepare={() => { setReadinessDraft("Use the readiness-report skill to identify build/test commands and required tools, then ask for approval before running these checks."); setDialog(null); }} /><div className="dialog-actions"><button onClick={() => setDialog(null)}>Cancel</button><button className="primary" onClick={() => void enterMission(true)}>Continue anyway</button></div></Dialog>}
+        {dialog && typeof dialog === "object" && <Dialog title="This folder is not ready for a mission" onClose={() => { restoreFirstMessage(); setDialog(null); }}><p className="muted pre">{dialog.readiness}</p><MissionReadiness request={(method) => ctl.request(method)} prepare={() => { restoreFirstMessage(); setReadinessDraft("Use the readiness-report skill to identify build/test commands and required tools, then ask for approval before running these checks."); setDialog(null); }} /><div className="dialog-actions"><button onClick={() => { restoreFirstMessage(); setDialog(null); }}>Cancel</button><button className="primary" onClick={() => void enterMission(true)}>Continue anyway</button></div></Dialog>}
       </div>
       <div className={paneOpen ? "pane-slot open" : "pane-slot"} hidden={!paneOpen}>
         <SidePane
