@@ -1,6 +1,6 @@
 # Rigwell user manual
 
-For Windows **0.4.4**, with Linux and macOS distributions remaining at **0.4.0**. See [0.4.4 release notes](release-0.4.4.md) for fixes and verification. Rigwell is a local workspace for AI-assisted coding: a desktop app, terminal interface and agent service, with persistent Workstreams, Missions, repository tools and review. You choose the model connection. Your machine runs the coordination service; a cloud model still receives the context sent to it.
+For Windows **0.4.5**, with Linux and macOS distributions remaining at **0.4.0**. See [0.4.5 release notes](release-0.4.5.md) for fixes and verification. Rigwell is a local workspace for AI-assisted coding: a desktop app, terminal interface and agent service, with persistent Workstreams, Missions, repository tools and review. You choose the model connection. Your machine runs the coordination service; a cloud model still receives the context sent to it.
 
 This manual covers first use, everyday work, nontechnical review, technical operation and architecture. Feature-specific reference guides are linked where more configuration detail is useful.
 
@@ -36,11 +36,11 @@ Do not paste credentials into a chat or a repository file. Use Settings and the 
 
 ### Install and open
 
-Download the [signed Windows 0.4.4 installer](https://github.com/scottconverse/rigwell/releases/download/v0.4.4/rigwell-setup-0.4.4-x64.exe), or choose a Linux/macOS package from [0.4.0](https://github.com/scottconverse/rigwell/releases/tag/v0.4.0). Keep the release's checksum information with the installer.
+Download the [signed Windows 0.4.5 installer](https://github.com/scottconverse/rigwell/releases/download/v0.4.5/rigwell-setup-0.4.5-x64.exe), or choose a Linux/macOS package from [0.4.0](https://github.com/scottconverse/rigwell/releases/tag/v0.4.0). Keep the release's checksum information with the installer.
 
 | Platform | Installation | Current release qualification |
 | --- | --- | --- |
-| Windows x64, 0.4.4 | Run the setup executable. Choose the installation location, then open Rigwell from its shortcut. | Verify the Scott Converse signature and timestamp. The release notes record clean-runner installation and Workstream acceptance. |
+| Windows x64, 0.4.5 | Run the setup executable. Choose the installation location, then open Rigwell from its shortcut. | Verify the Scott Converse signature and timestamp. The release notes record clean-runner installation and Workstream acceptance. |
 | Linux x64, 0.4.0 | Install the Debian package, or make the AppImage executable and open it. | Installed package checks and signed AppImage update/rollback have passed on disposable Linux runners. |
 | macOS arm64, 0.4.0 | Open the DMG and copy Rigwell.app to Applications. | Current artifacts are unsigned and not notarized. Installed runner checks passed; real Mac hardware acceptance remains unavailable. |
 
@@ -171,7 +171,7 @@ Open `Settings > Missions` and set `Workers at once` from 1 to 4. The default is
 
 Above 1, each worker gets its own code copy (a git worktree). Rigwell runs two features together only when neither depends on the other (`dependsOn`) and their file areas (`fileAreas`) do not overlap. A feature with no file areas runs alone. Each worker must commit its work.
 
-Rigwell merges finished features one at a time into a separate branch named `rigwell/mission-<id>`. Your own branch does not change. When the mission completes, review that branch and merge it yourself. Validators run alone, on the merged code.
+Rigwell merges finished features one at a time into a separate branch named `rigwell/mission-<id>`. Your own branch does not change. When the mission completes, review that branch and merge it yourself. Validators run alone, on the merged code. After a worker's work is merged, Rigwell removes that worker's worktree and branch. It never removes one that still has uncommitted or unmerged work.
 
 If a merge has a conflict, Rigwell stops that feature, keeps its branch, and asks for your attention. Rigwell never resolves a conflict silently. If one worker has a problem, the running workers finish their current feature, no new worker starts, and the mission asks for your attention. `Pause` stops all workers at once.
 
@@ -423,7 +423,7 @@ Use **Report a bug** to create a local diagnostic archive. It is not uploaded au
 
 ## Limits of this release
 
-This is an early release. See the 0.4.4 release notes for Windows signing, clean-runner install and the headless Workstream and remote reconnect verification. The 0.4.1 settings-preserving Halo upgrade and installed approval/reconnect checks remain historical evidence. macOS artifacts remain unsigned and real Mac hardware acceptance is still pending. Full long-session and model-family qualification is still being measured. Bedrock has fake coverage. Real connector registrations, remote hosts, phone networks and email delivery depend on the user's setup.
+This is an early release. See the 0.4.5 release notes for the current package and known limits, and the 0.4.4 release notes for the headless Workstream and remote reconnect verification. The 0.4.1 settings-preserving Halo upgrade and installed approval/reconnect checks remain historical evidence. macOS artifacts remain unsigned and real Mac hardware acceptance is still pending. Full long-session and model-family qualification is still being measured. Bedrock has fake coverage. Real connector registrations, remote hosts, phone networks and email delivery depend on the user's setup.
 
 The current evaluation subsystem is smaller than Stax. Compatibility with real Stax exports has not been verified. A hosted Stax option and later open-source reuse assessment belong to the [next-version list](next-version.md), not this release.
 
@@ -444,7 +444,7 @@ The current evaluation subsystem is smaller than Stax. Compatibility with real S
 
 ## Reference library
 
-For the current patch: [0.4.4 release notes](release-0.4.4.md).
+For the current patch: [0.4.5 release notes](release-0.4.5.md).
 
 For installation and daily use: [Install](install.md), [Authentication](auth.md), [Desktop](desktop.md), [Review](review.md), [Clients](clients.md).
 

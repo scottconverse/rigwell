@@ -3,7 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import type { Tool, ToolOutput } from "../core/types.ts";
-import { MissionStore, hasUndoneWork, checkHandoff, needsAttention, type Handoff, type HandoffRecord } from "./store.ts";
+import { MissionStore, hasUndoneWork, checkHandoff, needsAttention, HANDOFF_EXAMPLE, type Handoff, type HandoffRecord } from "./store.ts";
 import type { MissionRunner, MissionSettings, RunInput } from "./runner.ts";
 import { effectivePolicy } from "../storage/policy.ts";
 import { checkReadiness } from "./readiness.ts";
@@ -25,11 +25,23 @@ export interface OrchestratorEnv {
 
 const PROPOSAL_SECTIONS = "overview; expected behavior by milestone and feature; architecture; environment setup; infrastructure (services, ports, boundaries); testing strategy; user-testing strategy; mission readiness; non-functional requirements";
 
+/**
+ * The plan-file format, stated where the orchestrator will see it. Without this the orchestrator reads Rigwell's own
+ * source to infer the schema, which costs many model requests and re-sent context for a small mission.
+ */
+const PLAN_FILES = `After approval, write the plan in the mission folder (returned as missionDir). This is the format; do not read Rigwell's source to find it.
+- features.json: {"features":[{"id":"alpha","description":"What to build","skillName":"alpha-worker","milestone":"m1","status":"pending","expectedBehavior":["..."],"fulfills":["A1"],"fileAreas":["alpha.txt"],"dependsOn":[]}]}. id, description, skillName and milestone are required non-empty strings; status is pending, in_progress, completed or cancelled. fileAreas are the folders or files the feature changes. Features run in parallel only when their fileAreas do not overlap and neither dependsOn the other; a feature without fileAreas runs alone.
+- validation-contract.md: markdown assertions, each with an id such as A1 and the check to make.
+- validation-state.json: {"assertions":{"A1":{"status":"pending"}}}. Status is pending, passed, failed or blocked.
+- skills/<skillName>/SKILL.md: YAML frontmatter with "name: <skillName>" (it must equal the folder name) and "description: ...", then the worker's instructions.
+AGENTS.md is optional shared guidance for the workers.
+On approval the mission folder contains only mission.md (the proposal), working_directory.txt and model-settings.json; the plan files above do not exist yet. Write them with Create, all in one turn (several Create calls in one assistant message), then call StartMissionRun. The Create result states bytes, lines and sha256, so do not re-read a file you just created.`;
+
 export function orchestratorTools(env: OrchestratorEnv): Tool[] {
   const propose: Tool = {
     name: "ProposeMission",
     category: "other",
-    description: `Submit the mission plan to the user for approval. The proposal is markdown and should cover: ${PROPOSAL_SECTIONS}. On approval the mission folder is created. Returns accepted, missionDir, isEdited and any guidance the user added.`,
+    description: `Submit the mission plan to the user for approval. The proposal is markdown and should cover: ${PROPOSAL_SECTIONS}. On approval the mission folder is created. Returns accepted, missionDir, isEdited and any guidance the user added.\n\n${PLAN_FILES}`,
     inputSchema: { type: "object", properties: { title: { type: "string" }, proposal: { type: "string", description: "Markdown proposal." }, workingDirectory: { type: "string", description: "Repository folder workers run in (default: the session folder)." } }, required: ["title", "proposal"] },
     async run(input) {
       if (effectivePolicy().missions?.enabled === false) return fail("Missions are disabled by policy.");
@@ -47,7 +59,7 @@ export function orchestratorTools(env: OrchestratorEnv): Tool[] {
       s.writeState({ state: "planning", workingDirectory: wd });
       s.log("mission_accepted", { title });
       env.notifyState();
-      const res = { accepted: true, missionDir: s.dir, isEdited: false, ...(a.comment ? { guidance: a.comment } : {}) };
+      const res = { accepted: true, missionDir: s.dir, files: ["mission.md", "working_directory.txt", "model-settings.json"], planFilesCreated: false, isEdited: false, ...(a.comment ? { guidance: a.comment } : {}) };
       return ok(JSON.stringify(res), res);
     },
   };
@@ -55,7 +67,7 @@ export function orchestratorTools(env: OrchestratorEnv): Tool[] {
   const start: Tool = {
     name: "StartMissionRun",
     category: "other",
-    description: "Run (or resume) the mission queue. Blocks while workers run (one at a time unless the maxParallelWorkers setting is higher) and returns when the mission completes, pauses, or needs your attention, with the recent handoffs. Refuses when the plan files are incomplete or a recent handoff has unaddressed items. For parallel work, give each feature fileAreas (folders or files it changes) and dependsOn (feature ids). Features run together only when neither depends on the other and their file areas do not overlap. A feature without fileAreas runs alone. Finished work merges to a separate mission branch.",
+    description: "Run (or resume) the mission queue. Blocks while workers run (one at a time unless the maxParallelWorkers setting is higher) and returns when the mission completes, pauses, or needs your attention, with the recent handoffs. Refuses when the plan files are incomplete or a recent handoff has unaddressed items. The plan files and their format are listed in ProposeMission. For parallel work, give each feature fileAreas (folders or files it changes) and dependsOn (feature ids). Features run together only when neither depends on the other and their file areas do not overlap. A feature without fileAreas runs alone. Finished work merges to a separate mission branch.",
     inputSchema: { type: "object", properties: { message: { type: "string" }, resumeWorkerSessionId: { type: "string" }, restartFeature: { type: "boolean" }, messageToWorker: { type: "string" } } },
     async run(input, ctx) {
       const s = env.store();
@@ -112,13 +124,57 @@ export function workerTools(env: WorkerEnv): Tool[] {
   const end: Tool = {
     name: "EndFeatureRun",
     category: "other",
-    description: "Finish your assigned feature: record the result and your handoff. Call it exactly once as your last action. success requires validatorsPassed: true; commitId requires repoPath (default: the working folder). Returns nextAction: continue, orchestrator or completed.",
+    description: `Finish your assigned feature: record the result and your handoff. Call it exactly once as your last action. success requires validatorsPassed: true; commitId requires repoPath (default: the working folder). Returns nextAction: continue, orchestrator or completed.
+The handoff must have exactly these fields and shapes:
+- salientSummary: non-empty string.
+- whatWasImplemented: string of at least 10 characters.
+- whatWasLeftUndone: string; use "" when nothing is left.
+- verification: {"commandsRun":[{"command":string,"exitCode":number,"observation":string}]}.
+- tests: {"added":[{"file":string,"cases":[{"name":string,"verifies":string}]}],"coverage":string}. Use [] and "" when no tests were added.
+- discoveredIssues: array of {"severity":"blocking"|"non_blocking"|"suggestion","description":string}. Use [] when there are none.
+Example: ${HANDOFF_EXAMPLE}`,
     inputSchema: {
       type: "object",
       properties: {
         successState: { type: "string", enum: ["success", "partial", "failure"] }, returnToOrchestrator: { type: "boolean" },
         featureId: { type: "string" }, commitId: { type: "string" }, repoPath: { type: "string" }, validatorsPassed: { type: "boolean" },
-        handoff: { type: "object", description: "salientSummary, whatWasImplemented, whatWasLeftUndone, verification{commandsRun[]}, tests{added[],coverage}, discoveredIssues[]" },
+        handoff: {
+          type: "object",
+          description: "The result and evidence for this feature. Every field is required; use [] and \"\" for none.",
+          properties: {
+            salientSummary: { type: "string" },
+            whatWasImplemented: { type: "string", minLength: 10 },
+            whatWasLeftUndone: { type: "string" },
+            verification: {
+              type: "object",
+              properties: { commandsRun: { type: "array", items: {
+                type: "object",
+                properties: { command: { type: "string" }, exitCode: { type: "number" }, observation: { type: "string" } },
+                required: ["command", "exitCode", "observation"],
+              } } },
+              required: ["commandsRun"],
+            },
+            tests: {
+              type: "object",
+              properties: {
+                added: { type: "array", items: {
+                  type: "object",
+                  properties: { file: { type: "string" }, cases: { type: "array", items: {
+                    type: "object", properties: { name: { type: "string" }, verifies: { type: "string" } },
+                  } } },
+                } },
+                coverage: { type: "string" },
+              },
+              required: ["added", "coverage"],
+            },
+            discoveredIssues: { type: "array", items: {
+              type: "object",
+              properties: { severity: { type: "string", enum: ["blocking", "non_blocking", "suggestion"] }, description: { type: "string" } },
+              required: ["severity", "description"],
+            } },
+          },
+          required: ["salientSummary", "whatWasImplemented", "whatWasLeftUndone", "verification", "tests", "discoveredIssues"],
+        },
       },
       required: ["successState", "returnToOrchestrator", "handoff"],
     },

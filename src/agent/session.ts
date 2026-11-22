@@ -304,6 +304,8 @@ const specOnNotice = (canPropose: boolean) =>
   (canPropose ? "When your plan is ready, propose it with ExitSpecMode." : "Present your plan as your answer.") + "</system-reminder>";
 const SPEC_OFF_NOTICE =
   "<system-reminder>Spec mode is off: the user switched the mode by hand. Nothing was approved. All tools are available again; follow the user's next message.</system-reminder>";
+const MISSION_ON_NOTICE =
+  "<system-reminder>Mission mode is now on. The first-message session block was written before this switch and still says the old mode; this reminder is current. Plan the mission with the user, then call ProposeMission. Its description lists the plan files and their shapes (features.json, validation-contract.md, validation-state.json, skills/<skillName>/SKILL.md). Do not read Rigwell's source or an installed copy to learn the mission format; use the tool descriptions. After approval, write the plan files, then call StartMissionRun.</system-reminder>";
 
 const AUTONOMY_RANK: Record<AutonomyLevel, number> = { off: 0, low: 1, medium: 2, high: 3 };
 
@@ -632,7 +634,7 @@ export class Session {
     if (this.activeModelId() !== modelBefore) { this.requestModel = undefined; causes.push("model changed"); }
     if (this.settings.interactionMode !== modeBefore) {
       causes.push("interaction mode changed (tool list)");
-      if (!o.quietModeChange) this.pendingNotices.push(this.specMode ? specOnNotice(this.interactive) : SPEC_OFF_NOTICE);
+      if (!o.quietModeChange) this.pendingNotices.push(this.specMode ? specOnNotice(this.interactive) : this.settings.interactionMode === "mission" ? MISSION_ON_NOTICE : SPEC_OFF_NOTICE);
     }
     if (causes.length) this.builder.monitor.expectBreak(causes.join(", "));
     const mode = this.effectiveMode();

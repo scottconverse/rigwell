@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import type { Tool } from "../core/types.ts";
 import { boolArg, checkFresh, countLines, errMessage, fail, ok, recordOf, resolvePath, strArg, promptDesc, promptSchema } from "./util.ts";
 
@@ -42,7 +43,7 @@ export function createCreateTool(): Tool {
       } catch (e) {
         return fail(`Cannot write ${abs}: ${errMessage(e)}`);
       }
-      return ok(JSON.stringify({ path: abs, bytes: Buffer.byteLength(content), lines: countLines(content) }));
+      return ok(JSON.stringify({ path: abs, bytes: Buffer.byteLength(content), lines: countLines(content), sha256: createHash("sha256").update(content).digest("hex") }));
     },
   };
 }

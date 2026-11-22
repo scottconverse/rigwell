@@ -117,7 +117,7 @@ test("mission service reserves concurrency before workers and cannot grant attem
     writeJson(join(env.rigwellHome, "settings.json"), { customModels: [{ displayName: "Fixture", model: "fixture", provider: "anthropic", baseUrl: "http://127.0.0.1:1", apiKey: "fake-only" }] });
     const policy = join(env.rigwellHome, "policy.json"); writeJson(policy, { schemaVersion: 1, missions: { maxConcurrentRuns: 1, maxWorkerAttempts: 1 } });
     const prepare = (prior: string[]) => {
-      const session = { id: crypto.randomUUID(), cwd: env.root, settings: { interactionMode: "mission", modelId: "custom:Fixture-0", reasoningEffort: "low" }, tokenUsage: zeroUsage(), onAskUser() {} } as unknown as Session;
+      const session = { id: crypto.randomUUID(), cwd: env.root, settings: { interactionMode: "mission", modelId: "custom:Fixture-0", reasoningEffort: "low" }, tokenUsage: zeroUsage(), onAskUser() {}, subscribeNotifications() { return () => {}; } } as unknown as Session;
       const store = new MissionStore(missionDirFor(session.id)); store.ensure(); store.writeState({ state: "planning", workingDirectory: env.root });
       store.writeFeatures([{ id: "feature", description: "Fixture", skillName: "impl", milestone: "one", status: "pending", workerSessionIds: prior }]);
       writeFileSync(store.path("validation-contract.md"), "Fixture contract"); writeJson(store.path("validation-state.json"), { assertions: {} });

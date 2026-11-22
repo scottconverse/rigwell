@@ -53,6 +53,17 @@ export interface MissionServiceOptions {
 
 type Params = Record<string, unknown>;
 
+/**
+ * The orchestrator's turn ended. If the mission had handed control back to it and that turn failed (a spend cap
+ * blocked the next model request, the provider went away, or it errored), pause the mission so it does not read as
+ * still working. A completed or user-cancelled turn leaves the state alone.
+ */
+export function pauseOrchestratorTurn(store: MissionStore, reason: string) {
+  if (reason === "completed" || reason === "cancelled") return;
+  if (!store.exists() || store.stateName() !== "orchestrator_turn") return;
+  store.setState("paused", reason === "model_request_rejected" ? "model_request_rejected" : "orchestrator_turn_failed");
+}
+
 export function createMissionService(opts: MissionServiceOptions = {}) {
   const handles = new Map<string, RunHandle>();
   const seen = new Set<string>();
@@ -76,6 +87,7 @@ export function createMissionService(opts: MissionServiceOptions = {}) {
     let runner: MissionRunner | undefined;
     let sink: ((snap: Record<string, unknown>) => void) | undefined;
     const askHooked = new WeakSet<Session>();
+    const turnHooked = new WeakSet<Session>();
 
     const sess = () => {
       const s = conn.session();
@@ -175,6 +187,15 @@ export function createMissionService(opts: MissionServiceOptions = {}) {
           const now = st.stateName();
           if (phase === "start" && now === "planning") st.setState("awaiting_input");
           else if (phase === "end" && now === "awaiting_input") st.setState("planning");
+        });
+      }
+      // A mission that handed control back to the orchestrator must not stay "orchestrator_turn" forever when that
+      // turn cannot continue (for example a spend cap blocked its next model request). Pause it so it reads as stopped.
+      if (!turnHooked.has(s)) {
+        turnHooked.add(s);
+        s.subscribeNotifications((n) => {
+          if (n.type !== "agent_turn_completed") return;
+          pauseOrchestratorTurn(st, String(n.reason ?? ""));
         });
       }
       const names = new Set(tools.map((t) => t.name));

@@ -54,6 +54,9 @@ export function Composer(props: {
   onMission?(): void;
   prefill?: string;
   onPrefillUsed?(): void;
+  /** A message taken back out of the send queue: its text and attachments go into the composer. */
+  restore?: { text: string; attachments?: Attachment[]; nonce: number };
+  onRestoreUsed?(): void;
 }) {
   const [text, setText] = useState("");
   const [help, setHelp] = useState(false);
@@ -85,6 +88,18 @@ export function Composer(props: {
     editor.chain().focus("end").insertContent({ type: "text", text: `${editor.isEmpty ? "" : "\n"}${props.prefill}` }).run();
     props.onPrefillUsed?.();
   }, [editor, props.prefill]);
+  useEffect(() => {
+    const r = props.restore;
+    if (!editor || !r) return;
+    if (r.text) editor.chain().focus("end").insertContent({ type: "text", text: `${editor.isEmpty ? "" : "\n"}${r.text}` }).run();
+    if (r.attachments?.length) {
+      const room = Math.max(0, MAX_ATTACHMENTS - atts.length);
+      if (r.attachments.length > room) setAttachError(`At most ${MAX_ATTACHMENTS} attachments; ${r.attachments.length - room} did not fit.`);
+      setAtts((cur) => [...cur, ...r.attachments!.slice(0, Math.max(0, MAX_ATTACHMENTS - cur.length))]);
+    }
+    props.onRestoreUsed?.();
+    // Restore once per request; the nonce changes when a new message is put back.
+  }, [editor, props.restore]);
   useEffect(() => {
     if (!props.autoFocus || !editor) return;
     const initialFocus = document.activeElement;

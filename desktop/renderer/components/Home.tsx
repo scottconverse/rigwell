@@ -3,10 +3,10 @@ import { app, useApp } from "../lib/app-model.ts";
 import { bridge } from "../lib/rpc.ts";
 import { SessionController } from "../lib/session.ts";
 import { Composer, type ComposerSettings } from "./Composer.tsx";
-import { toParams } from "../lib/attachments.ts";
+import { toParams, type Attachment } from "../lib/attachments.ts";
 import { Accounts } from "./SettingsAccess.tsx";
 import { TrustDialog } from "./Dialogs.tsx";
-import { live, pendingMission } from "./SessionScreen.tsx";
+import { live, pendingMission, pendingMissionSend } from "./SessionScreen.tsx";
 import { normalizeModel, type ModelRow } from "../lib/models.ts";
 import type { Machine } from "../../../src/machines/store.ts";
 
@@ -60,7 +60,7 @@ export function Home({ go, initialFolder, initialMission }: { go(route: string):
   // spec §18.1: runInWorktree is the default for this toggle; the choice is per session.
   const useWorktree = worktree ?? a.userSettings.runInWorktree === true;
 
-  const start = async (text: string, attach: ReturnType<typeof toParams> = {}) => {
+  const start = async (text: string, atts: Attachment[] = []) => {
     if (!folder) { setError("Choose a folder first."); return; }
     setBusy(true); setError("");
     const mission = settings.interactionMode === "mission";
@@ -72,11 +72,13 @@ export function Home({ go, initialFolder, initialMission }: { go(route: string):
       });
       const id = ctl.getSnapshot().sessionId!;
       live.set(id, ctl);
-      if (mission) pendingMission.add(id);
+      // Mission mode is entered by the session screen (readiness check, tool list). Sending first made the first
+      // model request run in auto mode with no mission tools, so the orchestrator wasted a request looking for them.
+      if (mission) { pendingMission.add(id); pendingMissionSend.set(id, { text, atts }); }
       if (!machine) app.rememberFolder(folder);
       void app.refresh();
       go(`/sessions/${id}`);
-      void ctl.send(text, attach);
+      if (!mission) void ctl.send(text, toParams(atts));
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
 
@@ -112,7 +114,7 @@ export function Home({ go, initialFolder, initialMission }: { go(route: string):
         </div>
         <Composer settings={settings} models={models} busy={false} disabled={busy || modelsBusy || !running || !models.length} autoFocus disabledShortcuts={a.settings?.disabledShortcuts} cwd={folder}
           autoAvailable={!!a.userSettings.autoRouter} onMission={() => setSettings((s) => ({ ...s, interactionMode: "mission" }))}
-          onChange={(p) => setSettings((s) => ({ ...s, ...p }))} onSend={(t, atts) => void start(t, atts ? toParams(atts) : {})} onStop={() => {}} />
+          onChange={(p) => setSettings((s) => ({ ...s, ...p }))} onSend={(t, atts) => void start(t, atts)} onStop={() => {}} />
         {error && <div className="banner error" role="alert">{error}</div>}
       </div>
       {adder.dialog}
