@@ -165,6 +165,18 @@ Use a Mission for a larger plan with staged execution and validation. Review the
 
 During execution, inspect progress, questions and validation results. Use handoff information to understand unresolved work. A paused or interrupted mission is incomplete until its remaining outcomes are verified. Resume deliberately after reviewing the working directory. See [mission readiness](mission-readiness.md).
 
+#### Run workers at the same time
+
+Open `Settings > Missions` and set `Workers at once` from 1 to 4. The default is 1. With 1, a mission works in your folder, one feature at a time. A remote machine always runs 1 worker.
+
+Above 1, each worker gets its own code copy (a git worktree). Rigwell runs two features together only when neither depends on the other (`dependsOn`) and their file areas (`fileAreas`) do not overlap. A feature with no file areas runs alone. Each worker must commit its work.
+
+Rigwell merges finished features one at a time into a separate branch named `rigwell/mission-<id>`. Your own branch does not change. When the mission completes, review that branch and merge it yourself. Validators run alone, on the merged code.
+
+If a merge has a conflict, Rigwell stops that feature, keeps its branch, and asks for your attention. Rigwell never resolves a conflict silently. If one worker has a problem, the running workers finish their current feature, no new worker starts, and the mission asks for your attention. `Pause` stops all workers at once.
+
+Spend limits apply to every worker. Rigwell checks the limit before each model request, but a request already running can finish above it. With 4 workers, up to 4 requests can finish above the limit.
+
 ### Branches, review and pull requests
 
 Use an isolated worktree for work that should not disturb an existing checkout. Review tracks the actual repository snapshot. A changed head may require reloading the review before submitting it.

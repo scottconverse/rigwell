@@ -5,7 +5,9 @@ import type { TokenUsage, Tool } from "../core/types.ts";
 import { zeroUsage } from "../core/types.ts";
 import { stepFrom } from "../agent/step.ts";
 import { parseSkillFile } from "../skills/skills.ts";
-import { isValidatorSkill, needsAttention, type Feature, type HandoffRecord, type MissionState, type MissionStore } from "./store.ts";
+import { dependencyProblem, isValidatorSkill, needsAttention, type Feature, type HandoffRecord, type MissionState, type MissionStore } from "./store.ts";
+import { MissionWorkspace, clampWorkers, isRemoteMachine, pickRunnable } from "./parallel.ts";
+import type { WorktreeManager } from "../worktree/manager.ts";
 import { skeleton, type WorkerOutcome, type WorkerSpawner } from "./worker.ts";
 import type { WakeLock } from "./wakelock.ts";
 import { effectivePolicy } from "../storage/policy.ts";
@@ -19,6 +21,8 @@ export interface MissionSettings {
   validationWorkerReasoningEffort?: string;
   skipScrutiny?: boolean;
   skipUserTesting?: boolean;
+  /** How many workers may run at once (1 to 4). The default is 1. */
+  maxParallelWorkers?: number;
 }
 
 export interface Limits {
@@ -63,6 +67,8 @@ export interface RunnerDeps {
   /** Registered while a run is live. */
   register(h: RunHandle): void;
   unregister(h: RunHandle): void;
+  /** Worktree manager for parallel runs. */
+  worktrees(): WorktreeManager;
 }
 
 export interface RunHandle {
@@ -99,7 +105,7 @@ const doneStatus = (f: Feature) => f.status === "completed" || f.status === "can
 const attemptsOf = (f: Feature) => f.workerSessionIds?.length ?? 0;
 
 export class MissionRunner {
-  private activeWorker?: { id: string; interrupt(reason: string): void; featureId: string; description: string; startedAt: number; step?: string };
+  private workers = new Map<string, { id: string; interrupt(reason: string): void; featureId: string; description: string; startedAt: number; step?: string }>();
   private pauseRequest?: string;
   private startedAt = Date.now();
   private lastBilling = false;
@@ -131,8 +137,15 @@ export class MissionRunner {
       if (sk.status !== "enabled") return `Worker skill ${f.skillName} is not usable: ${sk.errors.join("; ") || sk.status}.`;
       if (sk.name !== f.skillName) return `Worker skill folder ${f.skillName} must declare name: ${f.skillName} in its frontmatter (found "${sk.name}").`;
     }
-    const last = s.handoffs().at(-1);
-    if (last && needsAttention(last) && !this.handoffDealtWith(last)) {
+    const deps = dependencyProblem(features);
+    if (deps) return `features.json is invalid: ${deps}.`;
+    const st = s.readState();
+    if (st?.missionBranch && isRemoteMachine(this.d.orchestrator.settings().machine)) return `This mission has parallel work on branch ${st.missionBranch}. Finish it on this machine, or clear the remote machine setting.`;
+    const all = s.handoffs();
+    // Parallel workers can finish together, so every handoff of the latest run is checked, not only the last one.
+    const runStart = s.readLog().filter((e) => e.type === "mission_run_started" || e.type === "mission_resumed").at(-1)?.timestamp;
+    const latestRun = runStart ? all.filter((h) => Date.parse(h.timestamp) >= Date.parse(runStart)) : [];
+    if ([all.at(-1), ...latestRun].some((h) => h && needsAttention(h) && !this.handoffDealtWith(h))) {
       return "The latest handoff reports issues, undone work or a non-success result. Review it, then call DismissHandoffItems with a justification for each item, or edit features.json / mission.md to address it, before StartMissionRun.";
     }
     return null;
@@ -165,6 +178,7 @@ export class MissionRunner {
     const open = new Set(impl.filter((f) => f.status !== "cancelled").map((f) => f.milestone));
     const s = this.d.orchestrator.settings();
     const per = (s.skipScrutiny ? 0 : 1) + (s.skipUserTesting ? 0 : 1);
+    const running = [...this.workers.values()].map((w) => ({ workerSessionId: w.id, featureId: w.featureId, description: w.description, startedAt: w.startedAt, step: w.step }));
     return {
       state: st?.state ?? "planning", updatedAt: st?.updatedAt,
       activeTime: { elapsedMs: Date.now() - this.startedAt, measuredAtMs: Date.now() },
@@ -173,8 +187,10 @@ export class MissionRunner {
         estimatedValidation: [...open].filter((m) => !validated.has(m)).length * per,
       },
       featureWindow: { previous: brief(lastDone), focus: brief(fs[focusIdx]), next: brief(fs.slice(focusIdx + 1).find((f) => f.status === "pending")) },
-      currentWorkerId: this.activeWorker?.id ?? null,
-      currentWorker: this.activeWorker ? { workerSessionId: this.activeWorker.id, featureId: this.activeWorker.featureId, description: this.activeWorker.description, startedAt: this.activeWorker.startedAt, step: this.activeWorker.step } : null,
+      currentWorkerId: running[0]?.workerSessionId ?? null,
+      currentWorker: running[0] ?? null,
+      workers: running,
+      missionBranch: st?.missionBranch ?? null,
     };
   }
 
@@ -200,9 +216,9 @@ export class MissionRunner {
     const resuming = before?.state === "paused";
     const handle: RunHandle = {
       sessionId: this.d.orchestrator.sessionId,
-      pause: (reason) => { this.pauseRequest = reason; this.activeWorker?.interrupt("pause"); },
-      killWorker: (id) => { if (this.activeWorker?.id !== id) return false; this.activeWorker.interrupt("kill"); return true; },
-      currentWorkerId: () => this.activeWorker?.id,
+      pause: (reason) => { this.pauseRequest = reason; for (const w of this.workers.values()) w.interrupt("pause"); },
+      killWorker: (id) => { const w = this.workers.get(id); if (!w) return false; w.interrupt("kill"); return true; },
+      currentWorkerId: () => this.workers.keys().next().value,
     };
     this.startedAt = Date.now();
     this.pauseRequest = undefined;
@@ -225,19 +241,19 @@ export class MissionRunner {
       else if (!s.readState()!.initialFeatureCount) s.writeState({ initialFeatureCount: s.features().filter((f) => !isValidatorSkill(f.skillName)).length });
       s.setState("initializing");
       this.d.notify({ type: "mission_state_changed", state: "initializing", updatedAt: s.readState()?.updatedAt });
-      let resumeId: string | undefined;
-      const inProg = s.features().find((f) => f.status === "in_progress");
-      if (inProg) {
-        if (resuming && inProg.currentWorkerSessionId && !input.restartFeature && (!input.resumeWorkerSessionId || input.resumeWorkerSessionId === inProg.currentWorkerSessionId)) {
-          resumeId = inProg.currentWorkerSessionId;
+      const parallel = this.usesWorkspace();
+      const resumeIds: string[] = [];
+      for (const inProg of s.features().filter((f) => f.status === "in_progress")) {
+        if (resuming && inProg.currentWorkerSessionId && !input.restartFeature && (parallel || !input.resumeWorkerSessionId || input.resumeWorkerSessionId === inProg.currentWorkerSessionId)) {
+          resumeIds.push(inProg.currentWorkerSessionId);
         } else {
           this.requeue(inProg, input.restartFeature ? "restart_feature" : "orphan_cleanup");
         }
       }
-      if (resuming) s.log("mission_resumed", { ...(resumeId ? { resumeWorkerSessionId: resumeId } : {}) });
+      if (resuming) s.log("mission_resumed", { ...(resumeIds[0] ? { resumeWorkerSessionId: resumeIds[0] } : {}), ...(resumeIds.length > 1 ? { resumeWorkerSessionIds: resumeIds } : {}) });
       else s.log("mission_run_started", {});
       this.setState("running");
-      return await this.loop(input, resumeId);
+      return parallel ? await this.loopParallel(input, resumeIds) : await this.loop(input, resumeIds[0]);
     } finally {
       clearInterval(hb);
       signal.removeEventListener("abort", onAbort);
@@ -292,8 +308,125 @@ export class MissionRunner {
       }
       const outcome = await this.runWorker(feature, resume, input);
       const verdict = await this.afterWorker(feature, outcome);
-      if (verdict) return verdict;
+      if (verdict) return verdict();
     }
+  }
+
+  // ---------- parallel run ----------
+
+  private workerLimit() {
+    const ms = this.d.orchestrator.settings();
+    return isRemoteMachine(ms.machine) ? 1 : clampWorkers(ms.maxParallelWorkers);
+  }
+
+  /** A mission that started on a mission branch stays on it, even if the limit is later set back to 1. */
+  private usesWorkspace() { return !!this.store.readState()?.missionBranch || this.workerLimit() > 1; }
+
+  private workspace() {
+    const st = this.store.readState()!;
+    const wd = st.workingDirectory || this.d.orchestrator.cwd;
+    return new MissionWorkspace(this.d.worktrees(), wd, st.missionId, this.d.log);
+  }
+
+  private async loopParallel(input: RunInput, resumeIds: string[]): Promise<RunResult> {
+    const s = this.store;
+    type Finished = { feature: Feature; outcome?: WorkerOutcome & { workerId: string }; startError?: string };
+    const running = new Map<string, Promise<Finished>>();
+    let integration: { branch: string; path: string; cwd: string };
+    try {
+      const st = s.readState()!;
+      integration = await this.workspace().ensureIntegration({ branch: st.missionBranch, path: st.integrationPath });
+      s.writeState({ missionBranch: integration.branch, integrationPath: integration.path });
+    } catch (e) {
+      return this.finishAttention(`Rigwell could not prepare the mission branch: ${(e as Error).message}`);
+    }
+    const start = (feature: Feature, resume: boolean) => {
+      running.set(feature.id, (async (): Promise<Finished> => {
+        try {
+          const place = resume ? undefined : await this.workerPlace(feature, integration);
+          return { feature, outcome: await this.runWorker(feature, resume, input, place) };
+        } catch (e) { return { feature, startError: (e as Error).message }; }
+      })());
+    };
+    // Work that finished before a crash is merged first.
+    let stop = await this.mergeFinished(integration.path);
+    for (const id of resumeIds) {
+      const f = s.features().find((x) => x.currentWorkerSessionId === id);
+      if (f) start(f, true);
+    }
+    for (;;) {
+      if (!stop && !this.pauseRequest) {
+        const policy = effectivePolicy().missions;
+        if (policy?.enabled === false || policy?.maxConcurrentRuns === 0 || (policy?.maxFeatures !== undefined && s.features().filter((f) => f.status !== "cancelled").length > policy.maxFeatures)) stop = () => this.finishPaused(this.pause("policy_limit_reached"));
+        else if (this.scopeExceeded()) stop = () => this.finishPaused(this.pause("scope_growth_limit_exceeded", { scopeGrowthPaused: true }));
+      }
+      if (!stop && !this.pauseRequest) {
+        for (const f of pickRunnable(s.features(), new Set(running.keys()), this.workerLimit())) {
+          if (attemptsOf(f) >= this.limit(f)) { stop = () => this.finishPaused(this.pause("feature_retry_limit_exceeded")); break; }
+          start(f, false);
+        }
+      }
+      if (!running.size) {
+        if (this.pauseRequest) return this.finishPaused(this.pauseRequest);
+        if (stop) return stop();
+        const features = s.features();
+        if (features.every(doneStatus)) {
+          await this.workspace().removeWorktree(integration.path, false);
+          s.writeState({ integrationPath: undefined });
+          this.setState("completed");
+          return this.result(true, `Every feature is complete: the mission is completed. The merged work is on branch ${integration.branch}. Your own branch did not change. Review that branch, then merge it when you are ready.`);
+        }
+        return this.finishAttention("No feature can start. A feature may wait on a cancelled or unfinished dependency. Review features.json.");
+      }
+      const done = await Promise.race(running.values());
+      running.delete(done.feature.id);
+      if (done.startError !== undefined) {
+        s.log("worker_failed", { featureId: done.feature.id, failureReason: `start_failed: ${done.startError}` });
+        stop ??= () => this.finishAttention(`Rigwell could not start the worker for ${done.feature.id}: ${done.startError}`);
+        continue;
+      }
+      const verdict = await this.afterWorker(done.feature, done.outcome!);
+      stop ??= verdict;
+      const merged = await this.mergeFinished(integration.path);
+      stop ??= merged;
+    }
+  }
+
+  private async workerPlace(f: Feature, integration: { branch: string; cwd: string }) {
+    // Validators check the merged result, in the mission branch folder.
+    if (isValidatorSkill(f.skillName)) return { cwd: integration.cwd, isolated: true };
+    const w = crypto.randomUUID();
+    const wt = await this.workspace().createWorker(f.id, w, integration.branch);
+    return { workerId: w, cwd: wt.cwd, isolated: true, branch: wt.branch, worktree: wt.path };
+  }
+
+  /** Merges finished features one at a time. A failed merge stops only that feature and asks for attention. */
+  private async mergeFinished(integrationPath: string): Promise<(() => RunResult) | undefined> {
+    const s = this.store;
+    const problems: string[] = [];
+    for (const f of s.features().filter((x) => x.status === "completed" && x.mergeStatus === "pending")) {
+      const ws = this.workspace();
+      const r = await ws.merge(integrationPath, f.workBranch!, f.id);
+      if (r.ok) {
+        s.updateFeature(f.id, (x) => { x.mergeStatus = "merged"; });
+        s.log("feature_merged", { featureId: f.id, branch: f.workBranch });
+        const location = Object.values(s.readState()?.workerLocations ?? {}).find((l) => l.branch === f.workBranch);
+        if (location?.worktree) await ws.removeWorktree(location.worktree, true);
+        this.maybeInsertValidators(f.milestone);
+      } else {
+        s.updateFeature(f.id, (x) => { x.status = "pending"; x.mergeStatus = "conflict"; delete x.completedWorkerSessionId; });
+        s.log("merge_conflict", { featureId: f.id, branch: f.workBranch, files: r.files, conflict: r.conflict });
+        // The work is committed on its branch, so the folder can go. The branch stays for review.
+        const kept = Object.values(s.readState()?.workerLocations ?? {}).find((l) => l.branch === f.workBranch);
+        if (kept?.worktree) await ws.removeWorktree(kept.worktree, false);
+        problems.push(r.conflict
+          ? `Feature ${f.id} could not merge. Conflicting files: ${r.files.join(", ")}.`
+          : `Feature ${f.id} could not merge: ${r.message}.`);
+        problems.push(`Its work is kept on branch ${f.workBranch}. Rigwell did not resolve this. Review it, then change the plan or call StartMissionRun to rebuild the feature on the merged code.`);
+      }
+      this.emitProgress();
+    }
+    return problems.length ? () => this.finishAttention(problems.join(" ")) : undefined;
   }
 
   private finishPaused(reason: string): RunResult {
@@ -342,20 +475,26 @@ export class MissionRunner {
     return { modelId: o.modelId(), effort, substitutedFrom: want };
   }
 
-  private async runWorker(f: Feature, resume: boolean, input: RunInput): Promise<WorkerOutcome & { workerId: string }> {
+  private async runWorker(f: Feature, resume: boolean, input: RunInput, place?: { workerId?: string; cwd: string; isolated: boolean; branch?: string; worktree?: string }): Promise<WorkerOutcome & { workerId: string }> {
     const s = this.store;
     const o = this.d.orchestrator;
     const st = s.readState()!;
     const ms = o.settings();
+    const stored = st.workerLocations?.[f.currentWorkerSessionId ?? ""];
+    const isolated = place?.isolated ?? (resume && !!stored?.isolated);
     const location = resume ? st.workerLocations?.[f.currentWorkerSessionId ?? ""] : undefined;
     const machine = location ? location.machine : ms.machine;
-    const cwd = location?.cwd ?? (machine ? ms.workerWorkingDirectory || st.workingDirectory || o.cwd : st.workingDirectory || o.cwd);
+    const cwd = place?.cwd ?? location?.cwd ?? (machine ? ms.workerWorkingDirectory || st.workingDirectory || o.cwd : st.workingDirectory || o.cwd);
     const pick = this.pickModel(f);
     let workerId = f.currentWorkerSessionId ?? "";
     if (!resume) {
-      workerId = crypto.randomUUID();
-      s.writeState({ workerLocations: { ...st.workerLocations, [workerId]: { machine, cwd } } });
-      s.updateFeature(f.id, (x) => { x.status = "in_progress"; x.currentWorkerSessionId = workerId; x.workerSessionIds = [...(x.workerSessionIds ?? []), workerId]; });
+      workerId = place?.workerId ?? crypto.randomUUID();
+      s.writeState({ workerLocations: { ...s.readState()?.workerLocations, [workerId]: { machine, cwd, ...(place ? { isolated: true } : {}), ...(place?.branch ? { branch: place.branch, worktree: place.worktree } : {}) } } });
+      s.updateFeature(f.id, (x) => {
+        x.status = "in_progress"; x.currentWorkerSessionId = workerId; x.workerSessionIds = [...(x.workerSessionIds ?? []), workerId];
+        delete x.mergeStatus;
+        if (place?.branch) x.workBranch = place.branch; else delete x.workBranch;
+      });
       s.log("worker_selected_feature", { workerSessionId: workerId, featureId: f.id });
       s.log("worker_started", { workerSessionId: workerId, featureId: f.id, modelId: pick.modelId, ...(pick.substitutedFrom ? { substitutedFromModelId: pick.substitutedFrom } : {}) });
     }
@@ -365,26 +504,26 @@ export class MissionRunner {
     const h = this.d.spawn({
       sessionId: workerId, resume, cwd, modelId: pick.modelId, reasoningEffort: pick.effort, missionId: st.missionId, role: "worker",
       ...(machine ? { machine, missionDir: s.dir, feature: f, extraMessage: input.messageToWorker } : {}),
-      prompt: resume ? resumePrompt(input.messageToWorker) : workerPrompt(s.dir, f, workerId, cwd, input.messageToWorker),
+      prompt: resume ? resumePrompt(input.messageToWorker) : workerPrompt(s.dir, f, workerId, cwd, input.messageToWorker, isolated),
       wrapTools: this.d.workerWrap(workerId), inactivityMs: this.d.limits.inactivityMs, startGraceMs: this.d.limits.startGraceMs,
       retryBaseDelayMs: this.d.retryBaseDelayMs, log: this.d.log,
       onActivity: (n) => {
         const next = stepFrom(n);
-        if (next !== undefined) { step = next || undefined; if (this.activeWorker?.id === workerId) this.activeWorker.step = step; }
+        if (next !== undefined) { step = next || undefined; const live = this.workers.get(workerId); if (live) live.step = step; }
         this.d.notify({ type: "mission_worker_activity", workerSessionId: workerId, activity: n.type, ...(next !== undefined ? { step: next } : {}) });
       },
     });
-    this.activeWorker = { id: workerId, interrupt: h.interrupt, featureId: f.id, description: f.description, startedAt, step };
+    this.workers.set(workerId, { id: workerId, interrupt: h.interrupt, featureId: f.id, description: f.description, startedAt, step });
     this.emitProgress();
     if (this.pauseRequest) h.interrupt("pause");
     const outcome = await h.done;
-    this.activeWorker = undefined;
+    this.workers.delete(workerId);
     s.addWorkerTranscript({ workerSessionId: workerId, featureId: f.id, status: outcome.status, messages: skeleton(outcome.messages) });
     return { ...outcome, workerId };
   }
 
-  /** Handles the end of a worker. Returns a result to stop the run, or undefined to carry on. */
-  private async afterWorker(f: Feature, o: WorkerOutcome & { workerId: string }): Promise<RunResult | undefined> {
+  /** Handles the end of a worker. Returns a step that stops the run, or undefined to carry on. The step runs after other workers finish. */
+  private async afterWorker(f: Feature, o: WorkerOutcome & { workerId: string }): Promise<(() => RunResult) | undefined> {
     const s = this.store;
     const cur = () => s.features().find((x) => x.id === f.id);
     const rec = s.handoffFor(o.workerId);
@@ -394,16 +533,16 @@ export class MissionRunner {
         s.log("worker_failed", { workerSessionId: o.workerId, featureId: f.id, failureReason: "user_killed" });
         if (feat && feat.status === "in_progress") s.updateFeature(f.id, (x) => { x.status = "pending"; delete x.currentWorkerSessionId; });
         this.d.notify({ type: "mission_worker_completed", workerSessionId: o.workerId, exitCode: 1 });
-        return this.finishAttention(`The worker for ${f.id} was killed by the user and the feature was requeued. Review, then call StartMissionRun.`);
+        return () => this.finishAttention(`The worker for ${f.id} was killed by the user and the feature was requeued. Review, then call StartMissionRun.`);
       }
       s.log("worker_paused", { workerSessionId: o.workerId, featureId: f.id });
-      return this.finishPaused(this.pauseRequest ?? "user_paused");
+      return () => this.finishPaused(this.pauseRequest ?? "user_paused");
     }
     if (rec) {
       s.log("worker_completed", { workerSessionId: o.workerId, featureId: f.id, ...rec.handoff, successState: rec.successState, exitCode: 0 });
       this.d.notify({ type: "mission_worker_completed", workerSessionId: o.workerId, exitCode: 0 });
       if (needsAttention(rec)) {
-        return this.finishAttention(`Worker for ${f.id} finished with ${rec.successState}${rec.returnToOrchestrator ? " and asked to return to the orchestrator" : ""}. Review the handoff, then dismiss items or edit the plan and call StartMissionRun.`);
+        return () => this.finishAttention(`Worker for ${f.id} finished with ${rec.successState}${rec.returnToOrchestrator ? " and asked to return to the orchestrator" : ""}. Review the handoff, then dismiss items or edit the plan and call StartMissionRun.`);
       }
       this.maybeInsertValidators(f.milestone);
       this.emitProgress();
@@ -418,9 +557,9 @@ export class MissionRunner {
     if (feat && feat.status === "in_progress") s.updateFeature(f.id, (x) => { x.status = "pending"; delete x.currentWorkerSessionId; });
     this.d.notify({ type: "mission_worker_completed", workerSessionId: o.workerId, exitCode: 1 });
     if (o.status === "error" && BILLING.test(o.errorMessage ?? "")) {
-      return this.finishPaused(this.pause("unrecoverable_usage_402"));
+      return () => this.finishPaused(this.pause("unrecoverable_usage_402"));
     }
-    return this.finishAttention(
+    return () => this.finishAttention(
       o.status === "timeout" ? `The worker for ${f.id} was silent too long and was failed; the feature was requeued. Call StartMissionRun to retry.`
         : o.status === "error" ? `The worker for ${f.id} crashed (${o.errorMessage ?? "unknown error"}); the feature was requeued. Call StartMissionRun to retry.`
           : `The worker for ${f.id} ended without calling EndFeatureRun; the feature was requeued. Resume or retry with StartMissionRun.`,
@@ -433,7 +572,7 @@ export class MissionRunner {
     if (s.readLog().some((e) => e.type === "milestone_validation_triggered" && e.milestone === milestone)) return;
     const all = s.features();
     const impl = all.filter((x) => x.milestone === milestone && !isValidatorSkill(x.skillName) && x.status !== "cancelled");
-    if (!impl.length || impl.some((x) => x.status !== "completed")) return;
+    if (!impl.length || impl.some((x) => x.status !== "completed" || (x.mergeStatus && x.mergeStatus !== "merged"))) return;
     const ms = this.d.orchestrator.settings();
     const add: Feature[] = [];
     if (!ms.skipScrutiny) add.push({
@@ -458,7 +597,7 @@ const VALIDATOR_ROLE: Record<string, string> = {
   "user-testing-validator": "You are the user-testing validator for a milestone. Exercise the milestone's behavior the way a user would, following validation-contract.md, and record what you observed. Record failures as discoveredIssues in your handoff.",
 };
 
-export function workerPrompt(missionDir: string, f: Feature, workerId: string, cwd: string, extra?: string): string {
+export function workerPrompt(missionDir: string, f: Feature, workerId: string, cwd: string, extra?: string, isolated = false): string {
   const skill = isValidatorSkill(f.skillName)
     ? VALIDATOR_ROLE[f.skillName]
     : `Load your skill from ${join(missionDir, "skills", f.skillName, "SKILL.md")} and follow it.`;
@@ -472,6 +611,7 @@ export function workerPrompt(missionDir: string, f: Feature, workerId: string, c
     list("Preconditions", f.preconditions), list("Expected behavior", f.expectedBehavior), list("Fulfills", f.fulfills),
     `Before you start, read ${join(missionDir, "mission.md")} and ${join(missionDir, "AGENTS.md")}. ${skill}`,
     `Rules: do not edit features.json or any file in the mission folder that the system owns. Do only this feature. Commit your work when the skill says to.`,
+    isolated ? `This run uses a separate code copy on its own branch. Commit all your work before you call EndFeatureRun: uncommitted work cannot be merged.${f.fileAreas?.length ? ` Change only these file areas: ${f.fileAreas.join(", ")}.` : ""}` : "",
     `You must finish by calling EndFeatureRun exactly once with your result and handoff. A run that ends without it counts as a failure.`,
     extra ? `Message from the orchestrator: ${extra}` : "",
   ].filter(Boolean).join("\n");

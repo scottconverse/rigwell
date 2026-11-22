@@ -55,7 +55,7 @@ export function orchestratorTools(env: OrchestratorEnv): Tool[] {
   const start: Tool = {
     name: "StartMissionRun",
     category: "other",
-    description: "Run (or resume) the mission queue. Blocks while workers run, one at a time, and returns when the mission completes, pauses, or needs your attention, with the recent handoffs. Refuses when the plan files are incomplete or the latest handoff has unaddressed items.",
+    description: "Run (or resume) the mission queue. Blocks while workers run (one at a time unless the maxParallelWorkers setting is higher) and returns when the mission completes, pauses, or needs your attention, with the recent handoffs. Refuses when the plan files are incomplete or a recent handoff has unaddressed items. For parallel work, give each feature fileAreas (folders or files it changes) and dependsOn (feature ids). Features run together only when neither depends on the other and their file areas do not overlap. A feature without fileAreas runs alone. Finished work merges to a separate mission branch.",
     inputSchema: { type: "object", properties: { message: { type: "string" }, resumeWorkerSessionId: { type: "string" }, restartFeature: { type: "boolean" }, messageToWorker: { type: "string" } } },
     async run(input, ctx) {
       const s = env.store();
@@ -138,6 +138,13 @@ export function workerTools(env: WorkerEnv): Tool[] {
         if (!(env.verifyCommit ? await env.verifyCommit(repo, input.commitId) : commitExists(repo, input.commitId))) return fail(`commitId ${input.commitId} was not found in ${repo}. Give the right repoPath, or omit commitId.`);
       }
       if (st === "success" && input.validatorsPassed !== true) return fail("success requires validatorsPassed: true. Run the validators (tests, checks) and fix failures first, or report partial or failure.");
+      const location = s.readState()?.workerLocations?.[ctx.sessionId];
+      if (st === "success" && location?.isolated) {
+        let changed: string;
+        try { changed = execFileSync("git", ["-C", location.cwd, "status", "--porcelain"], { encoding: "utf8", timeout: 15000 }).trim(); }
+        catch (e) { return fail(`EndFeatureRun could not check for uncommitted work: ${(e as Error).message}`); }
+        if (changed) return fail(`EndFeatureRun refused: this folder has uncommitted work. Commit it first, because uncommitted work cannot be merged:\n${changed.split("\n").slice(0, 10).join("\n")}`);
+      }
       const rec: HandoffRecord = {
         timestamp: new Date().toISOString(), workerSessionId: ctx.sessionId, featureId: feat.id, milestone: feat.milestone,
         ...(typeof input.commitId === "string" && input.commitId ? { commitId: input.commitId, repoPath: repo } : {}),
@@ -151,6 +158,7 @@ export function workerTools(env: WorkerEnv): Tool[] {
         f.status = "completed";
         f.completedWorkerSessionId = ctx.sessionId;
         delete f.currentWorkerSessionId;
+        if (location?.branch) { f.mergeStatus = "pending"; f.workBranch = location.branch; }
         all.push(f);
       } else {
         f.status = "pending";
