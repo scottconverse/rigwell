@@ -290,7 +290,7 @@ export class SessionController extends Store<SessionState> {
       try {
         const m = (await bridge().userSettings.get()).missions ?? {};
         const ms: Record<string, unknown> = {};
-        for (const k of ["machine", "workerWorkingDirectory", "workerModel", "workerReasoningEffort", "validationWorkerModel", "validationWorkerReasoningEffort", "skipScrutiny", "skipUserTesting"]) if (m[k] !== undefined) ms[k] = m[k];
+        for (const k of ["machine", "workerWorkingDirectory", "workerModel", "workerReasoningEffort", "validationWorkerModel", "validationWorkerReasoningEffort", "skipScrutiny", "skipUserTesting", "maxParallelWorkers"]) if (m[k] !== undefined) ms[k] = m[k];
         if (Object.keys(ms).length) await this.request("update_session_settings", { missionSettings: ms });
       } catch { /* the defaults stay */ }
     }

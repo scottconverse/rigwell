@@ -24,13 +24,14 @@ export function memberRow(a: AgentEntry): AgentRow {
 export const memberRows = (roster: AgentEntry[]) => roster.filter((a) => a.status !== "archived").map(memberRow);
 
 /** Mission workers. Only the worker the daemon reports as current counts as Working. */
-export function workerAgentRows(features: MissionFeature[], current?: CurrentWorker | null): AgentRow[] {
+export function workerAgentRows(features: MissionFeature[], running?: CurrentWorker | CurrentWorker[] | null): AgentRow[] {
+  const liveWorkers = Array.isArray(running) ? running : running ? [running] : [];
   const rows: AgentRow[] = [];
   for (const f of features) for (const id of f.workerSessionIds ?? []) {
-    const live = current?.workerSessionId === id ? current : undefined;
+    const live = liveWorkers.find((w) => w.workerSessionId === id);
     rows.push({ id, kind: "mission", name: f.description, status: live ? "Working" : "Not running", active: !!live, step: live?.step, startedAt: live?.startedAt, role: `Mission worker for ${f.id}`, sessionId: id });
   }
-  if (current && !rows.some((r) => r.id === current.workerSessionId)) rows.push({ id: current.workerSessionId, kind: "mission", name: current.description, status: "Working", active: true, step: current.step, startedAt: current.startedAt, role: `Mission worker for ${current.featureId}`, sessionId: current.workerSessionId });
+  for (const current of liveWorkers) if (!rows.some((r) => r.id === current.workerSessionId)) rows.push({ id: current.workerSessionId, kind: "mission", name: current.description, status: "Working", active: true, step: current.step, startedAt: current.startedAt, role: `Mission worker for ${current.featureId}`, sessionId: current.workerSessionId });
   return rows;
 }
 

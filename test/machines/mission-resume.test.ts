@@ -22,7 +22,7 @@ for (const firstMachine of [undefined, "original-remote"]) test(`paused ${firstM
   const selected: WorkerRequest[] = [];
   const runner = new MissionRunner({ store, limits: DEFAULT_LIMITS, wake: new WakeLock(undefined),
     orchestrator: { sessionId: "fixture-lead", cwd: env.root, settings: () => settings, modelId: () => "fixture", reasoningEffort: () => "low", tokenUsage: zeroUsage },
-    modelExists: () => true, workerUsage: zeroUsage, notify() {}, register() {}, unregister() {}, workerWrap: () => (tools) => tools,
+    modelExists: () => true, workerUsage: zeroUsage, notify() {}, register() {}, unregister() {}, workerWrap: () => (tools) => tools, worktrees: () => { throw new Error("this test does not use worktrees"); },
     spawn(request) {
       selected.push(request);
       return { sessionId: request.sessionId, interrupt() {}, done: Promise.resolve({ status: "interrupted", interruptReason: "pause", text: "", messages: [], tokenUsage: zeroUsage() }) };

@@ -18,6 +18,31 @@ export interface Feature {
   workerSessionIds?: string[];
   currentWorkerSessionId?: string;
   completedWorkerSessionId?: string;
+  /** Feature ids that must be finished and merged before this feature starts. */
+  dependsOn?: string[];
+  /** Folders or files this feature changes. A feature without areas runs alone. */
+  fileAreas?: string[];
+  /** Parallel runs only: where the finished work stands. */
+  mergeStatus?: "pending" | "merged" | "conflict";
+  /** Parallel runs only: the branch that holds this feature's work. */
+  workBranch?: string;
+}
+
+/** Returns a problem with the dependency list (unknown id or a cycle), or null. */
+export function dependencyProblem(features: Pick<Feature, "id" | "dependsOn">[]): string | null {
+  const byId = new Map(features.map((f) => [f.id, f]));
+  for (const f of features) for (const d of f.dependsOn ?? []) if (!byId.has(d)) return `feature ${f.id} depends on unknown feature ${d}`;
+  const state = new Map<string, 1 | 2>();
+  const visit = (id: string): string | null => {
+    if (state.get(id) === 2) return null;
+    if (state.get(id) === 1) return `feature ${id} is part of a dependency cycle`;
+    state.set(id, 1);
+    for (const d of byId.get(id)?.dependsOn ?? []) { const p = visit(d); if (p) return p; }
+    state.set(id, 2);
+    return null;
+  };
+  for (const f of features) { const p = visit(f.id); if (p) return p; }
+  return null;
 }
 
 export interface StateFile {
@@ -30,7 +55,10 @@ export interface StateFile {
   initialFeatureCount: number;
   featureRetryBudgetBonus: Record<string, number>;
   /** A paused worker resumes on its original host and repository even if defaults change. */
-  workerLocations?: Record<string, { machine?: string; cwd: string }>;
+  workerLocations?: Record<string, { machine?: string; cwd: string; isolated?: boolean; branch?: string; worktree?: string }>;
+  /** Parallel runs: the branch that collects finished features, and the worktree that holds it. */
+  missionBranch?: string;
+  integrationPath?: string;
   /** Why the mission is paused (extra field; absent otherwise). */
   pauseReason?: string;
   /** Set once the scope-growth pause has fired. */
@@ -79,13 +107,14 @@ export function checkFeaturesJson(text: string): string | null {
     if (!f || typeof f !== "object") return bad(`features[${i}] must be an object`);
     for (const k of ["id", "description", "skillName", "milestone"]) if (typeof f[k] !== "string" || !f[k].trim()) return bad(`features[${i}].${k} must be a non-empty string`);
     if (!["pending", "in_progress", "completed", "cancelled"].includes(f.status)) return bad(`features[${i}].status must be pending, in_progress, completed or cancelled`);
-    for (const k of ["preconditions", "expectedBehavior", "fulfills", "workerSessionIds"]) {
+    for (const k of ["preconditions", "expectedBehavior", "fulfills", "workerSessionIds", "dependsOn", "fileAreas"]) {
       if (f[k] !== undefined && (!Array.isArray(f[k]) || f[k].some((x: unknown) => typeof x !== "string"))) return bad(`features[${i}].${k} must be an array of strings`);
     }
     if (seen.has(f.id)) return bad(`duplicate feature id ${f.id}`);
     seen.add(f.id);
   }
-  return null;
+  const deps = dependencyProblem(j.features);
+  return deps ? bad(deps) : null;
 }
 
 export function checkValidationState(text: string): string | null {

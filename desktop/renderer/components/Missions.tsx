@@ -59,7 +59,7 @@ export function Missions({ go }: { go(r: string): void }) {
           <ol className="steps">
             <li>Describe the goal. The orchestrator asks questions and writes a plan with you.</li>
             <li>Review and approve the plan.</li>
-            <li>Workers build the features one at a time, with validation at each milestone.</li>
+            <li>Workers build the features, one at a time by default, with validation at each milestone.</li>
           </ol>
           <p className="muted"><strong>Orchestrator</strong> plans and decides. <strong>Workers</strong> each build one feature in their own session. <strong>Milestones</strong> group features and trigger validation.</p>
           <div className="banner warn small" role="note">Missions are not for simple tasks. They can run for hours or days and use far more tokens than a normal session.</div>
@@ -155,12 +155,13 @@ export function MissionDetailPage({ sessionId, go }: { sessionId: string; go(r: 
             <div><div className="stat-n">{activeMs != null ? elapsed(activeMs) : "-"}</div><div className="muted small">active time</div></div>
             <div><div className="stat-n">{fmt(tokenTotal(d.tokenUsage))}</div><div className="muted small">tokens (local)</div></div>
           </div>
+          {d.progress?.missionBranch && <p className="small" data-testid="mission-branch">Finished work goes to branch <span className="mono">{d.progress.missionBranch}</span>. Your own branch does not change.</p>}
           <h2>Features</h2>
           <table className="table" aria-label="Features">
             <thead><tr><th>Feature</th><th>Milestone</th><th>Status</th><th>Worker</th></tr></thead>
             <tbody>
               {d.features.map((f) => (
-                <tr key={f.id}><td><div>{f.id}</div><div className="muted small">{f.description}</div></td><td>{f.milestone}</td><td><span className={`badge fs-${f.status}`}>{f.status.replace("_", " ")}</span></td><td className="mono small">{f.currentWorkerSessionId?.slice(0, 8) ?? ""}</td></tr>
+                <tr key={f.id}><td><div>{f.id}</div><div className="muted small">{f.description}</div></td><td>{f.milestone}</td><td><span className={`badge fs-${f.status}`}>{f.status.replace("_", " ")}</span>{f.mergeStatus && <div className="muted small">{f.mergeStatus === "pending" ? "Waiting to merge" : f.mergeStatus === "merged" ? "Merged" : `Merge conflict. Work kept on ${f.workBranch}`}</div>}</td><td className="mono small">{f.currentWorkerSessionId?.slice(0, 8) ?? ""}</td></tr>
               ))}
               {!d.features.length && <tr><td colSpan={4} className="muted">The plan has no features yet.</td></tr>}
             </tbody>

@@ -1,6 +1,6 @@
 // Mission Control view model (spec §15.8, §14.3). Pure functions over the mission_get / mission_list data and notifications.
 export type MissionState = "planning" | "awaiting_input" | "initializing" | "running" | "orchestrator_turn" | "completed" | "paused";
-export interface MissionFeature { id: string; description: string; skillName: string; milestone: string; status: "pending" | "in_progress" | "completed" | "cancelled"; currentWorkerSessionId?: string; workerSessionIds?: string[] }
+export interface MissionFeature { id: string; description: string; skillName: string; milestone: string; status: "pending" | "in_progress" | "completed" | "cancelled"; currentWorkerSessionId?: string; workerSessionIds?: string[]; dependsOn?: string[]; fileAreas?: string[]; mergeStatus?: "pending" | "merged" | "conflict"; workBranch?: string }
 export interface MissionListRow { sessionId: string; missionId?: string; state: string; title?: string }
 export interface MissionDetail {
   exists: boolean; state: string; features: MissionFeature[]; handoffs: any[]; progress?: any; progressLog: any[]; pauseReason?: string;

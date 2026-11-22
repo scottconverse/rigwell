@@ -25,6 +25,7 @@ import { RemoteSessionStore } from "../machines/sessions.ts";
 import { effectivePolicy } from "../storage/policy.ts";
 import { generateReadinessReport, readReadinessReport, readinessPlan, readinessRoot } from "./readiness-report.ts";
 import { abortable } from "../core/abort.ts";
+import { managerFor } from "../worktree/connect.ts";
 
 export * from "./store.ts";
 export { MissionRunner, DEFAULT_LIMITS } from "./runner.ts";
@@ -108,7 +109,7 @@ export function createMissionService(opts: MissionServiceOptions = {}) {
         },
         spawn, modelExists: (id) => modelExists(s, id),
         workerWrap: (workerId) => (tools, services) => {
-          const wd = () => st.readState()?.workingDirectory || s.cwd;
+          const wd = () => { const x = st.readState(); const l = x?.workerLocations?.[workerId]; return (l?.isolated ? l.cwd : x?.workingDirectory) || s.cwd; };
           return [...protectTools(tools, { role: "worker" }), ...workerTools({ sessionId: workerId, store: st, workingDirectory: wd, ...services })];
         },
         // The store already reports state changes; the runner's own copies are dropped.
@@ -131,6 +132,7 @@ export function createMissionService(opts: MissionServiceOptions = {}) {
           handles.set(h.sessionId, h);
         },
         unregister: (h) => { if (handles.get(h.sessionId) === h) handles.delete(h.sessionId); },
+        worktrees: () => managerFor(loadSettings({ cwd: s.cwd }).settings, opts.log),
       });
       return runner;
     }
@@ -226,7 +228,7 @@ export function createMissionService(opts: MissionServiceOptions = {}) {
       kill_worker_session(p) {
         const id = p.workerSessionId;
         if (typeof id !== "string" || !id) throw new RpcError(ErrorCodes.INVALID_PARAMS, "workerSessionId is required");
-        for (const h of handles.values()) if (h.currentWorkerId() === id && h.killWorker(id)) return {};
+        for (const h of handles.values()) if (h.killWorker(id)) return {};
         throw new RpcError(ErrorCodes.ENTITY_NOT_FOUND, `No running worker session ${id}`);
       },
       mission_list() { return { missions: listMissions() }; },

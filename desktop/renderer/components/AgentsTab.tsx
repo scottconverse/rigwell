@@ -20,7 +20,7 @@ export function AgentsTab({ ctl, sessionId, active }: { ctl: SessionController; 
       } catch { /* no workstream data */ }
       try {
         const m = await ctl.request("mission_get");
-        if (m?.exists) workers = workerAgentRows(m.features ?? [], m.progress?.currentWorker);
+        if (m?.exists) workers = workerAgentRows(m.features ?? [], m.progress?.workers ?? m.progress?.currentWorker);
       } catch { /* this session has no mission data */ }
       if (dead || g !== generation.current) return;
       setRows([...members, ...workers]); setLoaded(true);
