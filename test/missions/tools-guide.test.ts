@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeStubSession, text, call } from "../agent/helpers.ts";
 import { createHash } from "node:crypto";
-import { checkHandoff, MissionStore } from "../../src/missions/store.ts";
+import { checkHandoff, MissionStore, type Feature } from "../../src/missions/store.ts";
 import { orchestratorTools, workerTools, type OrchestratorEnv, type WorkerEnv } from "../../src/missions/tools.ts";
 import { prepareMissionWorker } from "../../src/machines/mission-worker.ts";
 import { tmpEnv } from "../storage/helpers.ts";
@@ -122,5 +122,59 @@ describe("mission plan-file guidance", () => {
     expect(requests.length).toBeLessThanOrEqual(6);
     const largest = Math.max(...requests.map((r) => JSON.stringify({ system: r.system, tools: r.tools, messages: r.messages }).length));
     expect(largest).toBeLessThan(220_000); // about 55K tokens; a documented plan stays far below this
+  });
+});
+
+describe("EndFeatureRun accepts a JSON-string handoff", () => {
+  const handoff = { salientSummary: "Did it.", whatWasImplemented: "Implemented the feature fully.", whatWasLeftUndone: "", verification: { commandsRun: [{ command: "bun test", exitCode: 0, observation: "pass" }] }, tests: { added: [], coverage: "n/a" }, discoveredIssues: [] };
+  const notText = "handoff must be a JSON object, not text. Send the fields directly. Example: ";
+
+  function worker() {
+    const { dir } = missionEnv();
+    const store = new MissionStore(dir);
+    store.writeFeatures([{ id: "a", description: "Feature a", skillName: "impl-worker", milestone: "m1", status: "in_progress", currentWorkerSessionId: "w1" } as Feature]);
+    return { store, end: workerTools({ sessionId: "w1", store, workingDirectory: () => dir }).find((t) => t.name === "EndFeatureRun")! };
+  }
+  const run = (end: ReturnType<typeof worker>["end"], value: unknown) =>
+    end.run({ successState: "partial", returnToOrchestrator: false, featureId: "a", handoff: value }, { sessionId: "w1" } as never);
+
+  test("a valid handoff sent as a JSON string is accepted and stored as an object", async () => {
+    const { store, end } = worker();
+    const r = await run(end, JSON.stringify(handoff));
+    expect(r.isError).toBeFalsy();
+    const rec = store.handoffFor("w1")!;
+    expect(typeof rec.handoff).toBe("object");
+    expect(rec.handoff).toEqual(handoff);
+  });
+
+  test("a string that is not valid JSON is refused with the object message", async () => {
+    const { end } = worker();
+    const r = await run(end, "not json {");
+    expect(r.isError).toBe(true);
+    expect(r.content as string).toStartWith(notText);
+  });
+
+  test("a string holding a JSON array or number is refused", async () => {
+    const { end } = worker();
+    const arr = await run(end, JSON.stringify([handoff]));
+    expect(arr.isError).toBe(true);
+    expect(arr.content as string).toStartWith(notText);
+    const num = await run(end, "42");
+    expect(num.isError).toBe(true);
+    expect(num.content as string).toStartWith(notText);
+  });
+
+  test("a string holding an object that fails checkHandoff is refused with the normal handoff error", async () => {
+    const { end } = worker();
+    const r = await run(end, JSON.stringify({ ...handoff, salientSummary: "" }));
+    expect(r.isError).toBe(true);
+    expect(r.content as string).toStartWith("handoff is invalid:");
+  });
+
+  test("a normal object still works", async () => {
+    const { store, end } = worker();
+    const r = await run(end, handoff);
+    expect(r.isError).toBeFalsy();
+    expect(store.handoffFor("w1")!.handoff).toEqual(handoff);
   });
 });
