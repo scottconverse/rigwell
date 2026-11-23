@@ -187,7 +187,12 @@ Example: ${HANDOFF_EXAMPLE}`,
       const st = input.successState;
       if (st !== "success" && st !== "partial" && st !== "failure") return fail("successState must be success, partial or failure.");
       if (typeof input.returnToOrchestrator !== "boolean") return fail("returnToOrchestrator must be a boolean.");
-      const h = checkHandoff(input.handoff);
+      let rawHandoff = input.handoff;
+      if (typeof rawHandoff === "string") {
+        try { rawHandoff = JSON.parse(rawHandoff); } catch { return fail(`handoff must be a JSON object, not text. Send the fields directly. Example: ${HANDOFF_EXAMPLE}`); }
+        if (!rawHandoff || typeof rawHandoff !== "object" || Array.isArray(rawHandoff)) return fail(`handoff must be a JSON object, not text. Send the fields directly. Example: ${HANDOFF_EXAMPLE}`);
+      }
+      const h = checkHandoff(rawHandoff);
       if ("error" in h) return fail(h.error);
       const repo = typeof input.repoPath === "string" && input.repoPath ? input.repoPath : env.workingDirectory();
       if (typeof input.commitId === "string" && input.commitId) {
