@@ -1281,3 +1281,5 @@ them into the loop. Each index.ts starts with an "Integration" comment.
 547. **Verify the Windows search dependency before tests and use the existing Win32 API directly in the Academy fixture.** Chocolatey returned HTTP 503 on both Windows checks and the test step ran without ripgrep. Fetch the pinned upstream archive, check its digest and executable, and add it to the runner path. The Academy worktree fixture calls the same system short-path API through Bun, avoiding a new PowerShell process and C# compilation while keeping its assertions and deadline.
 
 548. **Release the desktop interface work and Mission fixes as Windows 0.4.5 on the owner's order.** Publish the known limits with the release: Mission token use still varies widely in real runs, and the earlier React update-depth error has no known cause. Linux and macOS remain at 0.4.0.
+
+549. **Release the Mission handoff-text fix as Windows 0.4.6 on the owner's order.** Publish the known limit that token use after the fix is not yet measured.
