@@ -116,7 +116,7 @@ You can interrupt an active turn. Saved sessions can be resumed later. A stopped
 
 ### Sessions, files and terminal
 
-The sidebar shows `New Session`, `Search` and `Mission Control`. `More` opens the other pages: Inbox, Workstreams, Review, Automations, Machines, Import session, Sync, Plugins, Wiki, Analytics and Evaluations. `Search` (`Ctrl+K`) finds every page, every Settings page and your sessions. The buttons at the top of the window go `Back`, go `Forward`, and hide or show the sidebar. Rigwell remembers the sidebar choice the next time it starts. In Settings, type in `Find a setting` to find a page by its name or by an option on it, such as `theme` or `tokens`.
+The sidebar shows `New Session`, `Automations`, `Search` and `Mission Control`. `More` opens the other pages: Inbox, Workstreams, Review, Machines, Import session, Sync, Plugins, Wiki, Analytics and Evaluations. `Search` (`Ctrl+K`) finds every page, every Settings page and your sessions. Below the buttons the sidebar has three sections: `Pinned` (when you have pinned sessions), `Workstreams` (Beta) and `Projects`. `Pinned` lists the sessions you pinned so you can find them quickly. `Workstreams` lists the Workstreams that are running or paused. `Projects` groups your sessions by folder; click a folder name to fold or unfold it, and use its `+` to start a session there. The `Filter projects` button (three dots) opens the sidebar filters for last activity, project and grouping. `Add folder` (the folder button) adds a project folder. The buttons at the top of the window go `Back`, go `Forward`, and hide or show the sidebar. Rigwell remembers the sidebar choice the next time it starts. The gear button at the bottom of the sidebar opens Settings. In Settings, type in `Find a setting` to find a page by its name or by an option on it, such as `theme` or `tokens`.
 
 A session records a conversation and its activity in a selected working folder. Use clear tasks and continue the same session when its context is relevant. Resume an existing session rather than repeating its work blindly; fork when you want an independent conversation based on an earlier one.
 
@@ -124,7 +124,7 @@ The side pane provides files, a terminal, browser, side chat and agents. Use Fil
 
 The `Agents` tab lists the Workstream members and Mission workers of the session. Each row shows the full name, the status, the current step and the running time. Click `Details` to see the tokens, cost, branch and allowed files.
 
-Each session in the sidebar shows `Working`, `Waiting for you` or `Idle`. When a Workstream runs or is paused, it shows under `Running workstreams` at the top of the list. Click it to open it. Archived and finished Workstreams do not show there.
+Each session in the sidebar shows `Working`, `Waiting for you` or `Idle`. A pinned session shows a pin icon. When a Workstream runs or is paused, it shows in the `Workstreams` section; when none are running, that section says `No workstreams running`. Click a Workstream to open it. Archived and finished Workstreams do not show there.
 
 When the model asks a question or needs approval, use the prompt controls in the session. Inbox and Workstream attention can help find work waiting on you. The displayed activity and transcript are evidence of reported execution; use actual files, command output and external readbacks to confirm results.
 

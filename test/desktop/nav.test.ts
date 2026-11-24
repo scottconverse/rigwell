@@ -58,6 +58,8 @@ describe("page lists", () => {
   });
 
   test("the More menu holds only pages the palette also has", () => {
+    expect(MORE_PAGES.map((p) => p.id)).not.toContain("automations");
+    expect(PALETTE_PAGES.map((p) => p.id)).toContain("automations");
     for (const p of MORE_PAGES) expect(PALETTE_PAGES).toContain(p);
   });
 

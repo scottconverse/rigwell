@@ -1,12 +1,11 @@
 // One list of pages for the sidebar More menu, the command palette and the Settings search.
 export interface NavPage { id: string; label: string; route: string; palette: string }
 
-/** Pages in the sidebar More menu. New Session, Search and Mission Control stay on the sidebar. */
+/** Pages in the sidebar More menu. New Session, Automations, Search and Mission Control stay on the sidebar. */
 export const MORE_PAGES: NavPage[] = [
   { id: "inbox", label: "Inbox", route: "/inbox", palette: "Go to Inbox" },
   { id: "workstreams", label: "Workstreams", route: "/workstreams", palette: "Go to Workstreams" },
   { id: "review", label: "Review", route: "/review", palette: "Go to Review" },
-  { id: "automations", label: "Automations", route: "/automations", palette: "Go to Automations" },
   { id: "machines", label: "Machines", route: "/machines", palette: "Go to Machines" },
   { id: "imports", label: "Import session", route: "/imports", palette: "Import shared session" },
   { id: "sync", label: "Sync", route: "/sync", palette: "Sync between machines" },
@@ -20,6 +19,7 @@ export const MORE_PAGES: NavPage[] = [
 export const PALETTE_PAGES: NavPage[] = [
   { id: "home", label: "Home", route: "/", palette: "Home" },
   { id: "missions", label: "Mission Control", route: "/missions", palette: "Go to Mission Control" },
+  { id: "automations", label: "Automations", route: "/automations", palette: "Go to Automations" },
   ...MORE_PAGES,
   { id: "academy", label: "Academy", route: "/academy", palette: "Go to Academy" },
 ];
