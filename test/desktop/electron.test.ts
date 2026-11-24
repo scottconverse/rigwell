@@ -205,8 +205,7 @@ maybe("desktop app end to end", () => {
   }, 150_000);
 
   test("Automations: create one, run it now, and see the run; the quit warning shows", async () => {
-    await page.getByRole("button", { name: "More", exact: true }).click();
-    await page.getByRole("menuitem", { name: "Automations" }).click();
+    await page.locator(".side-top").getByRole("button", { name: "Automations", exact: true }).click();
     await page.getByRole("heading", { name: "Automations" }).waitFor();
     await page.getByRole("button", { name: "New automation" }).click();
     await page.getByLabel("Name", { exact: true }).fill("Nightly check");

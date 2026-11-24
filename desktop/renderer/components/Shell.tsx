@@ -33,7 +33,7 @@ function MoreMenu({ route, go }: { route?: string; go(r: string): void }) {
   };
   return (
     <div className="side-more" ref={wrap} onKeyDown={open ? onKey : undefined}>
-      <button ref={button} className={`side-btn ${active ? "on" : ""}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}><NavIcon d={ICONS24.more} grid={24} />More</button>
+      <button ref={button} className={`side-btn ${active ? "on" : ""}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}><NavIcon d={ICONS24.more} grid={24} size={16} />More</button>
       {open && <div className="menu" role="menu" aria-label="More pages">
         {MORE_PAGES.map((p) => <button key={p.id} role="menuitem" className={`menu-item ${route?.startsWith(p.route) ? "on" : ""}`} onClick={() => { setOpen(false); go(p.route); }}>{p.label}</button>)}
       </div>}
@@ -95,10 +95,10 @@ export function Sidebar({ hidden, sessions, current, daemon, route, go, openPale
   return (
     <nav className="sidebar" aria-label="Sidebar" hidden={hidden}>
       <div className="side-top drag">
-        <button className="side-btn primary" onClick={() => go("/")}><NavIcon d={ICONS24.plus} grid={24} />New Session</button>
-        <button className={`side-btn ${route?.startsWith("/automations") ? "on" : ""}`} onClick={() => go("/automations")}><NavIcon d={ICONS24.sync} grid={24} />Automations</button>
-        <button className="side-btn" onClick={openPalette}><NavIcon d={ICONS24.search} grid={24} />Search <kbd>Ctrl+K</kbd></button>
-        <button className={`side-btn ${route?.startsWith("/missions") ? "on" : ""}`} onClick={() => go("/missions")}><NavIcon d={ICONS24.flag} grid={24} />Mission Control</button>
+        <button className="side-btn primary" onClick={() => go("/")}><NavIcon d={ICONS24.plus} grid={24} size={16} />New Session</button>
+        <button className={`side-btn ${route?.startsWith("/automations") ? "on" : ""}`} onClick={() => go("/automations")}><NavIcon d={ICONS24.sync} grid={24} size={16} />Automations</button>
+        <button className="side-btn" onClick={openPalette}><NavIcon d={ICONS24.search} grid={24} size={16} />Search <kbd>Ctrl+K</kbd></button>
+        <button className={`side-btn ${route?.startsWith("/missions") ? "on" : ""}`} onClick={() => go("/missions")}><NavIcon d={ICONS24.flag} grid={24} size={16} />Mission Control</button>
         <MoreMenu route={route} go={go} />
       </div>
       <div className="side-list">
