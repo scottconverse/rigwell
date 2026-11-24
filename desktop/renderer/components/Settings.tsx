@@ -116,11 +116,14 @@ function Appearance({ s }: { s: DesktopSettings }) {
   return (
     <>
       <h2>Appearance</h2>
-      <Row label="Theme">
-        <div className="seg" role="radiogroup" aria-label="Theme">
-          {(["system", "light", "dark"] as ThemePref[]).map((t) => <button key={t} role="radio" aria-checked={ap.theme === t} className={ap.theme === t ? "on" : ""} onClick={() => set({ theme: t })}>{t[0].toUpperCase() + t.slice(1)}</button>)}
-        </div>
-      </Row>
+      <div className="theme-cards" role="radiogroup" aria-label="Theme">
+        {(["system", "light", "dark"] as ThemePref[]).map((t) => (
+          <button key={t} role="radio" aria-checked={ap.theme === t} className={"theme-card" + (ap.theme === t ? " on" : "")} onClick={() => set({ theme: t })}>
+            <span className={"theme-prev " + t} aria-hidden="true"><i /><i /><i /></span>
+            <span>{t[0].toUpperCase() + t.slice(1)}</span>
+          </button>
+        ))}
+      </div>
       <Row label="Accent color"><input type="color" value={ap.accent ?? "#4f8cff"} aria-label="Accent color" onChange={(e) => set({ accent: e.target.value })} /> <button onClick={() => set({ accent: undefined })}>Reset</button></Row>
       <Row label="Startup background (dark)" hint="Painted before the page loads"><input type="color" value={ap.startupBackground.dark} aria-label="Dark startup background" onChange={(e) => set({ startupBackground: { ...ap.startupBackground, dark: e.target.value } })} /></Row>
       <Row label="Startup background (light)"><input type="color" value={ap.startupBackground.light} aria-label="Light startup background" onChange={(e) => set({ startupBackground: { ...ap.startupBackground, light: e.target.value } })} /></Row>
