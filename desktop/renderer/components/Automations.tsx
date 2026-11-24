@@ -5,6 +5,7 @@ import { app, useApp } from "../lib/app-model.ts";
 import { SCHEDULE_PRESETS, buildCreate, duration, showQuitWarning, statusLabel, tabMatches, when, type AutomationRow, type CreateForm, type RunRow } from "../lib/automations.ts";
 import { bridge } from "../lib/rpc.ts";
 import { Dialog } from "./Dialogs.tsx";
+import { ICONS24, NavIcon } from "./NavIcon.tsx";
 import { SetupDialog, TemplateDialog, VisualPanel } from "./AutomationExtras.tsx";
 import type { TemplateRow } from "../lib/templates.ts";
 import { externalKind } from "../../../src/automations/triggers/config.ts";
@@ -45,9 +46,14 @@ export function Automations({ go }: { go(r: string): void }) {
   const [tab, setTab] = useState<"Active" | "Paused">("Active");
   const [q, setQ] = useState("");
   const [creating, setCreating] = useState(false);
-  const [templates, setTemplates] = useState(false);
+  const [templates, setTemplates] = useState<false | true | TemplateRow>(false);
+  const [tpls, setTpls] = useState<TemplateRow[]>([]);
   const [setup, setSetup] = useState<{ template?: TemplateRow; values?: Record<string, string> } | null>(null);
   const [note, setNote] = useState("");
+  useEffect(() => {
+    if (a.daemon.state !== "running") return;
+    void app.request("list_automation_templates").then((r) => setTpls(r.templates ?? []), () => setTpls([]));
+  }, [a.daemon.state]);
   const shown = items.filter((x) => tabMatches(x, tab) && `${x.name} ${x.description ?? ""}`.toLowerCase().includes(q.toLowerCase()));
   const act = async (fn: () => Promise<unknown>, ok: string) => { try { await fn(); setNote(ok); } catch (e) { setNote((e as Error).message); } void refresh(); };
 
@@ -61,6 +67,10 @@ export function Automations({ go }: { go(r: string): void }) {
         <button onClick={() => setTemplates(true)}>From a template</button>
         <button className="primary" onClick={() => setCreating(true)}>New automation</button>
       </header>
+      <section className="auto-hero" aria-label="About automations">
+        <h2>Hand off the jobs you keep repeating</h2>
+        <p>Choose a ready-made job or describe your own. An agent helps you set it up, then runs it each time it is triggered.</p>
+      </section>
       <QuitWarning items={items} />
       <div className="dlg-row">
         <div className="seg tabs" role="tablist">{(["Active", "Paused"] as const).map((t) => <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t} ({items.filter((x) => tabMatches(x, t)).length})</button>)}</div>
@@ -87,7 +97,21 @@ export function Automations({ go }: { go(r: string): void }) {
         </tbody>
       </table>
       {loaded && !shown.length && !error && <div className="empty-state">{items.length ? `No ${tab.toLowerCase()} automations match.` : "No automations yet. An automation is a saved prompt that runs on a schedule in its own session."}</div>}
-      {templates && <TemplateDialog onClose={() => setTemplates(false)} onCreated={(id) => { setTemplates(false); void refresh(); go(`/automations/${id}`); }} onChat={(template, values) => { setTemplates(false); setSetup({ template, values }); }} />}
+      {tpls.length > 0 && (
+        <section aria-label="Start from a template">
+          <h2 className="auto-sect">Start from a template</h2>
+          <p className="muted small">Ready-made jobs, already filled in. Pick one and adjust it.</p>
+          <div className="template-grid">
+            {tpls.map((t) => (
+              <button key={t.id} className="template-card" data-template-card={t.id} onClick={() => setTemplates(t)}>
+                <NavIcon d={ICONS24.sync} grid={24} size={18} />
+                <b>{t.name}</b><span className="muted small">{t.description}</span>{t.schedule && <span className="small muted">{t.schedule}</span>}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+      {templates !== false && <TemplateDialog initial={typeof templates === "object" ? templates : undefined} onClose={() => setTemplates(false)} onCreated={(id) => { setTemplates(false); void refresh(); go(`/automations/${id}`); }} onChat={(template, values) => { setTemplates(false); setSetup({ template, values }); }} />}
       {setup && <SetupDialog template={setup.template} values={setup.values} onClose={() => setSetup(null)} go={go} />}
       {creating && <CreateDialog onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); void refresh(); go(`/automations/${id}`); }} />}
     </div>

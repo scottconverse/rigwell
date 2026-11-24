@@ -6,6 +6,7 @@ import { bridge } from "../lib/rpc.ts";
 import { SessionController } from "../lib/session.ts";
 import { defaultParams, groupTemplates, previewInstructions, templateCreate, visualStale, type TemplateRow } from "../lib/templates.ts";
 import { Dialog } from "./Dialogs.tsx";
+import { ICONS24, NavIcon } from "./NavIcon.tsx";
 import { live } from "./SessionScreen.tsx";
 
 function FolderField({ value, onChange }: { value: string; onChange(v: string): void }) {
@@ -17,11 +18,11 @@ function FolderField({ value, onChange }: { value: string; onChange(v: string): 
 }
 
 /** Pick a template, fill in its parameters, create. Creating never starts a run. */
-export function TemplateDialog({ onClose, onCreated, onChat }: { onClose(): void; onCreated(id: string): void; onChat(t: TemplateRow, values: Record<string, string>): void }) {
+export function TemplateDialog({ initial, onClose, onCreated, onChat }: { initial?: TemplateRow; onClose(): void; onCreated(id: string): void; onChat(t: TemplateRow, values: Record<string, string>): void }) {
   const a = useApp();
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
-  const [picked, setPicked] = useState<TemplateRow | null>(null);
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [picked, setPicked] = useState<TemplateRow | null>(initial ?? null);
+  const [values, setValues] = useState<Record<string, string>>(initial ? defaultParams(initial) : {});
   const [folder, setFolder] = useState(a.recentFolders[0] ?? "");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -46,6 +47,7 @@ export function TemplateDialog({ onClose, onCreated, onChat }: { onClose(): void
             <div className="template-grid">
               {g.templates.map((t) => (
                 <button key={t.id} className="template-card" data-template={t.id} onClick={() => pick(t)}>
+                  <NavIcon d={ICONS24.sync} grid={24} size={18} />
                   <b>{t.name}</b><span className="muted small">{t.description}</span>{t.schedule && <span className="small">{t.schedule}</span>}
                 </button>
               ))}

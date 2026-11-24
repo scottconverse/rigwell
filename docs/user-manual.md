@@ -189,7 +189,7 @@ Creating a PR requires confirmation of the branch, base, title and body before a
 
 ### Automations, Inbox and delegation
 
-Automations run a saved task using its configured folder, schedule, model and permissions. Creating an automation does not itself prove a run occurred. Review the saved instructions and schedule, then inspect run history. Pause unwanted work rather than deleting its recovery evidence.
+Automations run a saved task using its configured folder, schedule, model and permissions. The Automations page opens with a banner that explains what automations are for, followed by a **Start from a template** section with a card for each ready-made template. Click a card to set that template up. Creating an automation does not itself prove a run occurred. Review the saved instructions and schedule, then inspect run history. Pause unwanted work rather than deleting its recovery evidence.
 
 Local event triggers can accept configured GitHub/CI, Slack and chained events. Slack and Teams delegation require the respective service registrations and credentials. They do not become operational solely because the feature exists in Rigwell. Inbox records events and routes you to the associated work. Email alerts require explicitly configured SMTP. See [automations](automations.md), [event triggers](automation-triggers.md), [delegation](delegation.md) and [Inbox](inbox.md).
 
