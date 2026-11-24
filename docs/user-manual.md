@@ -122,6 +122,8 @@ The sidebar shows `New Session`, `Automations`, `Search` and `Mission Control`. 
 
 A session records a conversation and its activity in a selected working folder. Use clear tasks and continue the same session when its context is relevant. Resume an existing session rather than repeating its work blindly; fork when you want an independent conversation based on an earlier one.
 
+Send and Stop are now icon buttons in the message box; they are in the same place and use the same keys. The Tools panel and session menu buttons are icons at the top right of the session.
+
 The side pane provides files, a terminal, browser, side chat and agents. Use Files to inspect the current folder and Review to compare changes. A terminal command runs real code with the selected machine's permissions. Inspect command effects before authorizing installation, deletion or deployment.
 
 The `Agents` tab lists the Workstream members and Mission workers of the session. Each row shows the full name, the status, the current step and the running time. Click `Details` to see the tokens, cost, branch and allowed files.

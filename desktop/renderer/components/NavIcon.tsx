@@ -8,6 +8,9 @@ export const ICONS24 = {
   folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
   pin: "M9 4h6l-1 6 3 3H7l3-3zM12 13v7",
   gear: "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1",
+  send: "M12 19V5M5 12l7-7 7 7",
+  stop: "M7 7h10v10H7z",
+  panel: "M4 5h16v14H4zM15 5v14",
 };
 
 /** A small line icon. Hidden from screen readers, so the button keeps its text name. */
