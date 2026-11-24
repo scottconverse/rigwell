@@ -271,7 +271,11 @@ button.side-icon-btn:hover:not(:disabled) { background: var(--bg-hover); }
 
 /* Pages: Mission Control, Automations, dialogs, settings tables */
 .page { flex: 1; overflow: auto; padding: 8px 28px 40px; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
-.page-head { display: flex; align-items: center; gap: 10px; } .page-head h1 { font-size: 20px; margin: 0; }
+.page-head { display: flex; align-items: center; gap: 10px; } .page-head h1 { font-size: 20px; margin: 0; font-weight: 500; }
+.auto-hero { margin: 14px 0; padding: 28px 26px; min-height: 150px; border-radius: 8px; color: #fff; background: radial-gradient(circle at 80% 60%, #3F8FB0 0%, #2A6A86 22%, #173F52 48%, #0C1D27 75%); }
+.auto-hero h2 { font-size: 28px; font-weight: 400; line-height: 1.15; max-width: 22ch; margin: 0 0 10px; }
+.auto-hero p { max-width: 46ch; margin: 0; opacity: .85; }
+.auto-sect { font-size: 15px; font-weight: 500; margin: 24px 0 2px; }
 .tabs { align-self: flex-start; } .spacer { flex: 1; }
 .plain-list { list-style: none; margin: 0; padding: 0; } .cards li { margin-bottom: 6px; }
 .card-row { width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; padding: 10px 12px; } .card-title { flex: 1; font-weight: 600; }
@@ -324,9 +328,11 @@ button.side-icon-btn:hover:not(:disabled) { background: var(--bg-hover); }
 .diagram-error { border: 1px solid var(--danger, #c0392b); }
 
 /* wave 4: templates, overview frame, org label, dictation, cookie import */
-.template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
-.template-card { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; padding: 10px; }
+.template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin-top: 10px; }
+.template-card { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; padding: 14px; min-height: 120px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-panel); color: var(--fg); }
 .template-card:hover { border-color: var(--accent); }
+.template-card svg { color: var(--fg-muted); margin-bottom: 6px; }
+.template-card b { font-weight: 500; }
 h3.cap { text-transform: capitalize; }
 .visual-frame { width: 100%; height: 420px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-panel); }
 .badge.managed { background: transparent; border: 1px dashed var(--border); color: var(--fg-muted); }
