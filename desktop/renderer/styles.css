@@ -121,8 +121,13 @@ button.side-icon-btn:hover:not(:disabled) { background: var(--bg-hover); }
 
 .center-note { margin: auto; color: var(--fg-muted); }
 .home { flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px; overflow: auto; }
-.home-inner { width: min(760px, 100%); display: flex; flex-direction: column; gap: 12px; }
-.wordmark { font-size: 28px; font-weight: 700; text-align: center; letter-spacing: 0.02em; margin-bottom: 8px; }
+.home-inner { width: min(720px, 100%); display: flex; flex-direction: column; gap: 12px; }
+.home-mark { display: block; width: 76px; height: 76px; margin: 0 auto; color: var(--fg-muted); }
+.home-title { font-weight: 400; font-size: 26px; color: var(--fg-muted); margin: 14px 0 22px; text-align: center; }
+.home .chips.under { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.home .chips.under .chip { border: none; background: transparent; border-radius: 6px; padding: 3px 7px; color: var(--fg-muted); font-size: 13px; }
+.home .chips.under .chip:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
+.home .chips.under .chip:has(.nav-icon) { display: inline-flex; align-items: center; gap: 6px; }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .chip { border-radius: 999px; padding: 2px 10px; font-size: 12px; }
 .chip.static { cursor: default; }
@@ -134,7 +139,7 @@ button.side-icon-btn:hover:not(:disabled) { background: var(--bg-hover); }
 .menu-group { font-size: 11px; text-transform: uppercase; color: var(--fg-muted); padding: 6px 8px 2px; }
 
 .composer { border: 1px solid var(--border); background: var(--bg-panel); border-radius: 12px; padding: 8px; margin: 8px 12px 12px; }
-.home .composer { margin: 0; }
+.home .composer { margin: 0; border-radius: 8px; padding: 10px 12px; }
 .composer .composer-editor { width: 100%; min-height: 2.8em; max-height: 220px; overflow-y: auto; outline: none; padding: 4px; font-family: var(--font-content); font-size: var(--size-content); white-space: pre-wrap; word-break: break-word; }
 .composer .composer-editor p { margin: 0; }
 .composer .composer-editor p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: var(--fg-muted); float: left; height: 0; pointer-events: none; }

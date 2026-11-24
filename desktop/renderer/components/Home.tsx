@@ -8,6 +8,7 @@ import { Accounts } from "./SettingsAccess.tsx";
 import { TrustDialog } from "./Dialogs.tsx";
 import { live, pendingMission, pendingMissionSend } from "./SessionScreen.tsx";
 import { normalizeModel, type ModelRow } from "../lib/models.ts";
+import { ICONS24, NavIcon } from "./NavIcon.tsx";
 import type { Machine } from "../../../src/machines/store.ts";
 
 /** Picks a folder and runs the trust prompt (spec §5.6) when it is not trusted yet. Returns the folder, or null when cancelled. */
@@ -86,7 +87,11 @@ export function Home({ go, initialFolder, initialMission }: { go(route: string):
   return (
     <div className="home">
       <div className="home-inner">
-        <div className="wordmark">Rigwell</div>
+        <svg className="home-mark" viewBox="0 0 100 100" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" role="img" aria-label="Rigwell">
+          <path d="M50 10L26 66M50 10l24 56M34 46h32M29 58h42M50 10v14" /><path d="M18 74h64" />
+          <path d="M50 80c-5 6-7 9-7 12a7 7 0 0 0 14 0c0-3-2-6-7-12z" stroke="var(--accent)" />
+        </svg>
+        <h1 className="home-title">{settings.interactionMode === "mission" ? "What should the mission do?" : "What should we work on?"}</h1>
         {!running && <div className="banner warn" role="status">{a.daemon.state === "failed" ? `The background service could not start. ${a.daemon.error ?? ""}` : `Background service: ${a.daemon.state}`}
           {a.daemon.state === "failed" && <button onClick={() => void bridge().daemon.restart()}>Try again</button>}</div>}
         {running && !machine && !a.models.length && <section aria-label="Connect a model" className="banner">
@@ -96,13 +101,16 @@ export function Home({ go, initialFolder, initialMission }: { go(route: string):
           <button onClick={() => go("/settings/custom-models")}>Configure a model</button>
           <button onClick={() => go("/settings/api-keys")}>Store an API key</button>
         </section>}
-        <div className="chips top">
+        <Composer settings={settings} models={models} busy={false} disabled={busy || modelsBusy || !running || !models.length} autoFocus disabledShortcuts={a.settings?.disabledShortcuts} cwd={folder}
+          autoAvailable={!!a.userSettings.autoRouter} onMission={() => setSettings((s) => ({ ...s, interactionMode: "mission" }))}
+          onChange={(p) => setSettings((s) => ({ ...s, ...p }))} onSend={(t, atts) => void start(t, atts)} onStop={() => {}} />
+        <div className="chips under">
           <select className="chip" aria-label="Session machine" value={machine} disabled={busy} onChange={(e) => { setMachine(e.target.value); setFolder(e.target.value ? "" : a.recentFolders[0] ?? ""); setSettings((s) => ({ ...s, modelId: undefined })); setError(""); }}>
             <option value="">Local</option>{machines.map((m) => <option key={m.name} value={m.name} disabled={!m.build}>{m.name}{m.build ? "" : " (bootstrap required)"}</option>)}
           </select>
           <button className="chip" onClick={() => go("/settings/machines")}>Manage machines</button>
           {machine ? <input className="chip" aria-label="Remote working folder" value={folder} placeholder="Working folder on the remote machine" onChange={(e) => setFolder(e.target.value)} /> : <div className="chip-wrap">
-            <button className="chip" onClick={() => setFolderOpen(!folderOpen)} aria-haspopup="listbox">{folder ? folder.split("/").filter(Boolean).slice(-2).join("/") : "Choose folder"}</button>
+            <button className="chip" onClick={() => setFolderOpen(!folderOpen)} aria-haspopup="listbox"><NavIcon d={ICONS24.folder} grid={24} size={14} />{folder ? folder.split("/").filter(Boolean).slice(-2).join("/") : "Choose folder"}</button>
             {folderOpen && (
               <div className="menu" role="listbox">
                 {a.recentFolders.map((f) => <button key={f} role="option" aria-selected={f === folder} className="menu-item" onClick={() => { setFolder(f); setFolderOpen(false); }}>{f}</button>)}
@@ -112,9 +120,6 @@ export function Home({ go, initialFolder, initialMission }: { go(route: string):
           </div>}
           <label className="chip check" title="Run this session in its own git worktree and branch"><input type="checkbox" checked={useWorktree} onChange={(e) => setWorktree(e.target.checked)} aria-label="Worktree" />Worktree</label>
         </div>
-        <Composer settings={settings} models={models} busy={false} disabled={busy || modelsBusy || !running || !models.length} autoFocus disabledShortcuts={a.settings?.disabledShortcuts} cwd={folder}
-          autoAvailable={!!a.userSettings.autoRouter} onMission={() => setSettings((s) => ({ ...s, interactionMode: "mission" }))}
-          onChange={(p) => setSettings((s) => ({ ...s, ...p }))} onSend={(t, atts) => void start(t, atts)} onStop={() => {}} />
         {error && <div className="banner error" role="alert">{error}</div>}
       </div>
       {adder.dialog}
