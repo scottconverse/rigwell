@@ -114,6 +114,8 @@ You can interrupt an active turn. Saved sessions can be resumed later. A stopped
 
 ## Everyday workspace
 
+The list pages (Mission Control, Workstreams, Inbox, Analytics, Academy, Wiki, Review, Automations) now use cards, pill-shaped status badges and underline tabs.
+
 ### Sessions, files and terminal
 
 The Home screen shows the Rigwell mark and asks **What should we work on?** (in mission mode, **What should the mission do?**). Type your request in the message box. The machine, folder and **Worktree** choices are now under the message box, so you pick where the work happens right below where you describe it.
