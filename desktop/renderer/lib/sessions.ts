@@ -60,6 +60,11 @@ export function sidebarRows(sessions: SessionRow[], f: Filter = {}): SessionRow[
     .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt);
 }
 
+/** Splits the sidebar rows into pinned ones and the rest, so pinned rows do not also show in project groups. */
+export function splitPinned(rows: SessionRow[]): { pinned: SessionRow[]; rest: SessionRow[] } {
+  return { pinned: rows.filter((r) => r.pinned), rest: rows.filter((r) => !r.pinned) };
+}
+
 export function groupByProject(rows: SessionRow[]): [string, SessionRow[]][] {
   const m = new Map<string, SessionRow[]>();
   for (const r of rows) m.set(r.cwd ?? "", [...(m.get(r.cwd ?? "") ?? []), r]);

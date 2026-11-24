@@ -43,7 +43,7 @@ maybe("navigation", () => {
 
   test("the sidebar is short, and More opens every other page by mouse", async () => {
     const top = page.locator(".side-top > button, .side-more > button");
-    expect(await top.allInnerTexts().then((t: string[]) => t.map((x) => x.split("\n")[0].replace(/\s*Ctrl\+K/, "").trim()))).toEqual(["New Session", "Search", "Mission Control", "More"]);
+    expect(await top.allInnerTexts().then((t: string[]) => t.map((x) => x.split("\n")[0].replace(/\s*Ctrl\+K/, "").trim()))).toEqual(["New Session", "Automations", "Search", "Mission Control", "More"]);
     for (const p of MORE_PAGES) {
       await page.getByRole("button", { name: "More", exact: true }).click();
       await page.getByRole("menuitem", { name: p.label, exact: true }).click();

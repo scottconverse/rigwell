@@ -8,7 +8,7 @@ import { buildCreate, duration, showQuitWarning, statusLabel, tabMatches, when, 
 import { emptyForm, toEntry, toForm, validate } from "../../desktop/renderer/lib/custom-models.ts";
 import { AUTO, normalizeModel, pickerSections } from "../../desktop/renderer/lib/models.ts";
 import { applyNote, counts, fromGet, inTab, pauseBanner, percentDone, tabOf, workerRows, type MissionFeature } from "../../desktop/renderer/lib/missions.ts";
-import { actionCall, bulkRename, groupByProject, managementRows, normalizeSession, sidebarRows } from "../../desktop/renderer/lib/sessions.ts";
+import { actionCall, bulkRename, groupByProject, managementRows, normalizeSession, sidebarRows, splitPinned } from "../../desktop/renderer/lib/sessions.ts";
 import { moveTab, pushClosed, stepTab } from "../../desktop/renderer/lib/tabs.ts";
 import { addUsage, fmt, percentUsed, total, zero } from "../../desktop/renderer/lib/usage.ts";
 import { deleteLocalProfile, listProfileViews, parseProfileText, readUserSettings, saveLocalProfile, trustFolder, updateUserSettings } from "../../desktop/main/user-settings.ts";
@@ -100,6 +100,13 @@ describe("sessions list and header menu (spec 14.3)", () => {
   test("sidebar: pinned first, archived, subagent and empty hidden", () => {
     expect(sidebarRows(list, { now }).map((s) => s.id)).toEqual(["pin", "new", "old"]);
     expect(groupByProject(sidebarRows(list, { now }))[0][0]).toBe("/p");
+  });
+
+  test("pinned rows leave the project groups", () => {
+    const { pinned, rest } = splitPinned(sidebarRows(list, { now }));
+    expect(pinned.map((s) => s.id)).toEqual(["pin"]);
+    expect(rest.map((s) => s.id)).toEqual(["new", "old"]);
+    expect(groupByProject(rest)[0][1].map((s) => s.id)).toEqual(["new", "old"]);
   });
 
   test("older daemon rows (daemon.list_sessions) still work", () => {
