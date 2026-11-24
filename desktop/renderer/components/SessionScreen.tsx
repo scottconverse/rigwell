@@ -10,6 +10,7 @@ import { ConfirmDialog, Dialog, TextDialog } from "./Dialogs.tsx";
 import { Prompts } from "./Prompts.tsx";
 import { SidePane, type PaneTab } from "./SidePane.tsx";
 import { Transcript } from "./Transcript.tsx";
+import { ICONS24, NavIcon } from "./NavIcon.tsx";
 
 /** Controllers for sessions created in this window, so Home can hand one over without reconnecting. */
 export const live = new Map<string, SessionController>();
@@ -164,15 +165,16 @@ function Loaded({ ctl }: { ctl: SessionController }) {
     <div className="session">
       <div className="session-main">
         <header className="session-head">
+          <span className="muted head-folder"><NavIcon d={ICONS24.folder} grid={24} size={15} />{state.cwd.split(/[\\/]/).filter(Boolean).pop() ?? state.cwd}</span><span className="muted">/</span>
           <h1 title={state.cwd}>{state.title}</h1>
           <span className="muted cwd">{state.cwd}</span>
           <span className="chip static" aria-label="Session machine">{state.machine ?? "Local"}</span>
           {state.settings.tags?.some((t) => t.name === "delegation-slack" || t.name === "delegation-teams") && <span className="chip static" aria-label="Session source">{state.settings.tags.some((t) => t.name === "delegation-slack") ? "Slack" : "Teams"}</span>}
           <span className="spacer" />
           {state.phase === "disconnected" && <span className="badge warn">Reconnecting</span>}
-          <button aria-label="Toggle tools panel" onClick={() => setPaneOpen(!paneOpen)} title="Tools panel (Alt+Ctrl+B)">Tools</button>
+          <button className="side-icon-btn" aria-label="Toggle tools panel" onClick={() => setPaneOpen(!paneOpen)} title="Tools panel (Alt+Ctrl+B)"><NavIcon d={ICONS24.panel} grid={24} size={16} /></button>
           <div className="chip-wrap">
-            <button aria-label="Session menu" aria-haspopup="menu" onClick={() => setMenu(!menu)}>...</button>
+            <button className="side-icon-btn" aria-label="Session menu" aria-haspopup="menu" onClick={() => setMenu(!menu)}><NavIcon d={ICONS24.more} grid={24} size={16} /></button>
             {menu && (
               <div className="menu right" role="menu">
                 <button role="menuitem" className="menu-item" onClick={() => void act(() => ctl.setPinned(!state.pinned), state.pinned ? "Unpinned" : "Pinned")}>{state.pinned ? "Unpin" : "Pin"}</button>

@@ -9,6 +9,7 @@ import type { SessionController } from "../lib/session.ts";
 import type { QueuedMessage, QueuePlacement } from "../lib/queued.ts";
 import { ConnectorsDialog, SkillsDialog } from "./Dialogs.tsx";
 import { ModelPicker } from "./ModelPicker.tsx";
+import { ICONS24, NavIcon } from "./NavIcon.tsx";
 import { DictateButton } from "./DictateButton.tsx";
 import { MAX_ATTACHMENTS, defaultText, readAttachment, sizeLabel, type Attachment } from "../lib/attachments.ts";
 
@@ -210,8 +211,8 @@ export function Composer(props: {
         {props.extra}
         <span className="spacer" />
         {props.busy
-          ? <button className="send stop" onClick={props.onStop} aria-label="Stop">Stop</button>
-          : <button className="send" disabled={(!text.trim() && !atts.length) || props.disabled} onClick={() => send()} aria-label="Send">Send</button>}
+          ? <button className="send stop" onClick={props.onStop} aria-label="Stop"><NavIcon d={ICONS24.stop} grid={24} size={16} /></button>
+          : <button className="send" disabled={(!text.trim() && !atts.length) || props.disabled} onClick={() => send()} aria-label="Send"><NavIcon d={ICONS24.send} grid={24} size={16} /></button>}
       </div>
       {dialog === "connectors" && props.session && <ConnectorsDialog ctl={props.session} onClose={() => setDialog(null)} />}
       {dialog === "skills" && <SkillsDialog ctl={props.session} cwd={props.cwd ?? ""} onClose={() => setDialog(null)} />}
