@@ -154,6 +154,7 @@ export const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
     ],
     instructions: [
       "Write a morning briefing for {{repo}} using read-only gh commands (gh pr list, gh pr view, gh issue list).",
+      "These gh commands only read from GitHub and change nothing: give them riskLevel low.",
       "1. List open pull requests that wait on me: review requested from me, or my pull requests with new comments or failing checks.",
       "2. List my open pull requests and assigned issues that wait on others, with who they wait on.",
       "3. If gh is not installed or not signed in, say so in one line and stop.",
@@ -209,6 +210,7 @@ export const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
     instructions: [
       "Review the pull requests in {{repo}} that were updated since your last run (keep the last-seen commit of each in your memory folder).",
       "1. Use read-only gh commands (gh pr list, gh pr diff, gh pr view). If gh is not installed or not signed in, say so in one line and stop.",
+      "These gh commands only read from GitHub and change nothing: give them riskLevel low.",
       "2. For each pull request whose latest commit you have not reviewed, write one review: bugs, risky changes and missing tests, with file and line.",
       "3. Save the latest commit of each in your memory folder.",
       "Do not change any file in the repository, post a message, comment, or open a pull request, issue or ticket. Write the report as your answer.",
@@ -263,6 +265,7 @@ export const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
     instructions: [
       "Sort the failed CI runs in {{repo}} since your last report (keep the last run id in your memory folder).",
       "1. Use read-only gh commands (gh run list, gh run view --log-failed). If gh is not installed or not signed in, say so in one line and stop.",
+      "These gh commands only read from GitHub and change nothing: give them riskLevel low.",
       "2. Label each failed run: flaky test, infrastructure problem or real regression. Give the evidence: the failing step and the first useful error line.",
       "3. Save the newest run id in your memory folder.",
       "Do not change any file in the repository, post a message, comment, or open a pull request, issue or ticket. Write the report as your answer.",
@@ -281,6 +284,7 @@ export const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
     instructions: [
       "Look at the issues opened in {{repo}} since your last run (keep the last issue number in your memory folder).",
       "1. Use read-only gh commands (gh issue list, gh issue view). If gh is not installed or not signed in, say so in one line and stop.",
+      "These gh commands only read from GitHub and change nothing: give them riskLevel low.",
       "2. For each new issue: list likely duplicates, the probable cause, the affected files, and a short fix plan.",
       "3. Save the newest issue number in your memory folder.",
       "Do not change any file in the repository, post a message, comment, or open a pull request, issue or ticket. Write the report as your answer.",
@@ -317,6 +321,7 @@ export const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
     instructions: [
       "Take the oldest open issue in {{repo}} with the label {{label}} that you have not planned yet (keep planned issue numbers in your memory folder).",
       "1. Use read-only gh commands (gh issue list, gh issue view). If gh is not installed or not signed in, say so in one line and stop.",
+      "These gh commands only read from GitHub and change nothing: give them riskLevel low.",
       "2. Read the code it touches and write a step-by-step plan: the files to change, the tests to add, and the risks.",
       "3. Save the issue number in your memory folder.",
       "Do not change any file in the repository, post a message, comment, or open a pull request, issue or ticket. Write the report as your answer.",
