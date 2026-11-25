@@ -55,3 +55,5 @@ or the manual Add MCP Server form on Installed.
 The session protocol methods are mcp_catalog_list {sources?}, returning entries and warnings, and
 mcp_catalog_add {key,values?,name?}. Keys refer only to the last displayed snapshot in that session. Reopen Catalog
 if a key is stale. No catalog is added to the agent's tool registry, and tokens are not returned by these methods.
+
+`count_mcp_servers` needs no session. It returns `{count}`, the number of enabled servers in the user-level mcp.json and in plugins. The desktop Finish setup card uses it.

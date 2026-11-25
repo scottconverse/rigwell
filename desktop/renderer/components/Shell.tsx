@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ago, groupByProject, projectName, runningWorkstreams, sessionStateLabel, sidebarRows, splitPinned, type SessionRow } from "../lib/sessions.ts";
 import { app, useApp } from "../lib/app-model.ts";
+import { SETUP_LABELS, setupSteps } from "../lib/setup-steps.ts";
 import { projectArchiveTargets } from "../lib/sessions.ts";
 import { ConfirmDialog } from "./Dialogs.tsx";
 import { useAddFolder } from "./Home.tsx";
@@ -91,7 +92,11 @@ export function Sidebar({ hidden, sessions, current, daemon, route, go, openPale
   // Pinned sessions get their own section, so they do not also show in a project group.
   const { pinned, rest } = useMemo(() => splitPinned(rows), [rows]);
   const groups = useMemo(() => (group ? groupByProject(rest) : ([["all", rest]] as [string, SessionRow[]][])), [rest, group]);
-  const workstreams = runningWorkstreams(useApp().workstreams);
+  const st = useApp();
+  const workstreams = runningWorkstreams(st.workstreams);
+  // Refresh the tool count when the route changes (for example after adding a server in Settings).
+  useEffect(() => { void app.refreshTools(); }, [route]);
+  const setup = setupSteps({ models: st.models.length, hasSession: sessions.some((s) => !!s.cwd && s.archivedAt == null && !s.isSubagent), tools: st.toolCount });
   return (
     <nav className="sidebar" aria-label="Sidebar" hidden={hidden}>
       <div className="side-top drag">
@@ -144,6 +149,10 @@ export function Sidebar({ hidden, sessions, current, daemon, route, go, openPale
           {!rows.length && <div className="muted pad">No sessions yet</div>}
         </div>
       </div>
+      {setup && setup.next && <div className="setup" aria-label="Finish setup">
+        <div className="h"><span>Finish setup</span><span className="muted">{setup.done}/{setup.total}</span></div>
+        <button data-setup={setup.next} onClick={() => setup.next === "model" ? go("/settings/custom-models") : setup.next === "session" ? void adder.pick() : go("/settings/connectors")}>{SETUP_LABELS[setup.next]}</button>
+      </div>}
       <div className="side-foot">
         <span className={`dot ${daemon}`} title={`Background service: ${daemon}`} />
         <span className="muted small">{daemon === "running" ? "Local" : daemon}</span>

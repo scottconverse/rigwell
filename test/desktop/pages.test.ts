@@ -14,6 +14,7 @@ import { addUsage, fmt, percentUsed, total, zero } from "../../desktop/renderer/
 import { deleteLocalProfile, listProfileViews, parseProfileText, readUserSettings, saveLocalProfile, trustFolder, updateUserSettings } from "../../desktop/main/user-settings.ts";
 import { draftFor, homeRoute, loadRole, ROLES, TEMPLATES } from "../../desktop/renderer/lib/workstream-templates.ts";
 import { CI_INTRO, CI_WORKFLOWS, workflowRoute } from "../../desktop/renderer/lib/ci-workflows.ts";
+import { SETUP_LABELS, setupSteps } from "../../desktop/renderer/lib/setup-steps.ts";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "rigwell-pages-"));
 const feat = (id: string, status: MissionFeature["status"], extra: Partial<MissionFeature> = {}): MissionFeature => ({ id, description: `Feature ${id}`, skillName: "w", milestone: "m1", status, ...extra });
@@ -353,4 +354,17 @@ describe("CI workflows tab", () => {
     expect(p.get("folder")).toBe("C:\\x");
     expect(p.get("draft")).toBe("a");
   });
+});
+
+describe("Finish setup card", () => {
+  test("starts at the model step", () => expect(setupSteps({ models: 0, hasSession: false, tools: 0 })).toMatchObject({ done: 0, next: "model" }));
+  test("moves to the session step", () => expect(setupSteps({ models: 1, hasSession: false, tools: 0 })).toMatchObject({ done: 1, next: "session" }));
+  test("moves to the tools step", () => expect(setupSteps({ models: 1, hasSession: true, tools: 0 })).toMatchObject({ done: 2, next: "tools" }));
+  test("has no next step when all three are done", () => {
+    const s = setupSteps({ models: 1, hasSession: true, tools: 2 });
+    expect(s?.done).toBe(3);
+    expect(s?.next).toBeUndefined();
+  });
+  test("is hidden while the tool count is unknown", () => expect(setupSteps({ models: 1, hasSession: true, tools: null })).toBeNull());
+  test("has the button label for the tools step", () => expect(SETUP_LABELS.tools).toBe("Connect your tools"));
 });
