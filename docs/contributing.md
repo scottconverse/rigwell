@@ -4,12 +4,11 @@ Start with a focused bug report or a proposed change in [GitHub issues](https://
 
 ## Development setup
 
-Use Bun 1.4.4, Node 22, Git and ripgrep. Clone the repository and use the current working branch:
+Use Bun 1.4.4, Node 22, Git and ripgrep. Clone the repository. The default branch is `main`:
 
 ```sh
 git clone https://github.com/scottconverse/rigwell
 cd rigwell
-git checkout phase-1-core-loop
 bun install
 cd desktop
 npm ci
@@ -26,7 +25,7 @@ Read [the specification](../spec/harness-spec.md), [design decisions](decisions.
 
 Do not copy material from `evidence/`. Preserve third-party notices and licenses. Do not commit credentials, personal runtime settings, actual model identifiers or private test transcripts. Use generic configuration placeholders in examples. Keep prose and code free of the em dash character.
 
-The working release branch is `phase-1-core-loop`; maintainers do not push to main or merge as part of the current delivery. Record material design choices in `docs/decisions.md` and preserve current acceptance and remaining work in `docs/handoff/HANDOFF.md`.
+Send changes as a pull request to `main`. Record material design choices in `docs/decisions.md` and preserve current acceptance and remaining work in `docs/handoff/HANDOFF.md`.
 
 ## Documentation and website
 

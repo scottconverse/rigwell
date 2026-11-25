@@ -17,7 +17,7 @@ await mkdir(join(out,'manual'),{recursive:true});
 await writeFile(join(out,'manual/index.html'),`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${base}docs/user-manual.html"><title>Rigwell user manual</title></head><body><a href="${base}docs/user-manual.html">Open the current Rigwell user manual</a></body></html>`);
 const escape = (s:string) => s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
 const pages = (await readdir(join(root,'docs'))).filter(n=>n.endsWith('.md') && !['decisions.md','stax-comparison.md'].includes(n));
-const repo = 'https://github.com/scottconverse/rigwell/blob/phase-1-core-loop/';
+const repo = 'https://github.com/scottconverse/rigwell/blob/main/';
 // Runtime is pinned to Bun 1.4.4; repository Bun types predate Markdown.
 const markdown = (Bun as typeof Bun & {markdown:{html(source:string,options:{headings:{ids:boolean}}):string}}).markdown;
 for (const name of pages) {
