@@ -8,7 +8,9 @@ test("an older sidebar refresh cannot hide a newly promoted session", async () =
     closed: false,
     request: (method: string) => method === "list_models"
       ? Promise.resolve({ models: [] })
-      : new Promise((resolve) => replies.push(resolve)),
+      : method === "count_mcp_servers"
+        ? Promise.resolve({ count: 0 })
+        : new Promise((resolve) => replies.push(resolve)),
   };
   const older = model.refresh();
   const newer = model.refresh();
