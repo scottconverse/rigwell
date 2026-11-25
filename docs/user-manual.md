@@ -40,7 +40,7 @@ Download the [signed Windows 0.5.0 installer](https://github.com/scottconverse/r
 
 | Platform | Installation | Current release qualification |
 | --- | --- | --- |
-| Windows x64, 0.5.0 | Run the setup executable. Choose the installation location, then open Rigwell from its shortcut. | Verify the Scott Converse signature and timestamp. The release notes record clean-runner installation and Workstream acceptance. |
+| Windows x64, 0.5.0 | Run the setup executable. Choose the installation location, then open Rigwell from its shortcut. | Verify the Scott Converse signature and timestamp. The release assets include the signing receipt and the clean-runner installation record. |
 | Linux x64, 0.4.0 | Install the Debian package, or make the AppImage executable and open it. | Installed package checks and signed AppImage update/rollback have passed on disposable Linux runners. |
 | macOS arm64, 0.4.0 | Open the DMG and copy Rigwell.app to Applications. | Current artifacts are unsigned and not notarized. Installed runner checks passed; real Mac hardware acceptance remains unavailable. |
 
