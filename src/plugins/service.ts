@@ -81,7 +81,7 @@ export function inspectPlugin(root: string) {
     } else {
       const templates = jsonFile(path); if (!Array.isArray(templates) || templates.length > 50) throw new Error("Templates must be an array of at most fifty entries");
       for (const t of templates) {
-        if (!validName(t.id) || !["name", "description", "instructions"].every((k) => typeof t[k] === "string") || !Array.isArray(t.parameters) || !["off", "low", "medium", "high"].includes(t.autonomy) || !["health", "dependencies", "testing", "release", "git"].includes(t.category)) throw new Error("Invalid automation template");
+        if (!validName(t.id) || !["name", "description", "instructions"].every((k) => typeof t[k] === "string") || !Array.isArray(t.parameters) || !["off", "low", "medium", "high"].includes(t.autonomy) || !["health", "dependencies", "testing", "release", "git", "briefing", "issues"].includes(t.category)) throw new Error("Invalid automation template");
         parseSchedule(t.schedule);
         const keys = t.parameters.map((p: any) => p.key); if (new Set(keys).size !== keys.length || t.parameters.some((p: any) => !/^[a-zA-Z][\w]*$/.test(p.key) || typeof p.label !== "string" || typeof p.description !== "string" || (p.default !== undefined && typeof p.default !== "string")) || [...t.instructions.matchAll(/\{\{(\w+)\}\}/g)].some((m: RegExpMatchArray) => !keys.includes(m[1]))) throw new Error("Invalid template parameters");
         additions.push({ kind, name: `${manifest.name}-${t.id}`, detail: t });

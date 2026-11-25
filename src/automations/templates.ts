@@ -16,7 +16,7 @@ export interface AutomationTemplate {
   id: string;
   name: string;
   description: string;
-  category: "health" | "dependencies" | "testing" | "release" | "git";
+  category: "health" | "dependencies" | "testing" | "release" | "git" | "briefing" | "issues";
   /** Schedule text in any form the schedule parser accepts. */
   schedule: string;
   parameters: TemplateParam[];
@@ -140,6 +140,186 @@ export const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
       "2. Group the hits by folder. Use git blame on a sample to find how old the oldest ones are.",
       "3. Compare with the list saved in your memory folder: show new markers, removed markers and the ten oldest. Save the current list there afterwards.",
       "4. End with the three markers that look most worth doing now and why. Do not edit the code.",
+    ].join("\n"),
+  },
+  {
+    id: "morning-briefing",
+    name: "Morning Briefing",
+    description: "Each weekday morning: a summary of your open pull requests and issues, what needs you and what waits on others. Reports only.",
+    category: "briefing",
+    schedule: "every weekday at 8am",
+    autonomy: "low",
+    parameters: [
+      { key: "repo", label: "Repository", description: "owner/name on GitHub.", default: "the GitHub repository of this folder" },
+    ],
+    instructions: [
+      "Write a morning briefing for {{repo}} using read-only gh commands (gh pr list, gh pr view, gh issue list).",
+      "1. List open pull requests that wait on me: review requested from me, or my pull requests with new comments or failing checks.",
+      "2. List my open pull requests and assigned issues that wait on others, with who they wait on.",
+      "3. If gh is not installed or not signed in, say so in one line and stop.",
+      "Do not change any file in the repository, post a message, comment, or open a pull request, issue or ticket. Write the report as your answer.",
+    ].join("\n"),
+  },
+  {
+    id: "meeting-follow-up",
+    name: "Meeting Follow-up",
+    description: "Each weekday evening: reads today's meeting notes from a connected notes tool and lists the action items with owners. Reports only.",
+    category: "briefing",
+    schedule: "every weekday at 5pm",
+    autonomy: "low",
+    parameters: [
+      { key: "notes_tool", label: "Notes tool", description: "The connected tool that holds meeting notes or transcripts.", default: "the connected notes or meeting tool" },
+    ],
+    instructions: [
+      "List the action items from today's meetings, using {{notes_tool}}.",
+      "If the {{notes_tool}} tools are not connected, or a call to them is refused, say so in one line and stop. Connector tools only work in an unattended run when they are set to always allow for this folder.",
+      "1. For each meeting today, list each action item with its owner and due date when stated.",
+      "2. Mark items that have no owner.",
+      "Do not change any file in the repository, post a message, comment, or open a pull request, issue or ticket. Write the report as your answer.",
+    ].join("\n"),
+  },
+  {
+    id: "slack-catch-up",
+    name: "Slack Catch-up",
+    description: "Each weekday morning: lists the Slack threads that need your reply, from a connected Slack tool. Reports only.",
+    category: "briefing",
+    schedule: "every weekday at 8am",
+    autonomy: "low",
+    parameters: [
+      { key: "slack_tool", label: "Slack tool", description: "The connected Slack connector.", default: "the connected Slack tools" },
+    ],
+    instructions: [
+      "List the Slack threads that need my reply, using {{slack_tool}}.",
+      "If the {{slack_tool}} tools are not connected, or a call to them is refused, say so in one line and stop. Connector tools only work in an unattended run when they are set to always allow for this folder.",
+      "1. Look at mentions and direct messages since the last working day.",
+      "2. For each thread that waits on me, give the channel, who asked, and one line on what they need.",
+      "Do not change any file in the repository, post a message, comment, or open a pull request, issue or ticket. Write the report as your answer.",
+    ].join("\n"),
+  },
+  {
+    id: "scheduled-reviewer",
+    name: "Scheduled Reviewer",
+    description: "Each weekday: reviews pull requests updated since the last run and writes one review report per latest commit. Reports only, posts nothing.",
+    category: "git",
+    schedule: "every weekday at 10am",
+    autonomy: "low",
+    parameters: [
+      { key: "repo", label: "Repository", description: "owner/name on GitHub.", default: "the GitHub repository of this folder" },
+    ],
+    instructions: [
+      "Review the pull requests in {{repo}} that were updated since your last run (keep the last-seen commit of each in your memory folder).",
+      "1. Use read-only gh commands (gh pr list, gh pr diff, gh pr view). If gh is not installed or not signed in, say so in one line and stop.",
+      "2. For each pull request whose latest commit you have not reviewed, write one review: bugs, risky changes and missing tests, with file and line.",
+      "3. Save the latest commit of each in your memory folder.",
+      "Do not change any file in the repository, post a message, comment, or open a pull request, issue or ticket. Write the report as your answer.",
+    ].join("\n"),
+  },
+  {
+    id: "codebase-upkeep",
+    name: "Codebase Upkeep",
+    description: "Weekly: checks one area in turn (dependencies, unused code, test coverage, out-of-date docs) and reports what needs care.",
+    category: "health",
+    schedule: "every monday at 9am",
+    autonomy: "medium",
+    parameters: [
+      { key: "test_command", label: "Test command", description: "Command that runs the tests, for the coverage check.", default: "the project's usual test command" },
+    ],
+    instructions: [
+      "Check one area of this repository's upkeep. Your memory folder keeps which area was checked last; take the next one in this order: dependencies, unused code, test coverage, out-of-date docs.",
+      "1. Dependencies: list outdated or unused dependencies. Unused code: list exports and files nothing uses. Test coverage: run {{test_command}} with coverage if it supports it, and list the least covered files. Docs: list docs that describe code that changed or no longer exists.",
+      "2. Save the area you checked in your memory folder.",
+      "Do not change any file in the repository, post a message, comment, or open a pull request, issue or ticket. Write the report as your answer.",
+    ].join("\n"),
+  },
+  {
+    id: "hourly-error-check",
+    name: "Hourly Error Check",
+    description: "Every hour: reads a connected error tracker, looks into the errors that matter and reports likely causes. Reports only.",
+    category: "health",
+    schedule: "every hour",
+    autonomy: "low",
+    parameters: [
+      { key: "tracker_tool", label: "Error tracker", description: "The connected error tracking tool.", default: "the connected error tracker" },
+    ],
+    instructions: [
+      "Check {{tracker_tool}} for errors from the last hour.",
+      "If the {{tracker_tool}} tools are not connected, or a call to them is refused, say so in one line and stop. Connector tools only work in an unattended run when they are set to always allow for this folder.",
+      "1. Skip errors already reported in your memory folder unless their count grew a lot.",
+      "2. For each new or growing error, read the code it points at and give the likely cause with evidence.",
+      "3. Save the errors you reported in your memory folder.",
+      "Do not change any file in the repository, post a message, comment, or open a pull request, issue or ticket. Write the report as your answer.",
+    ].join("\n"),
+  },
+  {
+    id: "pipeline-failure-sorter",
+    name: "Pipeline Failure Sorter",
+    description: "Daily: labels each failed CI run since the last report as a flaky test, an infrastructure problem or a real regression. Reports only.",
+    category: "testing",
+    schedule: "daily at 7am",
+    autonomy: "low",
+    parameters: [
+      { key: "repo", label: "Repository", description: "owner/name on GitHub.", default: "the GitHub repository of this folder" },
+    ],
+    instructions: [
+      "Sort the failed CI runs in {{repo}} since your last report (keep the last run id in your memory folder).",
+      "1. Use read-only gh commands (gh run list, gh run view --log-failed). If gh is not installed or not signed in, say so in one line and stop.",
+      "2. Label each failed run: flaky test, infrastructure problem or real regression. Give the evidence: the failing step and the first useful error line.",
+      "3. Save the newest run id in your memory folder.",
+      "Do not change any file in the repository, post a message, comment, or open a pull request, issue or ticket. Write the report as your answer.",
+    ].join("\n"),
+  },
+  {
+    id: "new-issue-scout",
+    name: "New Issue Scout",
+    description: "Daily: for each new issue, finds likely duplicates, the probable cause and the affected files, and proposes a fix plan. Opens nothing.",
+    category: "issues",
+    schedule: "daily at 9am",
+    autonomy: "low",
+    parameters: [
+      { key: "repo", label: "Repository", description: "owner/name on GitHub.", default: "the GitHub repository of this folder" },
+    ],
+    instructions: [
+      "Look at the issues opened in {{repo}} since your last run (keep the last issue number in your memory folder).",
+      "1. Use read-only gh commands (gh issue list, gh issue view). If gh is not installed or not signed in, say so in one line and stop.",
+      "2. For each new issue: list likely duplicates, the probable cause, the affected files, and a short fix plan.",
+      "3. Save the newest issue number in your memory folder.",
+      "Do not change any file in the repository, post a message, comment, or open a pull request, issue or ticket. Write the report as your answer.",
+    ].join("\n"),
+  },
+  {
+    id: "docs-upkeep",
+    name: "Docs Upkeep",
+    description: "Daily: lists the docs that no longer match the day's commits on the default branch, with suggested edits. Reports only.",
+    category: "health",
+    schedule: "daily at 6pm",
+    autonomy: "low",
+    parameters: [
+      { key: "main_branch", label: "Default branch", description: "The branch to read commits from.", default: "main" },
+    ],
+    instructions: [
+      "Find docs that no longer match the code after today's commits on {{main_branch}}.",
+      "1. Use git log and git diff on {{main_branch}} for the last day.",
+      "2. For each doc that describes changed behaviour, give the file, the out-of-date text and a suggested edit.",
+      "Do not change any file in the repository, post a message, comment, or open a pull request, issue or ticket. Write the report as your answer.",
+    ].join("\n"),
+  },
+  {
+    id: "issue-pickup",
+    name: "Issue Pickup",
+    description: "Each weekday: takes the next ready issue and writes a step-by-step plan with the files to change. Opens no pull request.",
+    category: "issues",
+    schedule: "every weekday at 9am",
+    autonomy: "low",
+    parameters: [
+      { key: "repo", label: "Repository", description: "owner/name on GitHub.", default: "the GitHub repository of this folder" },
+      { key: "label", label: "Ready label", description: "The label that marks an issue as ready.", default: "ready" },
+    ],
+    instructions: [
+      "Take the oldest open issue in {{repo}} with the label {{label}} that you have not planned yet (keep planned issue numbers in your memory folder).",
+      "1. Use read-only gh commands (gh issue list, gh issue view). If gh is not installed or not signed in, say so in one line and stop.",
+      "2. Read the code it touches and write a step-by-step plan: the files to change, the tests to add, and the risks.",
+      "3. Save the issue number in your memory folder.",
+      "Do not change any file in the repository, post a message, comment, or open a pull request, issue or ticket. Write the report as your answer.",
     ].join("\n"),
   },
 ];

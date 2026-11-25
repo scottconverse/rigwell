@@ -10,7 +10,7 @@ that a client UI needs (decisions 255 to 257).
 
 | Field | Meaning |
 | --- | --- |
-| `id`, `name`, `description`, `category` | Show these in a gallery. Categories: health, dependencies, testing, release, git |
+| `id`, `name`, `description`, `category` | Show these in a gallery. Categories: health, dependencies, testing, release, git, briefing, issues |
 | `schedule` | Default schedule text (shown as the preselected schedule) |
 | `autonomy` | Default autonomy for runs |
 | `parameters[]` | `{key, label, description, default?}`: render one input per entry, prefilled with `default`. Without a `default` the value is required |
