@@ -175,6 +175,24 @@ test("the first patch into a new shared folder is labelled with the writer", asy
   expect(index.docs["old.md"].versions[0]).toMatchObject({ version: 1, by: "existing file" });
 });
 
+test("the baseline walk waits while another write runs", async () => {
+  process.env.RIGWELL_HOME = tmp("ws-sh-baseline-skip");
+  const store = new WorkstreamStore("ws");
+  mkdirSync(store.path("shared"), { recursive: true });
+  writeFileSync(join(store.path("shared"), "old.md"), "old\n");
+  recordSharedFolder(store.path("shared"), "outside Rigwell");
+  const tool = wrapSharedRecording(createApplyPatchTool(), store, "First");
+  const ctx = { cwd: store.path("shared"), sessionId: "s1", readFiles: new Map(), signal: new AbortController().signal };
+  beginSharedWrite(store.path("shared"));
+  try {
+    writeFileSync(join(store.path("shared"), "other.md"), "other\n");
+    const result = await tool.run({ input: "*** Begin Patch\n*** Add File: p.md\n+patched\n*** End Patch" }, ctx);
+    expect(result.isError).toBeFalsy();
+  } finally { endSharedWrite(store.path("shared")); }
+  const index = JSON.parse(readFileSync(join(store.path("shared-history"), "index.json"), "utf8"));
+  expect(index.docs["other.md"].versions[0].by).not.toBe("outside Rigwell");
+});
+
 test("a list call during a running write does not record it", async () => {
   const f = await setup();
   try {
