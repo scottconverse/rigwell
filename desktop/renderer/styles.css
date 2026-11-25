@@ -298,6 +298,9 @@ button.side-icon-btn:hover:not(:disabled) { background: var(--bg-hover); }
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
 .stats > div { border: 1px solid var(--border); border-radius: 6px; background: var(--bg-panel); padding: 12px 14px; }
 .stat-n { font-size: 22px; font-weight: 500; }
+.badge-card { display: flex; flex-direction: column; gap: 4px; opacity: .6; }
+.badge-card.earned { opacity: 1; border-color: var(--accent); }
+.badge-card .badge-progress { font-size: 14px; }
 .empty-state { color: var(--fg-muted); text-align: center; padding: 48px 0; } .banner.small { font-size: 12px; }
 /* Plain pages (no page-head): zero-priority defaults */
 :where(.page > h1, .page > h2:first-child) { font-size: 22px; font-weight: 500; margin: 0; min-height: 40px; display: flex; align-items: center; }

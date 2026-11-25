@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readdirSync, readSync } from "node:fs";
 import { join } from "node:path";
 import { cleanUsage, USAGE_KEYS } from "../storage/analytics-records.ts";
 import { openSessionIndex, refreshIndex } from "../storage/session-index.ts";
@@ -10,6 +10,7 @@ import { automationsRoot, projectAutomationsRoot, type RunRecord } from "../auto
 import { readProjectRegistry } from "../automations/projects.ts";
 import { MissionStore, missionsRoot } from "../missions/store.ts";
 import { CSV_KEYS, csvRows } from "./csv.ts";
+import { badges, localStats, localWeekend, type LocalStats, type StatSession } from "./stats.ts";
 
 export interface AnalyticsQuery { group?: "day" | "model" | "project" | "session"; from?: string; to?: string; model?: string; project?: string; session?: string }
 const UNKNOWN = "Unattributed", UNDATED = "Undated";
@@ -69,9 +70,42 @@ function runRates(q: ReturnType<typeof filters>) {
   return { automation, mission };
 }
 
+const ownWorkCache = new Map<string, boolean>();
+/** True when this transcript's first visible user message is not the user's own work. Reads at most 1 MiB, complete lines only. */
+export function notOwnWork(file: string): boolean {
+  const cached = ownWorkCache.get(file);
+  if (cached !== undefined) return cached;
+  let fd: number | undefined;
+  try {
+    fd = openSync(file, "r");
+    const buffer = Buffer.alloc(64 * 1024), decoder = new TextDecoder("utf-8");
+    let total = 0, pending = "";
+    while (total < 1024 * 1024) {
+      const n = readSync(fd, buffer, 0, Math.min(buffer.length, 1024 * 1024 - total), total);
+      if (n <= 0) break;
+      total += n;
+      pending += decoder.decode(buffer.subarray(0, n), { stream: true });
+      const lines = pending.split("\n");
+      pending = lines.pop() ?? ""; // the last piece is an incomplete line
+      for (const line of lines) {
+        let o: any;
+        try { o = JSON.parse(line); } catch { continue; }
+        const m = o?.message;
+        if (o?.type !== "message" || m?.role !== "user" || m.visibility === "llm_only" || m.visibility === "user_only" || String(o.id ?? "").startsWith("context-")) continue;
+        const id = String(o.id ?? ""), source = m.userMessageSource;
+        const verdict = source === "automation" || source === "sdk" || id.startsWith("workstream-initial-") || id === "eval-turn";
+        ownWorkCache.set(file, verdict);
+        return verdict;
+      }
+    }
+    return false;
+  } catch { return false; }
+  finally { if (fd !== undefined) try { closeSync(fd); } catch { /* already closed */ } }
+}
+
 export function readAnalytics(raw: AnalyticsQuery = {}) {
   const q = filters(raw), prices = configuredPrices(), db = openSessionIndex(), observations: Observation[] = [], choices = { models: new Set<string>(), projects: new Set<string>(), sessions: new Set<string>() };
-  let legacyForks = 0, skippedLines = 0;
+  let legacyForks = 0, skippedLines = 0, stats: LocalStats = { sessions: 0, activeMs: 0, longestMs: 0, weekendSessions: 0 };
   try {
     refreshIndex(db);
     const sessions = db.query("SELECT s.session_id, s.cwd, a.* FROM sessions s JOIN session_analytics a USING(session_id)").all() as any[];
@@ -94,6 +128,17 @@ export function readAnalytics(raw: AnalyticsQuery = {}) {
       }
     }
     skippedLines = (db.query("SELECT COALESCE(SUM(transcript_skipped_lines),0) n FROM session_ingest").get() as any).n;
+    const list: StatSession[] = [];
+    const roots = db.query("SELECT session_id, first_event_at, last_event_at, transcript_path, tags FROM sessions WHERE parent IS NULL AND calling_session_id IS NULL AND has_user_visible_messages = 1 AND first_event_at IS NOT NULL").all() as any[];
+    for (const row of roots) {
+      let tags: any = null; try { tags = JSON.parse(row.tags); } catch { /* bad JSON means no tags */ }
+      if (tags && tags.exec) continue;
+      if (notOwnWork(row.transcript_path)) continue;
+      const times = (db.query("SELECT timestamp FROM analytics_events WHERE session_id = ? AND timestamp IS NOT NULL").all(row.session_id) as any[]).map((e) => e.timestamp);
+      times.push(row.first_event_at); if (row.last_event_at !== null) times.push(row.last_event_at);
+      list.push({ times, firstAt: row.first_event_at });
+    }
+    stats = localStats(list, localWeekend);
   } finally { db.close(); }
   const groups = new Map<string, Counts>(), tools = new Map<string, Counts & { source: string }>(), total = empty("Total");
   let undatedExcluded = 0;
@@ -132,7 +177,7 @@ export function readAnalytics(raw: AnalyticsQuery = {}) {
     if (!tool) tools.set(toolKey, tool = { ...empty(d.name), source: d.source });
     for (const row of [...targets(o), tool]) { row.tools++; if (d.status === "success") row.successes++; else if (d.status === "failure") row.failures++; else row.unknown++; }
   }
-  return { query: q, totals: finish(total), rows: [...groups.values()].sort((a, b) => a.key.localeCompare(b.key)).map(finish), tools: [...tools.values()].map((r) => ({ ...finish(r), source: r.source })), choices: Object.fromEntries(Object.entries(choices).map(([key, value]) => [key, [...value].sort()])) as Record<keyof typeof choices, string[]>, rates: runRates(q), coverage: { legacyForks, skippedLines, undatedExcluded }, generatedAt: new Date().toISOString() };
+  return { query: q, totals: finish(total), rows: [...groups.values()].sort((a, b) => a.key.localeCompare(b.key)).map(finish), tools: [...tools.values()].map((r) => ({ ...finish(r), source: r.source })), choices: Object.fromEntries(Object.entries(choices).map(([key, value]) => [key, [...value].sort()])) as Record<keyof typeof choices, string[]>, rates: runRates(q), coverage: { legacyForks, skippedLines, undatedExcluded }, stats: { ...stats, badges: badges(stats) }, generatedAt: new Date().toISOString() };
 }
 
 export function analyticsCsv(report: ReturnType<typeof readAnalytics>) {

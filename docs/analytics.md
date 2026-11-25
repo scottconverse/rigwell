@@ -34,3 +34,5 @@ Automation success uses retained run attempts, at most fifty records per automat
 **Export CSV** exports the selected grouping, tool rows, outcomes, totals, filters and coverage to a user-chosen local `.csv` path. It includes profile ids and project paths, but no prompts, tool arguments, outputs, keys or raw failure messages. Text is quoted, embedded quotes/newlines are preserved and leading spreadsheet formulas are escaped. The main process revalidates every cell before saving, refuses a wrong extension and caps exports at 16 MiB. Cancel writes nothing. Export does not upload the file.
 
 Tests use fake adapters and native clients, temporary session stores and the headless production page connected to a real daemon. These checks do not establish real-provider billing accuracy or installed desktop save-dialog behavior.
+
+The Analytics page also shows four badges (First Steps, Regular, Long Haul, Weekend Builder). They count your own sessions on this machine, not automation runs, subagents, forks, workstream members, mission workers or evaluation trials. Time is active time; a pause of more than 30 minutes ends a stretch.
