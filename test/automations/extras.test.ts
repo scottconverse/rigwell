@@ -48,6 +48,14 @@ describe("templates", () => {
     for (const id of ids) expect(instantiateTemplate(id).instructions).toContain("Do not change any file in the repository");
   });
 
+  test("the templates that use gh rate their read-only gh calls low risk", () => {
+    const withGh = ["morning-briefing", "scheduled-reviewer", "pipeline-failure-sorter", "new-issue-scout", "issue-pickup"];
+    for (const id of withGh) expect(instantiateTemplate(id).instructions).toContain("give them riskLevel low");
+    for (const t of AUTOMATION_TEMPLATES) {
+      if (!withGh.includes(t.id)) expect(t.instructions).not.toContain("give them riskLevel low");
+    }
+  });
+
   test("parameters fill, unknown and missing ones are refused, values are not re-expanded", () => {
     const inst = instantiateTemplate("stale-branch-report", { stale_days: "45", main_branch: "develop" });
     expect(inst.instructions).toContain("older than 45 days");
