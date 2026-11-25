@@ -1285,3 +1285,5 @@ them into the loop. Each index.ts starts with an "Integration" comment.
 549. **Release the Mission handoff-text fix as Windows 0.4.6 on the owner's order.** Publish the known limit that token use after the fix is not yet measured.
 
 550. **Keep a version history of the workstream shared folder.** Every saved file in a shared folder records an id, a version and who wrote it, with the content kept beside the folder so an older version can be viewed or restored. A restore adds a new version rather than rewriting history, and files too large to copy keep the entry alone. The lead, members and remote members record writes as they happen, and other edits are picked up when the history is opened.
+
+551. **Release the desktop look, workstream templates, CI workflows tab, 16 automation templates, Stats badges, Finish setup card and shared-folder history as Windows 0.5.0 on the owner's order.** Publish the shared-history and gh-template limits with the release.
