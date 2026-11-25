@@ -109,7 +109,7 @@ export function Sidebar({ hidden, sessions, current, daemon, route, go, openPale
         <div className="side-group">
           <div className="side-sect">
             <span>Workstreams <span className="beta">Beta</span></span>
-            <button className="side-icon-btn" aria-label="New workstream" title="New workstream" onClick={() => go("/workstreams")}><NavIcon d={ICONS24.plus} grid={24} /></button>
+            <button className="side-icon-btn" aria-label="New workstream" title="New workstream" onClick={() => go("/workstreams/new")}><NavIcon d={ICONS24.plus} grid={24} /></button>
           </div>
           <section aria-label="Running workstreams">
             {workstreams.map((w) => (

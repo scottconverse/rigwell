@@ -382,3 +382,25 @@ h3.cap { text-transform: capitalize; }
 .review-page article p { white-space: pre-wrap; }
 .review-page textarea { display: block; width: min(100%, 800px); min-height: 80px; margin: 8px 0; }
 @media (max-width: 800px) { .review-layout { grid-template-columns: 1fr; } }
+
+/* New workstream page */
+.ws-new h1 { gap: 8px; }
+.ws-templates { display: grid; grid-auto-flow: column; grid-auto-columns: calc((100% - 24px) / 3.15); gap: 12px; overflow-x: auto; scrollbar-width: none; }
+.ws-card { padding: 0; overflow: hidden; text-align: left; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-panel); display: flex; flex-direction: column; }
+.ws-card:hover { background: var(--bg-hover); }
+.ws-art { height: 68px; display: flex; align-items: center; justify-content: center; border-bottom: 1px solid var(--border); background-image: radial-gradient(circle, rgba(140,140,140,.35) 1px, transparent 1.2px); background-size: 9px 9px; color: var(--fg-muted); }
+.ws-card-body { padding: 14px; display: flex; flex-direction: column; gap: 4px; }
+.ws-card-sum { color: var(--fg-muted); font-size: 12.5px; }
+.ws-templates .ws-card-sum { display: none; }
+.ws-templates .ws-card:hover .ws-card-sum, .ws-templates .ws-card:focus-visible .ws-card-sum { display: block; }
+.ws-new .chip-wrap .menu { top: calc(100% + 4px); bottom: auto; }
+.ws-new h1 .menu { font-size: 13px; font-weight: 400; }
+.ws-card.ws-blank { width: 100%; flex-direction: row; padding: 12px 14px; align-items: center; gap: 12px; text-align: left; margin-top: 14px; }
+.ws-blank-plus { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 6px; }
+.ws-wizard { max-width: 720px; margin: 30px auto 0; width: 100%; display: flex; flex-direction: column; gap: 10px; }
+.ws-wizard .card select, .ws-wizard .card input { width: 100%; }
+.ws-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.ws-new .card { border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--bg-panel); display: flex; flex-direction: column; gap: 6px; }
+.ws-new .hint { color: var(--fg-muted); font-size: 12px; }
+.ws-new .ws-label { font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--fg-muted); }
+.ws-new .ws-error { color: var(--danger); font-size: 12.5px; }

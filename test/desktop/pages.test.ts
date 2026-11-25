@@ -12,6 +12,7 @@ import { actionCall, bulkRename, groupByProject, managementRows, normalizeSessio
 import { moveTab, pushClosed, stepTab } from "../../desktop/renderer/lib/tabs.ts";
 import { addUsage, fmt, percentUsed, total, zero } from "../../desktop/renderer/lib/usage.ts";
 import { deleteLocalProfile, listProfileViews, parseProfileText, readUserSettings, saveLocalProfile, trustFolder, updateUserSettings } from "../../desktop/main/user-settings.ts";
+import { draftFor, homeRoute, loadRole, ROLES, TEMPLATES } from "../../desktop/renderer/lib/workstream-templates.ts";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "rigwell-pages-"));
 const feat = (id: string, status: MissionFeature["status"], extra: Partial<MissionFeature> = {}): MissionFeature => ({ id, description: `Feature ${id}`, skillName: "w", milestone: "m1", status, ...extra });
@@ -297,5 +298,31 @@ describe("app model over a fake broker", () => {
     if ("error" in built) throw new Error(built.error);
     expect((await modelMod.app.request("create_automation", built.params)).automation.id).toBe("x");
     expect((await modelMod.app.request("run_automation", { id: "x" })).runId).toBe("r1");
+  });
+});
+
+describe("New workstream templates", () => {
+  test("five templates in order, nine roles including Founder", () => {
+    expect(TEMPLATES.map((t) => t.name)).toEqual([
+      "Client Engagement", "Security Check-up", "Product From Scratch", "Market and Competitor Study", "Business Operations Setup",
+    ]);
+    expect(ROLES).toHaveLength(9);
+    expect(ROLES).toContain("Founder");
+  });
+
+  test("draftFor writes the lead-session first message", () => {
+    expect(draftFor("Security Check-up", "Founder", TEMPLATES[1])).toBe(`Propose a Workstream named "Security Check-up". My role: Founder. Goal: review a project for common security weaknesses. Plan the members and their roles, then ask me to approve.`);
+    expect(draftFor("My work", "Design")).toBe(`Propose a Workstream named "My work". My role: Design. Goal: `);
+  });
+
+  test("homeRoute round-trips folder and draft", () => {
+    const qs = homeRoute("C:\a b", 'x "y": z').split("?")[1];
+    const p = new URLSearchParams(qs);
+    expect(p.get("folder")).toBe("C:\a b");
+    expect(p.get("draft")).toBe('x "y": z');
+  });
+
+  test("loadRole falls back to Founder without storage", () => {
+    expect(loadRole()).toBe("Founder");
   });
 });
