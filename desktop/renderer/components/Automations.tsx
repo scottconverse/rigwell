@@ -8,6 +8,7 @@ import { Dialog } from "./Dialogs.tsx";
 import { ICONS24, NavIcon } from "./NavIcon.tsx";
 import { SetupDialog, TemplateDialog, VisualPanel } from "./AutomationExtras.tsx";
 import type { TemplateRow } from "../lib/templates.ts";
+import { workflowRoute } from "../lib/ci-workflows.ts";
 import { externalKind } from "../../../src/automations/triggers/config.ts";
 import { AutomationTriggerStatus, EventTriggerFields, defaultEventTrigger } from "./AutomationTriggers.tsx";
 
@@ -111,7 +112,7 @@ export function Automations({ go }: { go(r: string): void }) {
           </div>
         </section>
       )}
-      {templates !== false && <TemplateDialog initial={typeof templates === "object" ? templates : undefined} onClose={() => setTemplates(false)} onCreated={(id) => { setTemplates(false); void refresh(); go(`/automations/${id}`); }} onChat={(template, values) => { setTemplates(false); setSetup({ template, values }); }} />}
+      {templates !== false && <TemplateDialog initial={typeof templates === "object" ? templates : undefined} onClose={() => setTemplates(false)} onCreated={(id) => { setTemplates(false); void refresh(); go(`/automations/${id}`); }} onChat={(template, values) => { setTemplates(false); setSetup({ template, values }); }} onWorkflow={(draft) => { setTemplates(false); go(workflowRoute(a.recentFolders[0], draft)); }} />}
       {setup && <SetupDialog template={setup.template} values={setup.values} onClose={() => setSetup(null)} go={go} />}
       {creating && <CreateDialog onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); void refresh(); go(`/automations/${id}`); }} />}
     </div>

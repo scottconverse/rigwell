@@ -5,6 +5,7 @@ import type { RunRow } from "../lib/automations.ts";
 import { bridge } from "../lib/rpc.ts";
 import { SessionController } from "../lib/session.ts";
 import { defaultParams, groupTemplates, previewInstructions, templateCreate, visualStale, type TemplateRow } from "../lib/templates.ts";
+import { CI_INTRO, CI_WORKFLOWS } from "../lib/ci-workflows.ts";
 import { Dialog } from "./Dialogs.tsx";
 import { ICONS24, NavIcon } from "./NavIcon.tsx";
 import { live } from "./SessionScreen.tsx";
@@ -18,8 +19,9 @@ function FolderField({ value, onChange }: { value: string; onChange(v: string): 
 }
 
 /** Pick a template, fill in its parameters, create. Creating never starts a run. */
-export function TemplateDialog({ initial, onClose, onCreated, onChat }: { initial?: TemplateRow; onClose(): void; onCreated(id: string): void; onChat(t: TemplateRow, values: Record<string, string>): void }) {
+export function TemplateDialog({ initial, onClose, onCreated, onChat, onWorkflow }: { initial?: TemplateRow; onClose(): void; onCreated(id: string): void; onChat(t: TemplateRow, values: Record<string, string>): void; onWorkflow(draft: string): void }) {
   const a = useApp();
+  const [tab, setTab] = useState<"templates" | "ci">("templates");
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const [picked, setPicked] = useState<TemplateRow | null>(initial ?? null);
   const [values, setValues] = useState<Record<string, string>>(initial ? defaultParams(initial) : {});
@@ -41,20 +43,37 @@ export function TemplateDialog({ initial, onClose, onCreated, onChat }: { initia
     return (
       <Dialog title="Automation templates" onClose={onClose} wide>
         {error && <div className="error-text" role="alert">{error}</div>}
-        {groupTemplates(templates).map((g) => (
-          <section key={g.category} aria-label={g.category}>
-            <h3 className="cap">{g.category}</h3>
-            <div className="template-grid">
-              {g.templates.map((t) => (
-                <button key={t.id} className="template-card" data-template={t.id} onClick={() => pick(t)}>
-                  <NavIcon d={ICONS24.sync} grid={24} size={18} />
-                  <b>{t.name}</b><span className="muted small">{t.description}</span>{t.schedule && <span className="small">{t.schedule}</span>}
-                </button>
-              ))}
-            </div>
-          </section>
-        ))}
-        {!templates.length && !error && <div className="muted">Loading</div>}
+        <div className="seg tabs" role="tablist">
+          <button role="tab" aria-selected={tab === "templates"} className={tab === "templates" ? "on" : ""} onClick={() => setTab("templates")}>Automation templates</button>
+          <button role="tab" aria-selected={tab === "ci"} className={tab === "ci" ? "on" : ""} onClick={() => setTab("ci")}>CI workflows<span className="muted"> {CI_WORKFLOWS.length}</span></button>
+        </div>
+        {tab === "templates" && <>
+          {groupTemplates(templates).map((g) => (
+            <section key={g.category} aria-label={g.category}>
+              <h3 className="cap">{g.category}</h3>
+              <div className="template-grid">
+                {g.templates.map((t) => (
+                  <button key={t.id} className="template-card" data-template={t.id} onClick={() => pick(t)}>
+                    <NavIcon d={ICONS24.sync} grid={24} size={18} />
+                    <b>{t.name}</b><span className="muted small">{t.description}</span>{t.schedule && <span className="small">{t.schedule}</span>}
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+          {!templates.length && !error && <div className="muted">Loading</div>}
+        </>}
+        {tab === "ci" && <>
+          <p className="muted">{CI_INTRO}</p>
+          <div className="template-grid">
+            {CI_WORKFLOWS.map((w) => (
+              <button key={w.name} className="template-card" data-workflow={w.name} onClick={() => onWorkflow(w.draft)}>
+                <NavIcon d={ICONS24.sync} grid={24} size={18} />
+                <b>{w.name}</b><span className="muted small">{w.description}</span>
+              </button>
+            ))}
+          </div>
+        </>}
         <div className="dialog-actions"><button onClick={onClose}>Cancel</button></div>
       </Dialog>
     );
