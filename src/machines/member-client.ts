@@ -4,6 +4,7 @@ import type { ConnectionOptions } from "../daemon/connection.ts";
 import type { RpcClient } from "../sdk/client.ts";
 import { RemoteSessionStore } from "./sessions.ts";
 import { SharedNotes } from "./shared-notes.ts";
+import { recordSharedPath } from "../workstreams/shared-history.ts";
 
 export class RemoteMemberClient {
   private client?: RpcClient;
@@ -17,7 +18,7 @@ export class RemoteMemberClient {
   private closedSignal = new Promise<void>((resolve) => { this.resolveClosed = resolve; });
   private watches = new Map<string, (event: Record<string, unknown>) => void>();
   readonly view: MemberView;
-  constructor(private host: MemberHost, private remote: { machine: string; sessionId: string; sharedPath?: string; connectMachine?: ConnectionOptions["connectMachine"] }, private maxAutonomy: AutonomyLevel, private limits: MemberLimits, private log?: (m: string) => void) {
+  constructor(private host: MemberHost, private remote: { machine: string; sessionId: string; name?: string; sharedPath?: string; connectMachine?: ConnectionOptions["connectMachine"] }, private maxAutonomy: AutonomyLevel, private limits: MemberLimits, private log?: (m: string) => void) {
     const self = this;
     this.view = {
       id: remote.sessionId,
@@ -39,7 +40,10 @@ export class RemoteMemberClient {
       const client = await (this.remote.connectMachine ?? (async (name) => (await import("./bootstrap.ts")).connectMachine(name, { log: this.log })))(this.remote.machine);
       if (this.closed) { await client.close(); throw new Error("Remote member closed during SSH startup"); }
       this.client = client;
-      const notes = this.remote.sharedPath ? new SharedNotes(this.remote.sharedPath, this.remote.sessionId, this.limits.maxToolIds) : undefined;
+      const notes = this.remote.sharedPath ? new SharedNotes(this.remote.sharedPath, this.remote.sessionId, this.limits.maxToolIds, (absPath) => {
+        try { recordSharedPath(this.remote.sharedPath!, absPath, this.remote.name ?? "remote member"); }
+        catch (e) { this.log?.(`[remote member] shared history: ${(e as Error).message}`); }
+      }) : undefined;
       client.onClose = () => {
         const unexpected = !this.closed;
         this.closed = true; this.resolveClosed(); this.releaseAll();

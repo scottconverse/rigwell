@@ -60,6 +60,21 @@ permissions independently of the lead's turn. Review the full operation before
 answering. [Notifications](workstream-notifications.md) and Inbox help locate
 attention, but do not approve anything on your behalf.
 
+## Shared file history
+
+Every file saved in the shared folder gets a stable id and a version number. Versions come from members, the
+lead, remote members, "outside Rigwell" (other tools or hand edits, found when the history is opened) and
+"existing file". A file over 20 MiB still gets a version entry, but no saved copy. The desktop can view and
+restore any version, and a restore adds a new version; it does not rewrite the old one. Edit and Create already
+refuse to overwrite a file that changed since the writer read it. History keeps the text of old and deleted
+versions, so do not put secrets in the shared folder. Sync does not copy the shared folder or its history.
+The RPC methods are `list_shared_documents`, `get_shared_history`, `get_shared_version` and
+`restore_shared_version`.
+
+The history is local. There is no server copy, no publish step and no command-line tool for it. Shell commands and
+hand edits get versions, but they are not refused when the file changed since it was read. A file that a background
+shell command writes after the command returns is recorded as "outside Rigwell".
+
 ## Limits and recovery
 
 When a replacement cap is still too low, the Resume dialog keeps your edits

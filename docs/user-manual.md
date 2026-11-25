@@ -169,6 +169,8 @@ Example request:
 
 For a Workstream with a required lead profile, [check the lead profile and reasoning level](#check-your-session-profile-and-effort) before requesting a proposal. Review the member profile IDs and worktree assignments in the proposed plan before accepting it, then confirm the active profiles in the roster.
 
+The workstream page has a Shared files section. It lists each file in the shared folder with its version and who saved it last. Open a file to see every version, view an old version, or restore it. A restore adds a new version. See [Shared file history](workstreams.md#shared-file-history).
+
 ### Missions
 
 Use a Mission for a larger plan with staged execution and validation. Review the proposed features, boundaries and checks before starting. Mission readiness reports can identify missing tools or unrun checks; a readiness warning is not proof of failure or success.
