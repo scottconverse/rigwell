@@ -53,11 +53,13 @@ describe("templates", () => {
     for (const id of withGh) {
       expect(instantiateTemplate(id).instructions).toContain("give them riskLevel low");
       expect(instantiateTemplate(id).instructions).toContain("Do not save it to a file");
+      expect(instantiateTemplate(id).instructions).toContain("Do not use shell redirection");
     }
     for (const t of AUTOMATION_TEMPLATES) {
       if (!withGh.includes(t.id)) {
         expect(t.instructions).not.toContain("give them riskLevel low");
         expect(t.instructions).not.toContain("Do not save it to a file");
+        expect(t.instructions).not.toContain("Do not use shell redirection");
       }
     }
   });
