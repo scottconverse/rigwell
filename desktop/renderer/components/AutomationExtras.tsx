@@ -44,10 +44,11 @@ export function TemplateDialog({ initial, onClose, onCreated, onChat, onWorkflow
       <Dialog title="Automation templates" onClose={onClose} wide>
         {error && <div className="error-text" role="alert">{error}</div>}
         <div className="seg tabs" role="tablist">
-          <button role="tab" aria-selected={tab === "templates"} className={tab === "templates" ? "on" : ""} onClick={() => setTab("templates")}>Automation templates</button>
+          <button role="tab" aria-selected={tab === "templates"} className={tab === "templates" ? "on" : ""} onClick={() => setTab("templates")}>Automation templates{templates.length > 0 && <span className="muted"> {templates.length}</span>}</button>
           <button role="tab" aria-selected={tab === "ci"} className={tab === "ci" ? "on" : ""} onClick={() => setTab("ci")}>CI workflows<span className="muted"> {CI_WORKFLOWS.length}</span></button>
         </div>
         {tab === "templates" && <>
+          <p className="muted">Popular jobs, already filled in so you only need to adjust them.</p>
           {groupTemplates(templates).map((g) => (
             <section key={g.category} aria-label={g.category}>
               <h3 className="cap">{g.category}</h3>

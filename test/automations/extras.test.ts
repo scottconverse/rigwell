@@ -26,9 +26,10 @@ const START = Date.parse("2026-03-02T00:00:00Z");
 
 describe("templates", () => {
   test("every template is well formed and fills with its defaults", () => {
-    expect(AUTOMATION_TEMPLATES.length).toBeGreaterThanOrEqual(5);
+    expect(AUTOMATION_TEMPLATES).toHaveLength(16);
     const ids = new Set<string>();
     for (const t of AUTOMATION_TEMPLATES) {
+      expect(["health", "dependencies", "testing", "release", "git", "briefing", "issues"]).toContain(t.category);
       expect(ids.has(t.id)).toBe(false);
       ids.add(t.id);
       expect(parseSchedule(t.schedule)).toBeTruthy();
@@ -40,6 +41,11 @@ describe("templates", () => {
       expect(inst.name).toBe(t.name);
       expect(JSON.stringify(t)).not.toContain("—");
     }
+  });
+
+  test("the ten added templates report only", () => {
+    const ids = ["morning-briefing", "meeting-follow-up", "slack-catch-up", "scheduled-reviewer", "codebase-upkeep", "hourly-error-check", "pipeline-failure-sorter", "new-issue-scout", "docs-upkeep", "issue-pickup"];
+    for (const id of ids) expect(instantiateTemplate(id).instructions).toContain("Do not change any file in the repository");
   });
 
   test("parameters fill, unknown and missing ones are refused, values are not re-expanded", () => {
