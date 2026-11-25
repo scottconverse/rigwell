@@ -65,6 +65,7 @@ export function wrapSharedRecording(tool: Tool, store: WorkstreamStore, by: stri
         });
         return result;
       }
+      record(() => recordSharedFolder(sharedRoot, "outside Rigwell"));
       beginSharedWrite(sharedRoot);
       try { return await tool.run(input, ctx); }
       finally { endSharedWrite(sharedRoot); record(() => recordSharedFolder(sharedRoot, by)); }

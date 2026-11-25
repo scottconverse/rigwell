@@ -8,6 +8,7 @@ import {
 import { createWorkstreamService, wrapSharedRecording } from "../../src/workstreams/index.ts";
 import { WorkstreamStore } from "../../src/workstreams/store.ts";
 import { createCreateTool } from "../../src/tools/create.ts";
+import { createApplyPatchTool } from "../../src/tools/apply-patch.ts";
 import { SharedNotes } from "../../src/machines/shared-notes.ts";
 import { tmp } from "../worktree/util.ts";
 import { setup } from "./helpers.ts";
@@ -158,6 +159,20 @@ test("end to end: a member's Create in the shared folder returns its version", a
     const leadIndex = JSON.parse(readFileSync(join(f.store.path("shared-history"), "index.json"), "utf8"));
     expect(leadIndex.docs["lead.md"].versions[0]).toMatchObject({ version: 1, by: "Lead" });
   } finally { await f.close(); }
+});
+
+test("the first patch into a new shared folder is labelled with the writer", async () => {
+  process.env.RIGWELL_HOME = tmp("ws-sh-first-write");
+  const store = new WorkstreamStore("ws");
+  mkdirSync(store.path("shared"), { recursive: true });
+  writeFileSync(join(store.path("shared"), "old.md"), "old\n");
+  const tool = wrapSharedRecording(createApplyPatchTool(), store, "First");
+  const ctx = { cwd: store.path("shared"), sessionId: "s1", readFiles: new Map(), signal: new AbortController().signal };
+  const result = await tool.run({ input: "*** Begin Patch\n*** Add File: p.md\n+patched\n*** End Patch" }, ctx);
+  expect(result.isError).toBeFalsy();
+  const index = JSON.parse(readFileSync(join(store.path("shared-history"), "index.json"), "utf8"));
+  expect(index.docs["p.md"].versions[0]).toMatchObject({ version: 1, by: "First" });
+  expect(index.docs["old.md"].versions[0]).toMatchObject({ version: 1, by: "existing file" });
 });
 
 test("a list call during a running write does not record it", async () => {
