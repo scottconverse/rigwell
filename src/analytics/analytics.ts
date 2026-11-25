@@ -78,24 +78,25 @@ export function notOwnWork(file: string): boolean {
   let fd: number | undefined;
   try {
     fd = openSync(file, "r");
-    const chunks: Buffer[] = [], buffer = Buffer.alloc(64 * 1024);
-    let total = 0;
+    const buffer = Buffer.alloc(64 * 1024), decoder = new TextDecoder("utf-8");
+    let total = 0, pending = "";
     while (total < 1024 * 1024) {
       const n = readSync(fd, buffer, 0, Math.min(buffer.length, 1024 * 1024 - total), total);
       if (n <= 0) break;
-      chunks.push(Buffer.from(buffer.subarray(0, n)));
       total += n;
-    }
-    const lines = Buffer.concat(chunks).toString("utf8").split("\n");
-    for (const line of lines.slice(0, -1)) { // the last element is an incomplete line
-      let o: any;
-      try { o = JSON.parse(line); } catch { continue; }
-      const m = o?.message;
-      if (o?.type !== "message" || m?.role !== "user" || m.visibility === "llm_only" || m.visibility === "user_only" || String(o.id ?? "").startsWith("context-")) continue;
-      const id = String(o.id ?? ""), source = m.userMessageSource;
-      const verdict = source === "automation" || source === "sdk" || id.startsWith("workstream-initial-") || id === "eval-turn";
-      ownWorkCache.set(file, verdict);
-      return verdict;
+      pending += decoder.decode(buffer.subarray(0, n), { stream: true });
+      const lines = pending.split("\n");
+      pending = lines.pop() ?? ""; // the last piece is an incomplete line
+      for (const line of lines) {
+        let o: any;
+        try { o = JSON.parse(line); } catch { continue; }
+        const m = o?.message;
+        if (o?.type !== "message" || m?.role !== "user" || m.visibility === "llm_only" || m.visibility === "user_only" || String(o.id ?? "").startsWith("context-")) continue;
+        const id = String(o.id ?? ""), source = m.userMessageSource;
+        const verdict = source === "automation" || source === "sdk" || id.startsWith("workstream-initial-") || id === "eval-turn";
+        ownWorkCache.set(file, verdict);
+        return verdict;
+      }
     }
     return false;
   } catch { return false; }

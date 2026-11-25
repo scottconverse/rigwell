@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpEnv, writeJson } from "../storage/helpers.ts";
-import { analyticsCsv, readAnalytics } from "../../src/analytics/analytics.ts";
+import { analyticsCsv, notOwnWork, readAnalytics } from "../../src/analytics/analytics.ts";
 import { openSessionIndex, refreshIndex, resetSessionIndex } from "../../src/storage/session-index.ts";
 import { appendAnalyticsMetric, appendMessage, appendTurnOutcome, createSession, loadTranscript } from "../../src/storage/transcript.ts";
 import { updateSessionSettings } from "../../src/storage/session-settings.ts";
@@ -54,6 +54,21 @@ test("badges count only the user's own sessions, skipping automation, workstream
     await appendMessage(auto, { id: "u2", role: "user", userMessageSource: "automation", content: [{ type: "text", text: "A scheduled run." }] }, null);
     await appendMessage(member, { id: "workstream-initial-a1", role: "user", content: [{ type: "text", text: "Join the workstream." }] }, null);
     const stats = readAnalytics().stats; expect(stats.sessions).toBe(1); expect(stats.badges.length).toBe(4);
+  } finally { env.cleanup(); }
+});
+
+test("notOwnWork judges the first visible user message and never reads past it", () => {
+  const env = tmpEnv();
+  try {
+    const line = (o: object) => JSON.stringify(o) + "\n";
+    const filler = Array.from({ length: 3000 }, (_, i) => line({ type: "message", id: `a${i}`, message: { role: "assistant", content: `filler ${i} ${"x".repeat(80)}` } })).join("");
+    expect(Buffer.byteLength(filler)).toBeGreaterThan(200 * 1024);
+    const auto = join(env.root, "auto.jsonl");
+    writeFileSync(auto, line({ type: "message", id: "u1", message: { role: "user", userMessageSource: "automation", content: "scheduled" } }) + filler);
+    expect(notOwnWork(auto)).toBe(true);
+    const mine = join(env.root, "mine.jsonl");
+    writeFileSync(mine, line({ type: "message", id: "u2", message: { role: "user", content: "a real prompt" } }) + filler);
+    expect(notOwnWork(mine)).toBe(false);
   } finally { env.cleanup(); }
 });
 
