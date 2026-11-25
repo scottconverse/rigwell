@@ -1,7 +1,7 @@
 {
-  "capturedAt": "2026-11-15T16:32:02.660Z",
+  "capturedAt": "2026-11-25T06:02:14.000Z",
   "renderer": "desktop/renderer/components/Workstreams.tsx",
-  "source": "12511744ecac16379cecc8f5f2c97d60ecf24b21",
-  "data": "isolated demonstration workstream, two real persistent fixture sessions, loopback fake provider; no real inference",
-  "capture": "headless Chromium, actual renderer and daemon, no visible desktop window"
+  "source": "294af046b95592545adab7ab1ba85ec73ae6259c",
+  "data": "isolated demonstration workstream, two persistent fixture sessions, three shared files with recorded versions, loopback fake provider; no real inference",
+  "capture": "Electron with the actual renderer and daemon, window placed off screen, dark theme"
 }
