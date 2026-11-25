@@ -15,6 +15,7 @@ export interface AppState {
   models: ModelRow[];
   settings?: DesktopSettings;
   recentFolders: string[];
+  toolCount: number | null;
   /** The agent's user settings with secrets masked (customModels, trustedFolders, sessionDefaultSettings, ...). */
   userSettings: Record<string, any>;
 }
@@ -25,7 +26,7 @@ const loadRecent = (): string[] => { try { return JSON.parse(localStorage.getIte
 export class AppModel extends Store<AppState> {
   private control?: DaemonConn;
   private refreshVersion = 0;
-  constructor() { super({ daemon: { state: "stopped" }, sessions: [], workstreams: [], models: [], recentFolders: loadRecent(), userSettings: {} }); }
+  constructor() { super({ daemon: { state: "stopped" }, sessions: [], workstreams: [], models: [], recentFolders: loadRecent(), userSettings: {}, toolCount: null }); }
 
   /** Opens the control connection. It listens for list, state and workstream changes. */
   private async openControl() {
@@ -65,9 +66,13 @@ export class AppModel extends Store<AppState> {
     const version = ++this.refreshVersion;
     try {
       if (!this.control || this.control.closed) await this.openControl();
-      const [s, m] = await Promise.all([this.listSessions(this.control!), this.control!.request("list_models")]);
+      const [s, m, t] = await Promise.all([
+        this.listSessions(this.control!),
+        this.control!.request("list_models"),
+        this.control!.request("count_mcp_servers").then((r: any) => typeof r?.count === "number" ? r.count : null, () => null),
+      ]);
       if (version !== this.refreshVersion) return;
-      this.set({ sessions: s, models: (m.models ?? []).map(normalizeModel) });
+      this.set({ sessions: s, models: (m.models ?? []).map(normalizeModel), toolCount: t });
       void this.refreshUserSettings();
     } catch { /* the daemon is restarting; the status event triggers another refresh */ }
   }
@@ -88,6 +93,14 @@ export class AppModel extends Store<AppState> {
   async request<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> {
     if (!this.control || this.control.closed) await this.openControl();
     return this.control!.request<T>(method, params);
+  }
+
+  /** Re-reads the enabled MCP server count (Finish setup card); no-op without a control connection. */
+  async refreshTools() {
+    const c = this.control;
+    if (!c || c.closed) return;
+    try { this.set({ toolCount: await c.request("count_mcp_servers").then((r: any) => typeof r?.count === "number" ? r.count : null, () => null) }); }
+    catch { /* keep the old copy */ }
   }
 
   async refreshUserSettings() { try { this.set({ userSettings: await bridge().userSettings.get() }); } catch { /* keep the old copy */ } }

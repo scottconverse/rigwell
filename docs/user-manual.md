@@ -205,7 +205,7 @@ Local event triggers can accept configured GitHub/CI, Slack and chained events. 
 
 Select the model appropriate to the task and your data requirements. A local endpoint keeps inference on the machine you configure; a remote endpoint receives model context. Changing a model may change cost, speed, tool behavior and account limits.
 
-Connectors add external tools and resources through MCP. Review a server's origin, requested credentials and access before connecting. OAuth setup is server-dependent. The catalog supplies configuration; it is not an assurance that every listed server is safe or currently available. Plugins can add skills and configuration; inspect their source and permissions. See [connectors](connectors.md) and [plugins](plugins.md).
+Connectors add external tools and resources through MCP. Review a server's origin, requested credentials and access before connecting. OAuth setup is server-dependent. The catalog supplies configuration; it is not an assurance that every listed server is safe or currently available. Plugins can add skills and configuration; inspect their source and permissions. Until setup is complete, the sidebar shows a Finish setup card with the next step: connect a model, start your first session in a project folder, then connect your tools. The card hides when all three are done. See [connectors](connectors.md) and [plugins](plugins.md).
 
 ### Knowledge, learning and evaluations
 

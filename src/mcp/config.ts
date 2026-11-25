@@ -120,3 +120,8 @@ export function removeUserServer(name: string): boolean {
   writeUserFile(file, { ...cur, mcpServers: rest });
   return true;
 }
+
+/** Session-free count of enabled MCP servers at the user level and from plugins (Finish setup card). */
+export const mcpCountMethods = {
+  count_mcp_servers: () => ({ count: loadMcpConfig({ cwd: rigwellHome(), trustProject: false }).servers.filter((s) => !s.disabled).length }),
+};
