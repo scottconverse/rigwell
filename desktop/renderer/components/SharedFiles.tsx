@@ -29,7 +29,7 @@ export function SharedFiles({ conn, id, refresh }: { conn?: DaemonConn; id: stri
       setDocuments(r.documents);
       setError(""); setLoaded(true);
     } catch (e) {
-      if (g !== generation.current) return;
+      if (g !== listGeneration.current) return;
       setError((e as Error).message); setLoaded(true);
     }
   };
@@ -43,7 +43,7 @@ export function SharedFiles({ conn, id, refresh }: { conn?: DaemonConn; id: stri
       setHistory(r.versions);
       setError("");
     } catch (e) {
-      if (g !== generation.current) return;
+      if (g !== historyGeneration.current) return;
       setError((e as Error).message);
     }
   };
