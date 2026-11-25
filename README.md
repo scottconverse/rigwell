@@ -19,7 +19,7 @@ For the desktop app, download the [signed Windows 0.5.0 installer](https://githu
 For a source checkout, install Bun 1.4.4, Git and ripgrep:
 
 ```sh
-git clone --branch phase-1-core-loop https://github.com/scottconverse/rigwell.git
+git clone https://github.com/scottconverse/rigwell.git
 cd rigwell
 bun install
 bun src/cli/main.ts --help

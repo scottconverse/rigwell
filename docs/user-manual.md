@@ -232,7 +232,7 @@ Phone access is opt-in. It uses a selected network interface, certificate identi
 Use Bun 1.4.4, Git and ripgrep. Desktop development additionally uses Node 22 and its npm dependencies. Packaged desktop installation is a separate path and does not automatically make a global `rigwell` CLI command available.
 
 ```powershell
-git clone --branch phase-1-core-loop https://github.com/scottconverse/rigwell.git
+git clone https://github.com/scottconverse/rigwell.git
 cd rigwell
 bun install
 bun src/cli/main.ts --help
