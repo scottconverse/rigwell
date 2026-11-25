@@ -71,6 +71,10 @@ versions, so do not put secrets in the shared folder. Sync does not copy the sha
 The RPC methods are `list_shared_documents`, `get_shared_history`, `get_shared_version` and
 `restore_shared_version`.
 
+The history is local. There is no server copy, no publish step and no command-line tool for it. Shell commands and
+hand edits get versions, but they are not refused when the file changed since it was read. A file that a background
+shell command writes after the command returns is recorded as "outside Rigwell".
+
 ## Limits and recovery
 
 When a replacement cap is still too low, the Resume dialog keeps your edits

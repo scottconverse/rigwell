@@ -11,6 +11,20 @@ export interface SharedDoc { id: string; versions: SharedVersion[] }
 export interface SharedIndex { docs: Record<string, SharedDoc> }
 
 const PATH_ERROR = "Path must stay inside the shared folder";
+const activeWrites = new Map<string, number>();
+
+/** Marks a tool that may write the shared folder, so a listing during its run does not sweep its files. */
+export function beginSharedWrite(sharedRoot: string) {
+  const key = resolve(sharedRoot);
+  activeWrites.set(key, (activeWrites.get(key) ?? 0) + 1);
+}
+export function endSharedWrite(sharedRoot: string) {
+  const key = resolve(sharedRoot), count = (activeWrites.get(key) ?? 0) - 1;
+  if (count > 0) activeWrites.set(key, count); else activeWrites.delete(key);
+}
+export function sharedWritesActive(sharedRoot: string): boolean {
+  return (activeWrites.get(resolve(sharedRoot)) ?? 0) > 0;
+}
 const MAX_WALK_FILES = 2000;
 const MAX_TEXT_BYTES = 1024 * 1024;
 

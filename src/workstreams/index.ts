@@ -14,7 +14,7 @@ import { managerFor } from "../worktree/connect.ts";
 import { ErrorCodes, RpcError } from "../protocol/rpc.ts";
 import { WorkstreamStore, listWorkstreamStores, type AgentEntry, type WorkstreamSettings, type WorkstreamMessage, type MessagePriority } from "./store.ts";
 import { approvedWriteScopes, guardMemberWrites, scopedMemberTools } from "./write-scope.ts";
-import { listSharedDocs, readSharedVersion, recordSharedFolder, recordSharedPath, restoreSharedVersion, sharedHistory } from "./shared-history.ts";
+import { beginSharedWrite, endSharedWrite, listSharedDocs, readSharedVersion, recordSharedFolder, recordSharedPath, restoreSharedVersion, sharedHistory, sharedWritesActive } from "./shared-history.ts";
 
 export interface WorkstreamConn {
   session(): Session | undefined;
@@ -45,7 +45,7 @@ const strictlyInside = (root: string, path: string) => { const rel = relative(ro
  * except that the managed shared-history folder is refused.
  */
 export function wrapSharedRecording(tool: Tool, store: WorkstreamStore, by: string, log?: (text: string) => void): Tool {
-  if (!["Create", "Edit", "Execute", "apply_patch"].includes(tool.name)) return tool;
+  if (!["Create", "Edit", "Execute", "ApplyPatch"].includes(tool.name)) return tool;
   const sharedRoot = store.path("shared"), historyRoot = store.path("shared-history");
   const record = (run: () => void) => { try { run(); } catch (e) { log?.(`[workstream] shared history: ${(e as Error).message}`); } };
   return {
@@ -65,9 +65,9 @@ export function wrapSharedRecording(tool: Tool, store: WorkstreamStore, by: stri
         });
         return result;
       }
-      const result = await tool.run(input, ctx);
-      record(() => recordSharedFolder(sharedRoot, by));
-      return result;
+      beginSharedWrite(sharedRoot);
+      try { return await tool.run(input, ctx); }
+      finally { endSharedWrite(sharedRoot); record(() => recordSharedFolder(sharedRoot, by)); }
     },
   };
 }
@@ -578,7 +578,7 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
       if (p.version !== undefined && (typeof p.version !== "number" || !Number.isSafeInteger(p.version) || p.version < 1)) throw new RpcError(ErrorCodes.INVALID_PARAMS, "version must be a positive integer");
       return p.path;
     };
-    const refreshShared = (store: WorkstreamStore) => { try { recordSharedFolder(store.path("shared"), "outside Rigwell"); } catch { /* history refresh must not fail the read */ } };
+    const refreshShared = (store: WorkstreamStore) => { try { if (sharedWritesActive(store.path("shared"))) return; recordSharedFolder(store.path("shared"), "outside Rigwell"); } catch { /* history refresh must not fail the read */ } };
     const sharedRpc = <T>(run: () => T): T => {
       try { return run(); } catch (e) { if (e instanceof RpcError) throw e; throw new RpcError(ErrorCodes.INVALID_PARAMS, (e as Error).message); }
     };

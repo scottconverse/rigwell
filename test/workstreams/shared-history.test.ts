@@ -3,12 +3,14 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
-  listSharedDocs, readSharedVersion, recordSharedFolder, recordSharedPath, restoreSharedVersion, sharedHistory,
+  beginSharedWrite, endSharedWrite, listSharedDocs, readSharedVersion, recordSharedFolder, recordSharedPath, restoreSharedVersion, sharedHistory,
 } from "../../src/workstreams/shared-history.ts";
 import { createWorkstreamService, wrapSharedRecording } from "../../src/workstreams/index.ts";
 import { WorkstreamStore } from "../../src/workstreams/store.ts";
 import { createCreateTool } from "../../src/tools/create.ts";
+import { SharedNotes } from "../../src/machines/shared-notes.ts";
 import { tmp } from "../worktree/util.ts";
+import { setup } from "./helpers.ts";
 import type { Session } from "../../src/agent/session.ts";
 
 function shared() {
@@ -130,4 +132,58 @@ test("wrapSharedRecording leaves other tools untouched", () => {
   store.create({ id: "ws", title: "t", goal: "g", plan: "p", leadSessionId: "lead", cwd: root, state: "active", createdAt: 1, updatedAt: 1, settings: { enabled: true, maxConcurrentAgents: 1, allowNestedSpawn: false, autoRejectMemberPrompts: false } });
   const other = { name: "Read", description: "", inputSchema: {}, category: "read" as const, run: async () => ({ content: "ok" }) };
   expect(wrapSharedRecording(other, store, "Lead")).toBe(other);
+});
+
+test("end to end: a member's Create in the shared folder returns its version", async () => {
+  let sharedDir = "";
+  const f = await setup((body) => {
+    const last = JSON.stringify(body.messages.at(-1));
+    if (last.includes("MEMBER-WRITE") && !last.includes("tool_result")) return { toolCalls: [{ name: "Create", input: { path: join(sharedDir, "member.md"), content: "from member\n" } }] };
+    if (last.includes("LEAD-WRITE") && !last.includes("tool_result")) return { toolCalls: [{ name: "Create", input: { path: join(sharedDir, "lead.md"), content: "from lead\n" } }] };
+    return { text: "Finished" };
+  });
+  try {
+    sharedDir = f.store.path("shared");
+    await f.member.call("add_user_message", { text: "MEMBER-WRITE" });
+    await f.member.connection.session!.idle();
+    const memberIndex = JSON.parse(readFileSync(join(f.store.path("shared-history"), "index.json"), "utf8"));
+    expect(memberIndex.docs["member.md"].versions[0]).toMatchObject({ version: 1, by: "First" });
+    const result = f.fake.requests.flatMap((r: any) => Array.isArray(r.messages) ? r.messages : [])
+      .flatMap((m: any) => Array.isArray(m.content) ? m.content : [])
+      .find((block: any) => block?.type === "tool_result" && String(block.content).includes("sharedDocument"));
+    expect(result).toBeDefined();
+    expect(String(result.content)).toContain('"version":1');
+    await f.lead.call("add_user_message", { text: "LEAD-WRITE" });
+    await f.lead.connection.session!.idle();
+    const leadIndex = JSON.parse(readFileSync(join(f.store.path("shared-history"), "index.json"), "utf8"));
+    expect(leadIndex.docs["lead.md"].versions[0]).toMatchObject({ version: 1, by: "Lead" });
+  } finally { await f.close(); }
+});
+
+test("a list call during a running write does not record it", async () => {
+  const f = await setup();
+  try {
+    const sharedDir = f.store.path("shared");
+    f.attached.methods.list_shared_documents({ id: f.store.id });
+    beginSharedWrite(sharedDir);
+    try {
+      writeFileSync(join(sharedDir, "busy.md"), "busy");
+      const during = f.attached.methods.list_shared_documents({ id: f.store.id });
+      expect(during.documents.some((d) => d.path === "busy.md")).toBe(false);
+    } finally { endSharedWrite(sharedDir); }
+    const after = f.attached.methods.list_shared_documents({ id: f.store.id });
+    expect(after.documents.find((d) => d.path === "busy.md")?.by).toBe("outside Rigwell");
+  } finally { await f.close(); }
+});
+
+test("remote shared notes report writes", async () => {
+  const { sharedRoot } = shared();
+  const seen: string[] = [];
+  const notes = new SharedNotes(sharedRoot, "s1", undefined, (p) => seen.push(p));
+  const created = await notes.run("Create", { path: join(sharedRoot, "note.txt"), content: "hello" });
+  expect(created.isError).toBeFalsy();
+  expect(seen).toContain(join(sharedRoot, "note.txt"));
+  const failing = new SharedNotes(sharedRoot, "s1", undefined, () => { throw new Error("callback"); });
+  const stillCreated = await failing.run("Create", { path: join(sharedRoot, "note2.txt"), content: "hello" });
+  expect(stillCreated.isError).toBeFalsy();
 });
