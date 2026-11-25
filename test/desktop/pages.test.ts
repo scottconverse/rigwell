@@ -13,6 +13,7 @@ import { moveTab, pushClosed, stepTab } from "../../desktop/renderer/lib/tabs.ts
 import { addUsage, fmt, percentUsed, total, zero } from "../../desktop/renderer/lib/usage.ts";
 import { deleteLocalProfile, listProfileViews, parseProfileText, readUserSettings, saveLocalProfile, trustFolder, updateUserSettings } from "../../desktop/main/user-settings.ts";
 import { draftFor, homeRoute, loadRole, ROLES, TEMPLATES } from "../../desktop/renderer/lib/workstream-templates.ts";
+import { CI_INTRO, CI_WORKFLOWS, workflowRoute } from "../../desktop/renderer/lib/ci-workflows.ts";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "rigwell-pages-"));
 const feat = (id: string, status: MissionFeature["status"], extra: Partial<MissionFeature> = {}): MissionFeature => ({ id, description: `Feature ${id}`, skillName: "w", milestone: "m1", status, ...extra });
@@ -316,13 +317,40 @@ describe("New workstream templates", () => {
   });
 
   test("homeRoute round-trips folder and draft", () => {
-    const qs = homeRoute("C:\a b", 'x "y": z').split("?")[1];
+    const qs = homeRoute("C:\\a b", 'x "y": z').split("?")[1];
     const p = new URLSearchParams(qs);
-    expect(p.get("folder")).toBe("C:\a b");
+    expect(p.get("folder")).toBe("C:\\a b");
     expect(p.get("draft")).toBe('x "y": z');
   });
 
   test("loadRole falls back to Founder without storage", () => {
     expect(loadRole()).toBe("Founder");
+  });
+});
+
+describe("CI workflows tab", () => {
+  test("four workflows in order", () => {
+    expect(CI_WORKFLOWS.map((w) => w.name)).toEqual(["Pull Request Review", "QA Checks", "Docs Refresh", "Security Sweep"]);
+  });
+
+  test("drafts name the skill to install, in order", () => {
+    const skills = ["install-code-review", "install-qa", "install-wiki", "deep-security-review"];
+    CI_WORKFLOWS.forEach((w, i) => expect(w.draft).toContain(skills[i]));
+  });
+
+  test("nothing is described as GitHub Actions", () => {
+    for (const w of CI_WORKFLOWS) {
+      expect(w.name).not.toContain("GitHub Actions");
+      expect(w.description).not.toContain("GitHub Actions");
+      expect(w.draft).not.toContain("GitHub Actions");
+    }
+    expect(CI_INTRO).not.toContain("GitHub Actions");
+  });
+
+  test("workflowRoute passes the draft, and the folder when there is one", () => {
+    expect(workflowRoute(undefined, "a b")).toBe("/?draft=a%20b");
+    const p = new URLSearchParams(workflowRoute("C:\\x", "a").split("?")[1]);
+    expect(p.get("folder")).toBe("C:\\x");
+    expect(p.get("draft")).toBe("a");
   });
 });
