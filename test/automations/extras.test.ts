@@ -50,9 +50,15 @@ describe("templates", () => {
 
   test("the templates that use gh rate their read-only gh calls low risk", () => {
     const withGh = ["morning-briefing", "scheduled-reviewer", "pipeline-failure-sorter", "new-issue-scout", "issue-pickup"];
-    for (const id of withGh) expect(instantiateTemplate(id).instructions).toContain("give them riskLevel low");
+    for (const id of withGh) {
+      expect(instantiateTemplate(id).instructions).toContain("give them riskLevel low");
+      expect(instantiateTemplate(id).instructions).toContain("Do not save it to a file");
+    }
     for (const t of AUTOMATION_TEMPLATES) {
-      if (!withGh.includes(t.id)) expect(t.instructions).not.toContain("give them riskLevel low");
+      if (!withGh.includes(t.id)) {
+        expect(t.instructions).not.toContain("give them riskLevel low");
+        expect(t.instructions).not.toContain("Do not save it to a file");
+      }
     }
   });
 
