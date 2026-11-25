@@ -15,6 +15,7 @@ import { TrustAsks } from "./components/Dialogs.tsx";
 import { Home } from "./components/Home.tsx";
 import { Missions, MissionDetailPage } from "./components/Missions.tsx";
 import { Workstreams } from "./components/Workstreams.tsx";
+import { WorkstreamNew } from "./components/WorkstreamNew.tsx";
 import { Review } from "./components/Review.tsx";
 import { SessionScreen } from "./components/SessionScreen.tsx";
 import { Settings } from "./components/Settings.tsx";
@@ -92,6 +93,7 @@ function App() {
 
   const sessionId = parts[0] === "sessions" ? parts[1] : undefined;
   const folder = new URLSearchParams(query ?? "").get("folder") ?? undefined;
+  const draft = new URLSearchParams(query ?? "").get("draft") ?? undefined;
   return (
     <div className={`app ${sidebarHidden ? "no-sidebar" : ""} ${navigator.userAgent.includes("Mac") ? "mac" : ""}`}>
       <Sidebar hidden={sidebarHidden} sessions={a.sessions} current={sessionId} daemon={a.daemon.state} route={path} go={go} openPalette={() => setPalette(true)} />
@@ -104,6 +106,7 @@ function App() {
         </div>
         {parts[0] === "settings" ? <Settings page={parts[1] ?? "general"} go={go} />
           : parts[0] === "missions" ? (parts[1] ? <MissionDetailPage key={parts[1]} sessionId={parts[1]} go={go} /> : <Missions go={go} />)
+          : parts[0] === "workstreams" && parts[1] === "new" ? <WorkstreamNew go={go} />
           : parts[0] === "workstreams" ? <Workstreams key={parts[1] ?? "list"} id={parts[1]} go={go} />
           : parts[0] === "machines" ? <FleetMachines />
           : parts[0] === "imports" ? <SharedSessions id={parts[1]} go={go} />
@@ -116,7 +119,7 @@ function App() {
           : parts[0] === "eval" ? <Evaluations />
           : parts[0] === "review" ? <Review initialFolder={folder} go={go} />
           : parts[0] === "automations" ? (parts[1] ? <AutomationDetail key={parts[1]} id={parts[1]} go={go} /> : <Automations go={go} />)
-          : sessionId ? <SessionScreen key={sessionId} sessionId={sessionId} /> : <Home key={folder ?? "home"} go={go} initialFolder={folder} initialMission={new URLSearchParams(query ?? "").get("mode") === "mission"} />}
+          : sessionId ? <SessionScreen key={sessionId} sessionId={sessionId} /> : <Home key={`${folder ?? "home"}|${draft ?? ""}`} go={go} initialFolder={folder} initialDraft={draft} initialMission={new URLSearchParams(query ?? "").get("mode") === "mission"} />}
       </main>
       {palette && <Palette sessions={a.sessions} go={go} close={() => setPalette(false)} actions={[
         { id: "new", label: "Create new session", run: () => go("/") },

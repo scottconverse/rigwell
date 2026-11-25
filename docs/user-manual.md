@@ -144,6 +144,8 @@ When your last message scrolls out of view, a copy stays at the top of the trans
 
 ### Workstreams
 
+To start a Workstream from a template, click `+` next to `Workstreams` in the sidebar. Pick your role and a template, or `Or begin with a blank workstream`. Give it a name, choose the working folder, and click `Create workstream`. Rigwell opens a new session with the first message filled in. Click Send. The lead session proposes the plan, and no member starts before you approve it.
+
 See the [Workstreams reference](workstreams.md) for member controls, delivery priorities, budgets and recovery.
 
 A Workstream is persistent coordination around a goal. A lead session can propose a plan, then manage reusable member sessions, messages, listeners and shared progress. Members can use isolated Git worktrees so separate tasks have separate branches and files.

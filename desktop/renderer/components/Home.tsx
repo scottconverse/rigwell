@@ -27,9 +27,10 @@ export function useAddFolder(onAdded: (folder: string) => void) {
   return { pick, dialog };
 }
 
-export function Home({ go, initialFolder, initialMission }: { go(route: string): void; initialFolder?: string; initialMission?: boolean }) {
+export function Home({ go, initialFolder, initialDraft, initialMission }: { go(route: string): void; initialFolder?: string; initialDraft?: string; initialMission?: boolean }) {
   const a = useApp();
   const [folder, setFolder] = useState(initialFolder ?? a.recentFolders[0] ?? "");
+  const [prefill, setPrefill] = useState<string | undefined>(initialDraft);
   const [folderOpen, setFolderOpen] = useState(false);
   const [settings, setSettings] = useState<ComposerSettings>({ autonomyLevel: "medium", interactionMode: initialMission ? "mission" : "auto", reasoningEffort: "high" });
   const [worktree, setWorktree] = useState<boolean | undefined>();
@@ -102,6 +103,7 @@ export function Home({ go, initialFolder, initialMission }: { go(route: string):
           <button onClick={() => go("/settings/api-keys")}>Store an API key</button>
         </section>}
         <Composer settings={settings} models={models} busy={false} disabled={busy || modelsBusy || !running || !models.length} autoFocus disabledShortcuts={a.settings?.disabledShortcuts} cwd={folder}
+          prefill={prefill} onPrefillUsed={() => setPrefill(undefined)}
           autoAvailable={!!a.userSettings.autoRouter} onMission={() => setSettings((s) => ({ ...s, interactionMode: "mission" }))}
           onChange={(p) => setSettings((s) => ({ ...s, ...p }))} onSend={(t, atts) => void start(t, atts)} onStop={() => {}} />
         <div className="chips under">
