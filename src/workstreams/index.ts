@@ -1,6 +1,6 @@
 import type { Session } from "../agent/session.ts";
 import { stepFrom } from "../agent/step.ts";
-import { relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { abortable } from "../core/abort.ts";
 import { zeroUsage, type AutonomyLevel, type ReasoningEffort, type Tool, type ToolContext, type ToolOutput, type TokenUsage } from "../core/types.ts";
 import { loadSettings } from "../storage/settings.ts";
@@ -14,6 +14,7 @@ import { managerFor } from "../worktree/connect.ts";
 import { ErrorCodes, RpcError } from "../protocol/rpc.ts";
 import { WorkstreamStore, listWorkstreamStores, type AgentEntry, type WorkstreamSettings, type WorkstreamMessage, type MessagePriority } from "./store.ts";
 import { approvedWriteScopes, guardMemberWrites, scopedMemberTools } from "./write-scope.ts";
+import { listSharedDocs, readSharedVersion, recordSharedFolder, recordSharedPath, restoreSharedVersion, sharedHistory } from "./shared-history.ts";
 
 export interface WorkstreamConn {
   session(): Session | undefined;
@@ -37,6 +38,39 @@ export function workstreamSettings(cwd: string): WorkstreamSettings {
 }
 
 const nestedAllowed = (store: WorkstreamStore) => store.read().settings.allowNestedSpawn && featureEnabled("nested_workstreams", true);
+
+const strictlyInside = (root: string, path: string) => { const rel = relative(root, path); return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel); };
+/**
+ * Records writes that land in the Workstream shared folder. Recording never changes a tool's own result,
+ * except that the managed shared-history folder is refused.
+ */
+export function wrapSharedRecording(tool: Tool, store: WorkstreamStore, by: string, log?: (text: string) => void): Tool {
+  if (!["Create", "Edit", "Execute", "apply_patch"].includes(tool.name)) return tool;
+  const sharedRoot = store.path("shared"), historyRoot = store.path("shared-history");
+  const record = (run: () => void) => { try { run(); } catch (e) { log?.(`[workstream] shared history: ${(e as Error).message}`); } };
+  return {
+    ...tool,
+    async run(input, ctx) {
+      if (tool.name === "Create" || tool.name === "Edit") {
+        const target = typeof input.path === "string" ? resolve(ctx.cwd, input.path) : undefined;
+        if (target && strictlyInside(historyRoot, target)) return { content: "The shared-history folder is managed by Rigwell. Write files in the shared folder instead.", isError: true };
+        const result = await tool.run(input, ctx);
+        if (!result.isError && target && strictlyInside(sharedRoot, target)) record(() => {
+          const doc = recordSharedPath(sharedRoot, target, by);
+          if (!doc) return;
+          try {
+            const parsed = JSON.parse(result.content);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) result.content = JSON.stringify({ ...parsed, sharedDocument: { path: doc.path, id: doc.id, version: doc.version } });
+          } catch { /* not a JSON result: leave it unchanged */ }
+        });
+        return result;
+      }
+      const result = await tool.run(input, ctx);
+      record(() => recordSharedFolder(sharedRoot, by));
+      return result;
+    },
+  };
+}
 
 function enforceWorkstreamPolicy(store: WorkstreamStore, resuming = false) {
   const p = effectivePolicy().workstreams, w = store.read();
@@ -388,7 +422,7 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
         notify(store, "workstream_agent_status", { agent }); checkBudget(store);
         if (row.machine && store.read().state !== "active") throw new Error("Workstream budget reached; remote member paused");
       },
-    }, row.machine ? { machine: row.machine, sessionId, sharedPath: store.path("shared"), connectMachine: opts.connectMachine } : undefined);
+    }, row.machine ? { machine: row.machine, sessionId, name: row.name, sharedPath: store.path("shared"), connectMachine: opts.connectMachine } : undefined);
     members.set(agentId, member);
     return member;
   }
@@ -455,6 +489,7 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
       const event = store.event("member_write_denied", { agentId: member.agentId, tool: tool.name, paths });
       notify(store, "workstream_updated", { workstream: store.read(), event });
     }));
+    if (store) { const by = member ? member.name : "Lead"; base = base.map((tool) => wrapSharedRecording(tool, store, by, opts.log)); }
     if (!workstreamSettings(conn?.session()?.cwd ?? store?.read().cwd ?? process.cwd()).enabled) return base;
     if (store) { flush(store, member?.agentId ?? "lead"); flushWakes(store, member?.agentId ?? "lead"); }
     const tool = (name: string, description: string, properties: Record<string, unknown>, required: string[], run: (input: Record<string, unknown>, ctx: ToolContext) => Promise<unknown> | unknown): Tool => ({
@@ -538,9 +573,22 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
       if (typeof p.id !== "string" || !/^[a-zA-Z0-9_-]+$/.test(p.id)) throw new RpcError(ErrorCodes.INVALID_PARAMS, "Invalid Workstream id");
       const store = new WorkstreamStore(p.id); if (!store.exists()) throw new RpcError(ErrorCodes.ENTITY_NOT_FOUND, "No such Workstream"); return store;
     };
+    const sharedPath = (p: Record<string, unknown>) => {
+      if (typeof p.path !== "string") throw new RpcError(ErrorCodes.INVALID_PARAMS, "path must be a string");
+      if (p.version !== undefined && (typeof p.version !== "number" || !Number.isSafeInteger(p.version) || p.version < 1)) throw new RpcError(ErrorCodes.INVALID_PARAMS, "version must be a positive integer");
+      return p.path;
+    };
+    const refreshShared = (store: WorkstreamStore) => { try { recordSharedFolder(store.path("shared"), "outside Rigwell"); } catch { /* history refresh must not fail the read */ } };
+    const sharedRpc = <T>(run: () => T): T => {
+      try { return run(); } catch (e) { if (e instanceof RpcError) throw e; throw new RpcError(ErrorCodes.INVALID_PARAMS, (e as Error).message); }
+    };
     return {
       list_workstreams: () => { watches.set(conn, "all"); return { workstreams: listWorkstreamStores().map((s) => ({ ...s.read(), agentCount: s.roster().length })).sort((a, b) => b.updatedAt - a.updatedAt) }; },
       get_workstream: (p: Record<string, unknown>) => { const store = storeOf(p), watch = watches.get(conn); if (watch !== "all") { const ids = watch ?? new Set<string>(); ids.add(store.id); watches.set(conn, ids); } return snapshot(store); },
+      list_shared_documents: (p: Record<string, unknown>) => { const store = storeOf(p); refreshShared(store); return { documents: listSharedDocs(store.path("shared")) }; },
+      get_shared_history: (p: Record<string, unknown>) => { const store = storeOf(p), path = sharedPath(p); refreshShared(store); return sharedRpc(() => sharedHistory(store.path("shared"), path)); },
+      get_shared_version: (p: Record<string, unknown>) => { const store = storeOf(p), path = sharedPath(p), version = p.version as number; refreshShared(store); return sharedRpc(() => readSharedVersion(store.path("shared"), path, version)); },
+      restore_shared_version: (p: Record<string, unknown>) => { const store = storeOf(p), path = sharedPath(p), version = p.version as number; refreshShared(store); const document = sharedRpc(() => restoreSharedVersion(store.path("shared"), path, version, "user")); notify(store, "workstream_updated", { workstream: store.read() }); return { document }; },
       pause_workstream: (p: Record<string, unknown>) => pause(storeOf(p).id),
       resume_workstream: (p: Record<string, unknown>) => resume(storeOf(p).id, p),
       archive_workstream: (p: Record<string, unknown>) => { if (p.cleanupWorktrees !== undefined && typeof p.cleanupWorktrees !== "boolean") throw new RpcError(ErrorCodes.INVALID_PARAMS, "cleanupWorktrees must be boolean"); return archiveWorkstream(storeOf(p).id, p.cleanupWorktrees === true); },

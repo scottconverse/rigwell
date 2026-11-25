@@ -1283,3 +1283,5 @@ them into the loop. Each index.ts starts with an "Integration" comment.
 548. **Release the desktop interface work and Mission fixes as Windows 0.4.5 on the owner's order.** Publish the known limits with the release: Mission token use still varies widely in real runs, and the earlier React update-depth error has no known cause. Linux and macOS remain at 0.4.0.
 
 549. **Release the Mission handoff-text fix as Windows 0.4.6 on the owner's order.** Publish the known limit that token use after the fix is not yet measured.
+
+550. **Keep a version history of the workstream shared folder.** Every saved file in a shared folder records an id, a version and who wrote it, with the content kept beside the folder so an older version can be viewed or restored. A restore adds a new version rather than rewriting history, and files too large to copy keep the entry alone. The lead, members and remote members record writes as they happen, and other edits are picked up when the history is opened.

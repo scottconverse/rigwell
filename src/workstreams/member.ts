@@ -22,7 +22,7 @@ export class MemberSession {
   get view(): MemberView | undefined { return this.remote?.view ?? this.connection.session; }
   private sequence = 0;
   private pending = new Map<string, { resolve(v: any): void; reject(e: Error): void }>();
-  constructor(host: MemberHost, log?: (m: string) => void, maxAutonomy?: AutonomyLevel, limits: MemberLimits = {}, remote?: { machine: string; sessionId: string; sharedPath?: string; connectMachine?: ConnectionOptions["connectMachine"] }) {
+  constructor(host: MemberHost, log?: (m: string) => void, maxAutonomy?: AutonomyLevel, limits: MemberLimits = {}, remote?: { machine: string; sessionId: string; name?: string; sharedPath?: string; connectMachine?: ConnectionOptions["connectMachine"] }) {
     if (remote) this.remote = new RemoteMemberClient(host, remote, maxAutonomy ?? "off", limits, log);
     this.connection = createConnection((line) => {
       for (const text of line.split("\n").filter(Boolean)) {

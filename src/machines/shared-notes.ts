@@ -16,7 +16,7 @@ const realTarget = (path: string): string => {
 const inside = (root: string, path: string) => { const rel = relative(root, path); return !rel.startsWith("..") && !isAbsolute(rel); };
 export class SharedNotes {
   private reads = new Map<string, FileReadRecord>();
-  constructor(readonly root: string, private sessionId: string, private allowed?: string[]) {}
+  constructor(readonly root: string, private sessionId: string, private allowed?: string[], private onWrite?: (absPath: string) => void) {}
   async run(name: unknown, input: unknown) {
     if (typeof name !== "string" || !["Read", "Create", "Edit"].includes(name) || this.allowed && !this.allowed.includes(name)) throw new Error("Shared note tool is unavailable");
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid shared note request");
@@ -24,6 +24,10 @@ export class SharedNotes {
     if (typeof p.path !== "string" || !isAbsolute(p.path) || !inside(resolve(this.root), resolve(p.path)) || !inside(realpathSync(this.root), realTarget(resolve(p.path)))) throw new Error("Shared note path must remain inside the approved shared folder");
     const tool = name === "Read" ? createReadTool() : name === "Create" ? createCreateTool() : createEditTool();
     const ctx: ToolContext = { cwd: this.root, sessionId: this.sessionId, readFiles: this.reads, signal: new AbortController().signal };
-    return tool.run(p, ctx);
+    const result = await tool.run(p, ctx);
+    if (!result.isError && (name === "Create" || name === "Edit")) {
+      try { this.onWrite?.(resolve(p.path)); } catch { /* recording must not change the tool result */ }
+    }
+    return result;
   }
 }
