@@ -6,6 +6,7 @@ import { DaemonConn, RpcFailure } from "../lib/rpc.ts";
 import { SessionController, type Prompt } from "../lib/session.ts";
 import { Dialog } from "./Dialogs.tsx";
 import { Prompts } from "./Prompts.tsx";
+import { SharedFiles } from "./SharedFiles.tsx";
 import { live } from "./SessionScreen.tsx";
 
 interface Detail { workstream: Workstream; roster: AgentEntry[]; messages: WorkstreamMessage[]; events: WorkstreamEvent[]; pendingPrompts: (Omit<Prompt, "resolve"> & { agentId: string })[] }
@@ -90,6 +91,7 @@ export function Workstreams({ id, go }: { id?: string; go(route: string): void }
           <p className="small" key={event.id}>Write denied: {Array.isArray(event.paths) ? event.paths.join(", ") : "outside the approved assignment"}</p>)}
         <div className="row"><button onClick={() => void open(r)}>Open transcript</button><button disabled={archived || r.status === "archived"} onClick={() => { setText(""); setMessageTo(r); }}>Message</button><button disabled={archived || r.status === "archived"} onClick={() => void act("workstream_interrupt", { agentId: r.agentId })}>Interrupt</button><button disabled={r.status === "archived"} onClick={() => { setCleanup(false); setArchive(r); }}>Archive</button></div>
       </li>)}</ul>
+      {id && <SharedFiles conn={conn.current} id={id} refresh={detail} />}
       {!!detail.pendingPrompts.length && <section aria-label="Member prompts"><h2>Waiting for your answer</h2><Prompts prompts={detail.pendingPrompts.map((p) => ({ ...p, resolve() {} }))} onAnswer={(requestId, answer) => { const p = detail.pendingPrompts.find((p) => p.requestId === requestId)!; void act("workstream_answer_request", { agentId: p.agentId, requestId, answer }); }} /></section>}
       <h2>Messages</h2><ol aria-label="Message timeline">{detail.messages.map((m) => <li key={m.id}><strong>{detail.roster.find((r) => r.agentId === m.from)?.name ?? m.from} to {detail.roster.find((r) => r.agentId === m.to)?.name ?? m.to}</strong> <span className="muted small">{m.priority} · {workstreamMessageStatus(m)}</span><p className="pre-wrap">{m.text}</p></li>)}</ol>
       <p className="muted">Before merging member branches, ask the lead to use the built-in overlap-check skill.</p>
