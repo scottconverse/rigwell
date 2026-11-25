@@ -45,6 +45,18 @@ test("accounting groups exact own usage, costs, tools and turn times without cou
   } finally { env.cleanup(); }
 });
 
+test("badges count only the user's own sessions, skipping automation, workstream members and hidden context", async () => {
+  const env = tmpEnv(), cwd = join(env.root, "project"); mkdirSync(cwd);
+  try {
+    const mine = createSession({ id: "mine", cwd }), auto = createSession({ id: "auto", cwd }), member = createSession({ id: "member", cwd });
+    await appendMessage(mine, { id: "u1", role: "user", content: [{ type: "text", text: "A real prompt." }] }, null);
+    await appendMessage(auto, { id: "context-t1", role: "user", visibility: "llm_only", content: [{ type: "text", text: "hidden context" }] }, null);
+    await appendMessage(auto, { id: "u2", role: "user", userMessageSource: "automation", content: [{ type: "text", text: "A scheduled run." }] }, null);
+    await appendMessage(member, { id: "workstream-initial-a1", role: "user", content: [{ type: "text", text: "Join the workstream." }] }, null);
+    const stats = readAnalytics().stats; expect(stats.sessions).toBe(1); expect(stats.badges.length).toBe(4);
+  } finally { env.cleanup(); }
+});
+
 test("incremental metrics wait for complete lines, shrink safely and exclude uncertain old fork history", () => {
   const env = tmpEnv();
   try {
