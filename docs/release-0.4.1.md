@@ -1,6 +1,6 @@
 # Rigwell 0.4.1: Windows approval and Workstream recovery fixes
 
-Historical Windows release: **0.4.1**. See [0.5.0](release-0.5.0.md) for the current Windows release. Linux and macOS distributions remain at
+Historical Windows release: **0.4.1**. See [0.5.1](release-0.5.1.md) for the current Windows release. Linux and macOS distributions remain at
 **0.4.0**. This maintenance patch preserves the existing UI, local Session
 loop, Missions, Workstreams and configured model connections.
 

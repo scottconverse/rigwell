@@ -8,7 +8,7 @@ builds do not automatically contact the public feed.
 Generate metadata only after signing, using the final uploaded bytes:
 
 ```powershell
-bun desktop/packaging/prepare-feed.ts win32 0.5.0 C:/release/rigwell-setup-0.5.0-x64.exe
+bun desktop/packaging/prepare-feed.ts win32 0.5.1 C:/release/rigwell-setup-0.5.1-x64.exe
 bun desktop/packaging/prepare-feed.ts darwin 0.1.0 /release/rigwell-0.1.0-arm64.zip /release/rigwell-0.1.0-arm64.dmg
 bun desktop/packaging/prepare-feed.ts linux 0.1.0 /release/rigwell-0.1.0-x64.AppImage
 ```
@@ -21,7 +21,7 @@ reuse unsigned metadata or blockmaps after signing. Generate a new Windows
 blockmap from the final signed installer with the bundled app-builder binary:
 
 ```powershell
-& desktop/node_modules/app-builder-bin/win/x64/app-builder.exe blockmap --input=C:/release/rigwell-setup-0.5.0-x64.exe --output=C:/release/rigwell-setup-0.5.0-x64.exe.blockmap
+& desktop/node_modules/app-builder-bin/win/x64/app-builder.exe blockmap --input=C:/release/rigwell-setup-0.5.1-x64.exe --output=C:/release/rigwell-setup-0.5.1-x64.exe.blockmap
 ```
 
 The Linux tarball contains exactly one regular `Rigwell.AppImage`. Prepare,
@@ -84,10 +84,10 @@ restarts the app.
 
 ## Current published platform versions
 
-Windows uses 0.5.0. Its `latest.yml` and blockmap are generated from the final
+Windows uses 0.5.1. Its `latest.yml` and blockmap are generated from the final
 signed installer, not the unsigned packaging output. The release includes
 SHA256SUMS.txt, the signing receipt and release-acceptance.json. See
-[0.5.0 release notes](release-0.5.0.md) for exact source and installed evidence.
+[0.5.1 release notes](release-0.5.1.md) for exact source and installed evidence.
 Linux and macOS remain at 0.4.0. The latest release carries their 0.4.0 feed
 metadata with absolute links to the existing immutable 0.4.0 assets; versions,
 hashes, lengths and Linux signatures remain unchanged. A 0.4.0 installation on
