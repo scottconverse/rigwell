@@ -32,7 +32,9 @@ files. The lead handles commands, integration and any additional writes. The
 roster shows the approved files and recent denied writes. The lead can use its
 signed-in client. Scoped members require a direct model adapter and a local
 worktree. When the default model is a signed-in client, Rigwell swaps in a
-direct model. When no direct model is set up, it refuses with a clear message.
+direct model. It uses `workstreams.defaultMemberModel` from your settings when
+that is a direct model, and otherwise the first direct model in your model
+list. When no direct model is set up, it refuses with a clear message.
 Existing proposals without structured assignments use the original
 member permissions.
 
