@@ -1,9 +1,9 @@
 # Road to full parity with Factory's CLI and desktop app
 
 Updated 2026-11-17. This preserves the approved build order and individually
-recorded implementation/acceptance status. Windows maintenance release **0.5.0**;
+recorded implementation/acceptance status. Windows maintenance release **0.5.1**;
 Linux/macOS distributions remain **0.4.0**. The latest user documentation is
-[the manual](../user-manual.md) and [0.5.0 notes](../release-0.5.0.md).
+[the manual](../user-manual.md) and [0.5.1 notes](../release-0.5.1.md).
 Do not restart completed items or expand the current task from this historical
 list. Remaining quality or external-account limits stay explicit below.
 
