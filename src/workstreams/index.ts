@@ -13,6 +13,8 @@ import { budgetFrom, MemberAdmission, pricesFor, reached, usageTotals } from "./
 import { managerFor } from "../worktree/connect.ts";
 import { ErrorCodes, RpcError } from "../protocol/rpc.ts";
 import { WorkstreamStore, listWorkstreamStores, type AgentEntry, type WorkstreamSettings, type WorkstreamMessage, type MessagePriority } from "./store.ts";
+import { findModel } from "../storage/models.ts";
+import { modelListFor } from "../daemon/connection.ts";
 import { approvedWriteScopes, guardMemberWrites, scopedMemberTools } from "./write-scope.ts";
 import { beginSharedWrite, endSharedWrite, listSharedDocs, readSharedVersion, recordSharedFolder, recordSharedPath, restoreSharedVersion, sharedHistory, sharedWritesActive } from "./shared-history.ts";
 
@@ -364,12 +366,15 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
   }
   function openMember(store: WorkstreamStore, row: AgentEntry) {
     const { agentId, sessionId, autonomyLevel: level } = row, w = store.read();
+    let lastError = "";
     memberStores.set(sessionId, store);
     const member = new MemberSession({
       tools: (tools) => toolsFor(sessionId, tools),
       notify: (n) => {
         const current = member.view;
         if (current) observe(current, n);
+        if (n.type === "agent_working_state_changed" && n.newState === "thinking") lastError = "";
+        if (n.type === "error" && typeof n.message === "string") lastError = n.message;
         const step = stepFrom(n);
         if (step !== undefined && step !== (store.agent(agentId)?.currentStep ?? "")) {
           notify(store, "workstream_agent_status", { agent: store.updateAgent(agentId, { currentStep: step || undefined }) });
@@ -384,7 +389,9 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
           const messages = s?.uiMessages() ?? [];
           const last = [...messages].reverse().find((m) => m.role === "assistant");
           const summary = Array.isArray(last?.content) ? last.content.filter((c) => c.type === "text").map((c: any) => c.text).join("\n").slice(0, 2000) : "";
-          updateStatus(store, agentId, n.reason === "completed" ? "idle" : n.reason === "cancelled" ? "interrupted" : "failed", { lastSummary: summary });
+          // A turn that threw before producing text keeps the session error visible instead of an empty summary.
+          const summaryText = summary || (n.reason !== "completed" ? lastError.slice(0, 2000) : "");
+          updateStatus(store, agentId, n.reason === "completed" ? "idle" : n.reason === "cancelled" ? "interrupted" : "failed", { lastSummary: summaryText });
           listeners.emit(store, "agent_turn_completed", { agentId, name: store.agent(agentId)!.name, reason: n.reason });
         }
         notify(store, "workstream_member_notification", { agentId, sessionId, notification: n });
@@ -450,7 +457,19 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
     }
     if (input.tools !== undefined && (!Array.isArray(input.tools) || !input.tools.every((x) => typeof x === "string"))) throw new Error("tools must be an array of tool names");
     const agentId = crypto.randomUUID(), sessionId = crypto.randomUUID();
-    const model = typeof input.model === "string" ? input.model : w.settings.defaultMemberModel ?? lead.settings.modelId;
+    const chosenModel = typeof input.model === "string" ? input.model : w.settings.defaultMemberModel ?? lead.settings.modelId;
+    let model = chosenModel, modelNote: string | undefined;
+    if (scope) {
+      const models = modelListFor(cwd);
+      if (findModel(models, chosenModel)?.executionBackend) {
+        const configured = w.settings.defaultMemberModel ? findModel(models, w.settings.defaultMemberModel) : undefined;
+        const direct = configured && !configured.executionBackend ? configured : models.find((m) => !m.executionBackend);
+        if (!direct) throw new Error("A member with approved write files needs a direct model. The signed-in client cannot keep a member to its approved files. Add a direct model (an API key or a local or cloud model server) in Settings, Models.");
+        model = direct.id;
+        modelNote = `The signed-in client cannot keep a member to its approved files, so this member uses ${direct.displayName} instead.`;
+        store.event("member_model_swapped", { agentId, from: chosenModel, to: model });
+      }
+    }
     const reasoningEffort = (typeof input.reasoningEffort === "string" ? input.reasoningEffort : w.settings.defaultMemberReasoningEffort ?? lead.settings.reasoningEffort) as ReasoningEffort;
     const row: AgentEntry = { agentId, sessionId, name, role, cwd, model, reasoningEffort, autonomyLevel: level, status: "starting", startedAt: Date.now(), lastActivityAt: Date.now(), tokens: 0, costUsd: 0, depth: parent ? parent.depth + 1 : 1, ...(parent ? { parentAgentId: parent.agentId } : {}) };
     if (machine) row.machine = machine;
@@ -476,7 +495,7 @@ export function createWorkstreamService(opts: { log?: (text: string) => void; re
       const agent = store.updateAgent(agentId, { cwd: actual.cwd, ...(meta?.path ? { worktreePath: meta.path, branch: meta.branch } : {}) });
       store.event("agent_spawned", { agentId, sessionId }); notify(store, "workstream_agent_status", { agent });
       await member.call("add_user_message", { text: row.initialPrompt, messageId: `workstream-initial-${agentId}` });
-      return { agentId, sessionId, ...(agent.worktreePath ? { worktreePath: agent.worktreePath } : {}) };
+      return { agentId, sessionId, ...(agent.worktreePath ? { worktreePath: agent.worktreePath } : {}), ...(modelNote ? { modelNote } : {}) };
     } catch (e) {
       updateStatus(store, agentId, "failed", { lastSummary: (e as Error).message });
       members.delete(agentId); memberStores.delete(sessionId); await member.close(); throw e;
