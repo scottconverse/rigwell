@@ -1,7 +1,7 @@
 // One client connection = one session (spec §3.1.4 default). Maps protocol methods to a Session.
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import type { AutonomyLevel, CommandLists, InteractionMode, Message, ReasoningEffort, Tool } from "../core/types.ts";
+import type { AutonomyLevel, CommandLists, InteractionMode, Message, ModelConfig, ReasoningEffort, Tool } from "../core/types.ts";
 import { ErrorCodes, METHOD_PREFIX, RpcError, RpcPeer } from "../protocol/rpc.ts";
 import { Session, SessionBusyError, type SessionHost, type SessionSettings } from "../agent/session.ts";
 import { applyCompaction } from "../agent/compaction.ts";
@@ -10,7 +10,7 @@ import { parseFallbackModels } from "../agent/fallback-config.ts";
 import { featureEnabled } from "../features/features.ts";
 import { autonomyAllowed, clampAutonomy, modelAllowed } from "../storage/org.ts";
 import { handoffBrief, isHandoffId, loadHandoff } from "../agent/handoff.ts";
-import { hasProjectConfig, isFolderTrusted, loadSettings, trustFolder } from "../storage/settings.ts";
+import { hasProjectConfig, isFolderTrusted, loadSettings, trustFolder, type RigwellSettings } from "../storage/settings.ts";
 import { findModel, listModelInfo, resolveModels, validateCustomModels } from "../storage/models.ts";
 import { appendAnalyticsMetric, appendCompaction, appendMessage, appendTitle, appendTodoState, appendTurnOutcome, createSession, findSession, loadTranscript, readMessageTimes, type SessionFiles } from "../storage/transcript.ts";
 import { listSessionEntries, searchSessions } from "../storage/session-list.ts";
@@ -93,6 +93,18 @@ function pick<T extends string>(v: unknown, allowed: string[], name: string): T 
 
 const SHELL = Bun.which("bash") ? "bash" : "sh";
 
+/** Models that pass org modelPolicy (spec 12.2). */
+function selectModels(s: RigwellSettings): ModelConfig[] {
+  return resolveModels(s).filter((m) => modelAllowed(s.modelPolicy, [m.id, m.model], false));
+}
+
+/** The model list a session in this folder loads: the same settings merge, trust rules and org modelPolicy as environment(). */
+export function modelListFor(cwd: string, runtimeSettingsPath?: string): ModelConfig[] {
+  const user = loadSettings({ cwd, runtimeSettingsPath, trusted: false }).settings;
+  const s = loadSettings({ cwd, runtimeSettingsPath, trusted: isFolderTrusted(cwd, user.trustedFolders) }).settings;
+  return selectModels(s);
+}
+
 /** One limit tracker per process, shared by every connection (spec 5.9 Limits). Settings `subagentLimits` set it on first use. */
 let processLimits: TaskLimits | undefined;
 const limitsFor = (s: Record<string, unknown>) => (processLimits ??= new TaskLimits((s.subagentLimits as any) ?? {}));
@@ -165,7 +177,7 @@ export function createConnection(write: (line: string) => void, opts: Connection
     const s = loaded.settings;
     // Org modelPolicy: blocked and not-allowed models disappear from the picker and cannot be selected (spec 12.2).
     // allowCustomModels=false already removed the lower levels' customModels when the settings were merged (storage/org.ts).
-    const models = resolveModels(s).filter((m) => modelAllowed(s.modelPolicy, [m.id, m.model], false));
+    const models = selectModels(s);
     const lists: CommandLists = {
       allow: s.commandAllowlist ?? DEFAULT_COMMAND_LISTS.allow,
       deny: s.commandDenylist ?? DEFAULT_COMMAND_LISTS.deny,
