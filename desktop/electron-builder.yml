@@ -49,8 +49,12 @@ mac:
 dmg:
   title: Rigwell ${version}
 win:
+  # Smart App Control blocks every unsigned exe and dll, so dlls are signed too (packaging/sign-civiccast.cjs).
+  signExts: [".dll", ".node"]
   signtoolOptions:
     publisherName: Scott Converse
+    sign: packaging/sign-civiccast.cjs
+    signingHashAlgorithms: [sha256]
   icon: assets/icon.ico
   target: [nsis]
   artifactName: rigwell-setup-${version}-${arch}.${ext}

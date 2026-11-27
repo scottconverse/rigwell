@@ -95,12 +95,14 @@ export function Home({ go, initialFolder, initialDraft, initialMission }: { go(r
         <h1 className="home-title">{settings.interactionMode === "mission" ? "What should the mission do?" : "What should we work on?"}</h1>
         {!running && <div className="banner warn" role="status">{a.daemon.state === "failed" ? `The background service could not start. ${a.daemon.error ?? ""}` : `Background service: ${a.daemon.state}`}
           {a.daemon.state === "failed" && <button onClick={() => void bridge().daemon.restart()}>Try again</button>}</div>}
-        {running && !machine && !a.models.length && <section aria-label="Connect a model" className="banner">
+        {running && !machine && !a.models.length && <section aria-label="Connect a model" className="banner connect">
           <Accounts setup onSignedIn={() => { void app.refresh(); }} />
           <h3>API key or local model</h3>
           <p className="muted small">After connecting an account, configure a model to use it. You can also use a provider API key or a local server.</p>
-          <button onClick={() => go("/settings/custom-models")}>Configure a model</button>
-          <button onClick={() => go("/settings/api-keys")}>Store an API key</button>
+          <div className="connect-actions">
+            <button onClick={() => go("/settings/custom-models")}>Configure a model</button>
+            <button onClick={() => go("/settings/api-keys")}>Store an API key</button>
+          </div>
         </section>}
         <Composer settings={settings} models={models} busy={false} disabled={busy || modelsBusy || !running || !models.length} autoFocus disabledShortcuts={a.settings?.disabledShortcuts} cwd={folder}
           prefill={prefill} onPrefillUsed={() => setPrefill(undefined)}
