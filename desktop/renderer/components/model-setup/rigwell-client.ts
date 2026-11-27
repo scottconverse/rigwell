@@ -19,6 +19,8 @@ export interface ModelSetupHost {
   request<T = any>(method: string, params?: Record<string, unknown>): Promise<T>;
   settings(): Record<string, any>;
   updateSettings(patch: Record<string, unknown>): Promise<unknown>;
+  /** Re-read the stored user settings and wait for them; `settings()` must see the new copy. */
+  refreshUserSettings(): Promise<unknown>;
   refresh(): Promise<unknown>;
 }
 
@@ -173,9 +175,10 @@ export function createModelSetupClient(host: ModelSetupHost): ModelSetupClient {
           ...(choice.apiKeySecretName ? { apiKey: `${KEYCHAIN_SECRET}${secretNameFor(choice.apiKeySecretName)}` } : {}),
         });
       }
-      // Read the settings again right before writing: another pick may have
-      // landed since this screen loaded.
-      await host.refresh();
+      // Re-read the stored settings and wait for the copy: another window may
+      // have saved a pick since this screen loaded, and writing the old list
+      // would drop it. `refresh()` returns before its settings read lands.
+      await host.refreshUserSettings();
       const list = currentEntries(host);
       const index = list.findIndex((item) => entryKey(item) === entryKey(entry));
       let status: SaveChoiceResult["status"] = "saved";
@@ -194,6 +197,7 @@ export function createModelSetupClient(host: ModelSetupHost): ModelSetupClient {
         next = [...list, entry];
       }
       if (status === "saved") await host.updateSettings({ customModels: next });
+      await host.refresh();
       return { status };
     },
 

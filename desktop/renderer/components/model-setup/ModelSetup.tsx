@@ -9,6 +9,7 @@ const client = createModelSetupClient({
   request: (method, params) => app.request(method, params),
   settings: () => app.getSnapshot().userSettings,
   updateSettings: (patch) => app.updateUserSettings(patch),
+  refreshUserSettings: () => app.refreshUserSettings(),
   refresh: () => app.refresh(),
 });
 

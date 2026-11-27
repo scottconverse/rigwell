@@ -19,6 +19,7 @@ function fakeHost(initial: Record<string, any>[] = []) {
     },
     settings: () => state.userSettings,
     updateSettings: async (patch) => { writes.push(patch); state.userSettings = { ...state.userSettings, ...patch }; return state.userSettings; },
+    refreshUserSettings: async () => {},
     refresh: async () => { refreshes += 1; },
   };
   return { host, state, writes, refreshes: () => refreshes };
@@ -114,6 +115,33 @@ describe("saveChoice writes Rigwell custom models", () => {
       kind: "connection", name: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt",
     });
     expect(saved(state)).toHaveLength(2);
+  });
+
+  test("settings are re-read before the write, so a pick another window added is kept", async () => {
+    // A is on screen; B lands from another window between load and save.
+    const { host, state } = fakeHost([
+      { provider: "anthropic", executionBackend: "claude-cli", model: "opus" },
+    ]);
+    let reads = 0;
+    host.refreshUserSettings = async () => {
+      if (reads++ > 0) return;
+      state.userSettings = {
+        customModels: [
+          ...(state.userSettings.customModels as Record<string, any>[]),
+          { provider: "openai", executionBackend: "codex-cli", model: "gpt-5-codex" },
+        ],
+      };
+    };
+
+    const outcome = await createModelSetupClient(host).saveChoice({
+      kind: "local", baseUrl: "http://127.0.0.1:1234/v1", model: "qwen3-8b",
+    });
+
+    expect(outcome).toEqual({ status: "saved" });
+    expect(reads).toBe(1);
+    const models = saved(state).map((entry) => entry.model);
+    expect(models).toEqual(expect.arrayContaining(["opus", "gpt-5-codex", "qwen3-8b"]));
+    expect(models).toHaveLength(3);
   });
 
   test("the same provider, base URL and model is kept once", async () => {

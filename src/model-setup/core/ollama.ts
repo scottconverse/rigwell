@@ -1,4 +1,4 @@
-// Copied from model-setup-kit 204ad42. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 86139b5. Do not edit here; change the kit and copy again.
 /*
   Ollama: is it running, and the optional "ollama signin" flow.
 
@@ -165,18 +165,24 @@ export class OllamaSignIn {
 
   /** End the child and anything it started. Windows needs taskkill for the tree. */
   private killTree(pid: number | undefined, child: SpawnedChild): void {
+    const killDirectly = () => {
+      try {
+        child.kill();
+      } catch {
+        /* already gone */
+      }
+    };
     if (pid && this.platform === "win32") {
       try {
         const killer = this.spawnFn("taskkill", ["/PID", String(pid), "/T", "/F"], {
           windowsHide: true,
           stdio: "ignore",
         });
-        killer.on("error", () => {
-          try {
-            child.kill();
-          } catch {
-            /* already gone */
-          }
+        // taskkill can fail (access denied, a stale pid): the child itself must
+        // still be asked to stop, or the process outlives the screen.
+        killer.on("error", killDirectly);
+        killer.on("exit", (code: unknown) => {
+          if (code !== 0) killDirectly();
         });
         return;
       } catch {
@@ -190,9 +196,12 @@ export class OllamaSignIn {
     }
   }
 
+  /**
+   * Record the verdict. This does not mark the child exited: only its own
+   * `exit` event (or a kill that could not deliver) proves it is gone.
+   */
   private settle(row: Active, status: OllamaSignInStatus, detail: string): void {
     row.final = true;
-    row.exited = true;
     row.status = status;
     row.detail = detail;
     if (row.limitTimer) clearTimeout(row.limitTimer);
@@ -257,11 +266,15 @@ export class OllamaSignIn {
     child.stdout?.on("data", read);
     child.stderr?.on("data", read);
     child.on("error", () => {
+      // The process never ran, so it is gone for sure.
+      row.exited = true;
       if (row.final) return;
       this.settle(row, "failed", OLLAMA_SIGNIN_START_FAILED);
       notify();
     });
     child.on("exit", (code) => {
+      // Only this event proves the child is gone; a new start must wait for it.
+      row.exited = true;
       // A cancel, a link-wait timeout or the overall limit already decided.
       if (row.final) return;
       if (code === 0) {

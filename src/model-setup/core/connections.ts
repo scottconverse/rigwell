@@ -1,17 +1,27 @@
-// Copied from model-setup-kit 204ad42. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 86139b5. Do not edit here; change the kit and copy again.
 /*
   Custom OpenAI-compatible connections: input rules, model discovery and the
   explicit Test call. Timeouts, prompt and response excerpt copy the product
   this kit was extracted from. The API key never appears in a result.
 */
 
-import { defaultFetch, fetchWithTimeout, joinEndpoint, type FetchLike } from "./util.ts";
+import {
+  MAX_BODY_BYTES,
+  defaultFetch,
+  fetchBodyWithTimeout,
+  joinEndpoint,
+  type FetchLike,
+} from "./util.ts";
 
 /** Shown instead of following a redirect: the URL the caller saved must be final. */
 export const CONNECTION_REDIRECT_MESSAGE =
   "The service answered with a redirect; use its final address.";
 
-const MAX_ERROR_BODY_BYTES = 64 * 1024;
+/** Shown when the answer passed the body cap, so it was not read in full. */
+export const CONNECTION_TOO_MUCH_DATA_MESSAGE = "The service sent too much data.";
+
+const DISCOVER_TIMEOUT_MS = 10_000;
+const TEST_TIMEOUT_MS = 20_000;
 
 const isRedirect = (status: number): boolean => status >= 300 && status < 400;
 
@@ -52,23 +62,24 @@ export function normalizeConnection(input: ConnectionInput): NormalizedConnectio
 /** The model ids a server lists under `GET <baseUrl>/models`. */
 export async function discoverModels(
   connection: Pick<NormalizedConnection, "baseUrl" | "apiKey">,
-  options: { fetchFn?: FetchLike } = {},
+  options: { fetchFn?: FetchLike; timeoutMs?: number } = {},
 ): Promise<string[]> {
   const fetchFn = options.fetchFn ?? defaultFetch;
   const headers: Record<string, string> = { Accept: "application/json" };
   if (connection.apiKey) headers.Authorization = `Bearer ${connection.apiKey}`;
-  const response = await fetchWithTimeout(
+  const response = await fetchBodyWithTimeout(
     fetchFn,
     joinEndpoint(connection.baseUrl, "models"),
     { headers, redirect: "manual" },
-    10_000,
+    options.timeoutMs ?? DISCOVER_TIMEOUT_MS,
   );
   if (isRedirect(response.status)) throw new Error(CONNECTION_REDIRECT_MESSAGE);
   if (!response.ok) {
     const detail = await providerResponseDetail(response, connection.apiKey);
     throw new Error(`${safeError(response.status)}${detail ? `\n\n${detail}` : ""}`);
   }
-  return parseDiscoveredModels(await response.json());
+  if (response.truncated) throw new Error(CONNECTION_TOO_MUCH_DATA_MESSAGE);
+  return parseDiscoveredModels(JSON.parse(response.text));
 }
 
 export type TestedCapabilities = {
@@ -87,7 +98,7 @@ export type ConnectionTestResult = {
 /** Explicitly invoked only. It sends one short prompt and never includes the key. */
 export async function testConnection(
   connection: Pick<NormalizedConnection, "baseUrl" | "modelId" | "apiKey">,
-  options: { fetchFn?: FetchLike } = {},
+  options: { fetchFn?: FetchLike; timeoutMs?: number } = {},
 ): Promise<ConnectionTestResult> {
   const fetchFn = options.fetchFn ?? defaultFetch;
   if (!connection.modelId) {
@@ -105,7 +116,7 @@ export async function testConnection(
   };
   if (connection.apiKey) headers.Authorization = `Bearer ${connection.apiKey}`;
   try {
-    const response = await fetchWithTimeout(
+    const response = await fetchBodyWithTimeout(
       fetchFn,
       joinEndpoint(connection.baseUrl, "chat/completions"),
       {
@@ -120,7 +131,7 @@ export async function testConnection(
           max_tokens: 128,
         }),
       },
-      20_000,
+      options.timeoutMs ?? TEST_TIMEOUT_MS,
     );
     if (isRedirect(response.status)) {
       return {
@@ -139,7 +150,15 @@ export async function testConnection(
         latencyMs: Date.now() - started,
       };
     }
-    const body = await response.json();
+    if (response.truncated) {
+      return {
+        ok: false,
+        message: CONNECTION_TOO_MUCH_DATA_MESSAGE,
+        capabilities: inferCapabilities(null),
+        latencyMs: Date.now() - started,
+      };
+    }
+    const body: unknown = JSON.parse(response.text);
     const capabilities = inferCapabilities(body);
     const answered = hasAssistantText(body);
     const record = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
@@ -249,13 +268,14 @@ export function providerErrorDetail(body: unknown, apiKey?: string | null): stri
 /**
  * A provider's error message when the body is JSON, otherwise only the status
  * line: an HTML error page or a stack trace is never shown back to the screen.
+ * The body arrives already capped by `fetchBodyWithTimeout`.
  */
 export async function providerResponseDetail(
-  response: { status: number; statusText?: string; text(): Promise<string> },
+  response: { status: number; statusText?: string; text: string },
   apiKey?: string | null,
 ): Promise<string> {
   const statusLine = `${`HTTP ${response.status}`.trim()}${response.statusText ? ` ${response.statusText}` : ""}`;
-  const text = (await response.text().catch(() => "")).slice(0, MAX_ERROR_BODY_BYTES);
+  const text = response.text.slice(0, MAX_BODY_BYTES);
   try {
     return providerErrorDetail(JSON.parse(text), apiKey) || statusLine;
   } catch {

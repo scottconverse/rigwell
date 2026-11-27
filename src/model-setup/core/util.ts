@@ -1,5 +1,13 @@
-// Copied from model-setup-kit 204ad42. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 86139b5. Do not edit here; change the kit and copy again.
 /** Shared helpers for the core. Node built-ins only; no runtime dependencies. */
+
+/** The streaming part of a `fetch` response body. */
+export type BodyReaderLike = {
+  read(): Promise<{ done: boolean; value?: Uint8Array }>;
+  cancel(reason?: unknown): Promise<unknown>;
+};
+
+export type BodyStreamLike = { getReader(): BodyReaderLike };
 
 /** The small part of `fetch`'s response this kit reads. */
 export type FetchResponseLike = {
@@ -7,6 +15,7 @@ export type FetchResponseLike = {
   status: number;
   statusText?: string;
   headers: { get(name: string): string | null };
+  body?: BodyStreamLike | null;
   json(): Promise<unknown>;
   text(): Promise<string>;
 };
@@ -41,24 +50,119 @@ export async function withTimeout<T>(promise: Promise<T>, ms: number, label = "t
   }
 }
 
+/** No response body read here may exceed this many bytes. */
+export const MAX_BODY_BYTES = 64 * 1024;
+
+export type BodyReadResult = {
+  text: string;
+  /** True when the body went past the cap and reading stopped there. */
+  truncated: boolean;
+};
+
 /**
- * Like `withTimeout`, but also aborts the request at the deadline so a hung
- * connection cannot keep reading after the screen gave up.
+ * Read a response body but never more than `maxBytes`: a server that streams
+ * without end cannot keep the caller waiting or fill memory. The stream is
+ * cancelled as soon as the cap is reached.
  */
-export async function fetchWithTimeout(
+export async function readBodyCapped(
+  response: { body?: BodyStreamLike | null; text(): Promise<string> },
+  options: { maxBytes?: number; onReader?: (reader: BodyReaderLike) => void } = {},
+): Promise<BodyReadResult> {
+  const maxBytes = options.maxBytes ?? MAX_BODY_BYTES;
+  const body = response.body;
+  if (!body || typeof body.getReader !== "function") {
+    const whole = await response.text().catch(() => "");
+    const text = whole.slice(0, maxBytes);
+    return { text, truncated: text.length < whole.length };
+  }
+  const reader = body.getReader();
+  options.onReader?.(reader);
+  const decoder = new TextDecoder();
+  let text = "";
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return { text: text + decoder.decode(), truncated: false };
+    if (!value || value.length === 0) continue;
+    const room = maxBytes - received;
+    if (value.length > room) {
+      text += decoder.decode(value.subarray(0, room), { stream: true });
+      await reader.cancel().catch(() => undefined);
+      return { text: text + decoder.decode(), truncated: true };
+    }
+    text += decoder.decode(value, { stream: true });
+    received += value.length;
+    if (received >= maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      return { text: text + decoder.decode(), truncated: true };
+    }
+  }
+}
+
+export type FetchBodyResult = {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  headers: { get(name: string): string | null };
+  text: string;
+  truncated: boolean;
+};
+
+/**
+ * Fetch and read the body under one deadline: a server that sends headers and
+ * then stalls still times out. Aborts the request and cancels the body reader
+ * at the deadline, so nothing keeps reading after the caller gave up.
+ */
+export async function fetchBodyWithTimeout(
   fetchFn: FetchLike,
   url: string,
   init: FetchInit,
   ms: number,
   label = "timed out",
-): Promise<FetchResponseLike> {
+): Promise<FetchBodyResult> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
+  let activeReader: BodyReaderLike | null = null;
+  // Set before the reader is cancelled, so a cancel that unblocks the read
+  // still reports a timeout rather than an empty body.
+  let timedOut = false;
+  const stopReader = () => {
+    const reader = activeReader;
+    activeReader = null;
+    if (reader) void reader.cancel(new Error(label)).catch(() => undefined);
+  };
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+    stopReader();
+  }, ms);
   (timer as { unref?: () => void }).unref?.();
+  const work = (async () => {
+    const response = await fetchFn(url, { ...init, signal: controller.signal });
+    const read = await readBodyCapped(response, {
+      onReader: (reader) => {
+        activeReader = reader;
+      },
+    });
+    activeReader = null;
+    if (timedOut) throw new Error(label);
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText ?? "",
+      headers: response.headers,
+      text: read.text,
+      truncated: read.truncated,
+    };
+  })();
   try {
-    return await withTimeout(fetchFn(url, { ...init, signal: controller.signal }), ms, label);
+    return await withTimeout(work, ms, label);
+  } catch (error) {
+    // An abort surfaces as AbortError; the caller wants the plain deadline word.
+    if (timedOut) throw new Error(label);
+    throw error;
   } finally {
     clearTimeout(timer);
+    activeReader = null;
   }
 }
 
