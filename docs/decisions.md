@@ -1289,3 +1289,5 @@ them into the loop. Each index.ts starts with an "Integration" comment.
 551. **Release the desktop look, workstream templates, CI workflows tab, 16 automation templates, Stats badges, Finish setup card and shared-folder history as Windows 0.5.0 on the owner's order.** Publish the shared-history and gh-template limits with the release.
 
 552. **Release the Workstream member model fix as Windows 0.5.1 on the owner's order.** A member with approved write files uses a direct model, or the spawn is refused with a clear message, and a failed member keeps its error text.
+
+553. **Release the Set up models page and the fully signed Windows installer as Windows 0.5.2 on the owner's order.** The page finds local model servers, shows client and Ollama sign-in and adds an API connection; every program file in the installer is signed.
