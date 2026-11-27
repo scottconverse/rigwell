@@ -1,4 +1,4 @@
-// Copied from model-setup-kit d40de0a. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 869cdf5. Do not edit here; change the kit and copy again.
 /*
   The extra sentences the screens need on top of `COPY` in core. Core keeps
   every sentence the library owns; this file adds the screen-only ones (group
@@ -29,6 +29,10 @@ export const UI_COPY = {
   signInStopped: "The {name} sign-in was stopped.",
   signInExpiresIn: "This link runs out in {time}.",
   signInModels: "Models this sign-in brings",
+  modelNameLabel: "Model name",
+  modelNameHelp: "Type the exact model name this program uses.",
+  otherModel: "Other model",
+  useThisModel: "Use this model",
   testButton: "Test",
   testingButton: "Asking…",
   testAnswered: "{name} answered: {detail}",

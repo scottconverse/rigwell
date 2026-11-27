@@ -1,4 +1,4 @@
-// Copied from model-setup-kit d40de0a. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 869cdf5. Do not edit here; change the kit and copy again.
 /*
   Finds local, OpenAI-compatible model servers on this machine with no typing
   from the operator: the same ports and rules as the product this kit was
@@ -160,10 +160,14 @@ async function ollamaMetadata(
 
 async function enrichOllama(root: string, ids: string[], fetchFn: FetchLike): Promise<LocalModel[]> {
   let running = new Set<string>();
+  /* True when /api/ps answered, even with no running models. Only a failed
+     call leaves the load state unknown (null). */
+  let known = false;
   try {
     const body = (await fetchJson(`${root}/api/ps`, fetchFn, PROBE_TIMEOUT_MS)) as {
       models?: { name?: string; model?: string }[];
     };
+    known = true;
     running = new Set(
       (body?.models ?? [])
         .map((m) => m.name ?? m.model)
@@ -177,7 +181,7 @@ async function enrichOllama(root: string, ids: string[], fetchFn: FetchLike): Pr
     const meta = metadata[i] ?? { vision: false };
     return {
       id,
-      loaded: running.size > 0 ? running.has(id) : null,
+      loaded: known ? running.has(id) : null,
       thinking: isThinkingId(id),
       vision: meta.vision,
       ...(meta.contextLength ? { contextLength: meta.contextLength } : {}),

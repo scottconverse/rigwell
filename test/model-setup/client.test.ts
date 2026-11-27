@@ -10,7 +10,13 @@ function fakeHost(initial: Record<string, any>[] = []) {
   const writes: Record<string, unknown>[] = [];
   let refreshes = 0;
   const host: ModelSetupHost = {
-    request: async <T,>() => ({}) as T,
+    request: async <T,>(method: string, params?: Record<string, unknown>) => {
+      if (method === "model_setup_cli_models") {
+        const models = params?.provider === "claude" ? ["sonnet", "opus", "haiku"] : ["gpt-5-codex"];
+        return { models } as T;
+      }
+      return {} as T;
+    },
     settings: () => state.userSettings,
     updateSettings: async (patch) => { writes.push(patch); state.userSettings = { ...state.userSettings, ...patch }; return state.userSettings; },
     refresh: async () => { refreshes += 1; },
@@ -100,6 +106,7 @@ describe("listSaved maps settings back to choices", () => {
     const client = createModelSetupClient(host);
     expect(client.supportsLoadedSentinel).toBe(false);
     expect(await client.listCliModels("claude")).toEqual(["sonnet", "opus", "haiku"]);
-    expect(await client.listCliModels("codex")).toEqual([]);
+    // Codex's model comes from the daemon, which reads it from Codex's own config.
+    expect(await client.listCliModels("codex")).toEqual(["gpt-5-codex"]);
   });
 });

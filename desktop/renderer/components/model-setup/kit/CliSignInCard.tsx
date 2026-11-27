@@ -1,4 +1,4 @@
-// Copied from model-setup-kit d40de0a. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 869cdf5. Do not edit here; change the kit and copy again.
 import * as React from "react";
 /*
   One command-line sign-in: whether the program is installed and signed in,
@@ -19,6 +19,12 @@ import { countdownText, errorText, visibleModels } from "./helpers.ts";
 
 const POLL_MS = 3_000;
 const VISIBLE_MODELS = 5;
+
+/* Some programs report the account as the words "signed in"; show the plain
+   word once instead of "Signed in as signed in". */
+function sameAsSignedIn(account: string, signedInWord: string): boolean {
+  return account.trim().toLowerCase() === signedInWord.trim().toLowerCase();
+}
 
 export type CliSignInCardProps = {
   client: ModelSetupClient;
@@ -49,6 +55,8 @@ export function CliSignInCard({
   const [testResult, setTestResult] = useState<CliTestResult | null>(null);
   const [testing, setTesting] = useState(false);
   const [models, setModels] = useState<string[]>([]);
+  const [manualModel, setManualModel] = useState("");
+  const manualId = React.useId();
   const [showAll, setShowAll] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const mounted = useRef(true);
@@ -210,7 +218,7 @@ export function CliSignInCard({
           {!current?.installed
             ? formatCopy(copy.signInNotInstalled, { name })
             : signedIn
-              ? current?.account
+              ? current?.account && !sameAsSignedIn(current.account, copy.signedInWord)
                 ? formatCopy(copy.signedInAs, { account: current.account })
                 : copy.signedInWord
               : copy.notSignedInWord}
@@ -279,25 +287,49 @@ export function CliSignInCard({
         </p>
       ) : null}
 
-      {signedIn && models.length ? (
+      {signedIn ? (
         <div className="msk-models">
-          <p className="msk-kicker">{copy.signInModels}</p>
-          <ul className="msk-model-list">
-            {shown.map((id) => (
-              <li key={id} className="msk-model-row">
-                <span className="msk-break">{id}</span>
-                {chosenModel?.model === id ? <strong className="msk-badge">{copy.appUsesThis}</strong> : null}
-                <button type="button" className="msk-button msk-quiet" onClick={() => void pick(id)}>
-                  {copy.useThisOne}
+          {models.length ? (
+            <>
+              <p className="msk-kicker">{copy.signInModels}</p>
+              <ul className="msk-model-list">
+                {shown.map((id) => (
+                  <li key={id} className="msk-model-row">
+                    <span className="msk-break">{id}</span>
+                    {chosenModel?.model === id ? <strong className="msk-badge">{copy.appUsesThis}</strong> : null}
+                    <button type="button" className="msk-button msk-quiet" onClick={() => void pick(id)}>
+                      {copy.useThisOne}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {models.length > VISIBLE_MODELS ? (
+                <button type="button" className="msk-button msk-quiet" onClick={() => setShowAll(!showAll)}>
+                  {showAll ? copy.showFewer : formatCopy(copy.showAll, { count: models.length })}
                 </button>
-              </li>
-            ))}
-          </ul>
-          {models.length > VISIBLE_MODELS ? (
-            <button type="button" className="msk-button msk-quiet" onClick={() => setShowAll(!showAll)}>
-              {showAll ? copy.showFewer : formatCopy(copy.showAll, { count: models.length })}
-            </button>
+              ) : null}
+            </>
           ) : null}
+          <div className="msk-field">
+            <label className="msk-label" htmlFor={manualId}>
+              {models.length ? copy.otherModel : copy.modelNameLabel}
+            </label>
+            <input
+              id={manualId}
+              className="msk-input"
+              value={manualModel}
+              onChange={(event) => setManualModel(event.target.value)}
+            />
+            <span className="msk-meta">{copy.modelNameHelp}</span>
+            <button
+              type="button"
+              className="msk-button"
+              disabled={!manualModel.trim()}
+              onClick={() => void pick(manualModel.trim())}
+            >
+              {copy.useThisModel}
+            </button>
+          </div>
         </div>
       ) : null}
 

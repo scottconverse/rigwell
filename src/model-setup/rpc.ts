@@ -2,6 +2,9 @@
 // Screens call these over the daemon control connection; the kit core does the work.
 // One CliSignIn and one OllamaSignIn instance live for the whole daemon process.
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { ErrorCodes, RpcError } from "../protocol/rpc.ts";
 import { findNativeExecutable, nativeEnvironment } from "../adapters/native-cli.ts";
 import { secretValue } from "../secrets/store.ts";
@@ -37,8 +40,27 @@ export type ModelSetupMethodsDeps = {
   ollamaStatus(): Promise<OllamaStatusResult>;
   discover(connection: { baseUrl: string; apiKey?: string }): Promise<string[]>;
   test(connection: { baseUrl: string; modelId: string; apiKey?: string }): Promise<ConnectionTestResult>;
+  /** Model ids a signed-in CLI offers. Read-only; no CLI is run for this. */
+  cliModels(provider: CliProvider): string[];
   secret(name: string): string | undefined;
 };
+
+/**
+ * The `model = "..."` value from Codex's own config, or none. Codex always gets
+ * an explicit `--model`, so the config's value is the only "default" there is.
+ * Reads that one line with a regex and no other file; never throws.
+ */
+export function readCodexModel(env: NodeJS.ProcessEnv = process.env, home = homedir()): string[] {
+  const dir = env.CODEX_HOME?.trim() || join(home, ".codex");
+  let text: string;
+  try {
+    text = readFileSync(join(dir, "config.toml"), "utf8");
+  } catch {
+    return [];
+  }
+  const found = /^\s*model\s*=\s*["']([^"']+)["']/m.exec(text)?.[1]?.trim();
+  return found ? [found] : [];
+}
 
 /** The probe Rigwell already trusts before a native CLI turn: the signed-in subscription, not any key. */
 export async function rigwellCliProbe(provider: CliProvider): Promise<CliProbeResult> {
@@ -152,6 +174,8 @@ export function createModelSetupMethods(deps: ModelSetupMethodsDeps) {
         return { handled: true, result: deps.ollamaSignIn.poll() };
       case "model_setup_ollama_signin_cancel":
         return { handled: true, result: deps.ollamaSignIn.cancel() };
+      case "model_setup_cli_models":
+        return { handled: true, result: { models: deps.cliModels(requireProvider(p.provider)) } };
       case "model_setup_discover": {
         const connection = connectionInput(p, deps);
         return { handled: true, result: { models: await deps.discover(connection) } };
@@ -178,6 +202,7 @@ export const handleModelSetupMethod = createModelSetupMethods({
   ollamaStatus: () => ollamaStatus(),
   discover: (connection) => discoverModels(connection),
   test: (connection) => testConnection(connection),
+  cliModels: (provider) => (provider === "claude" ? ["sonnet", "opus", "haiku"] : readCodexModel()),
   secret: (name) => secretValue(name),
 });
 

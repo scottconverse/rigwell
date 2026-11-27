@@ -63,11 +63,10 @@ function choiceForEntry(entry: Record<string, any>): ModelChoice | null {
 
 export function createModelSetupClient(host: ModelSetupHost): ModelSetupClient {
   async function listCliModels(provider: CliProvider): Promise<string[]> {
-    // Claude Code takes a model alias on `claude --model` (src/adapters/native-cli.ts nativeArguments).
-    if (provider === "claude") return ["sonnet", "opus", "haiku"];
-    // Codex also gets an explicit `--model`, and an empty model is rejected by the settings
-    // validator, so there is no "the CLI's default" to offer. The catalog lists none.
-    return [];
+    // Both CLIs always get an explicit `--model`, so the daemon reads what it
+    // can: the fixed aliases for Claude Code, Codex's own config for Codex.
+    const r = await host.request<{ models?: string[] }>("model_setup_cli_models", { provider });
+    return r.models ?? [];
   }
 
   return {

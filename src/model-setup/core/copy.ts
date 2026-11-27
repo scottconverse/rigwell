@@ -1,4 +1,4 @@
-// Copied from model-setup-kit d40de0a. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 869cdf5. Do not edit here; change the kit and copy again.
 /*
   Every user-facing sentence the kit owns. A host passes its own `appName`;
   the default is "this app". Placeholders are `{appName}` and `{name}`.
@@ -53,7 +53,7 @@ export const COPY = {
 
   connectionNameHelp: "A name for you to recognize it by, such as Gemini or My server.",
   baseUrlHelp: "The web address of the service. Copy it exactly as that service gives it.",
-  apiKeyHelp: "The private key from that service. It is saved on your side, not sent anywhere else.",
+  apiKeyHelp: "The private key from that service.",
   modelIdHelp: "Model ID: the exact model name your provider uses.",
   openaiCompatibleHelp:
     "OpenAI-compatible endpoint: a web address another program offers that speaks the same language as OpenAI.",
