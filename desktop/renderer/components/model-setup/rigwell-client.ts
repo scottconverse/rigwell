@@ -19,8 +19,8 @@ export interface ModelSetupHost {
   request<T = any>(method: string, params?: Record<string, unknown>): Promise<T>;
   settings(): Record<string, any>;
   updateSettings(patch: Record<string, unknown>): Promise<unknown>;
-  /** Re-read the stored user settings and wait for them; `settings()` must see the new copy. */
-  refreshUserSettings(): Promise<unknown>;
+  /** Read the stored user settings now; throws when the read fails. */
+  readUserSettings(): Promise<Record<string, any>>;
   refresh(): Promise<unknown>;
 }
 
@@ -175,11 +175,16 @@ export function createModelSetupClient(host: ModelSetupHost): ModelSetupClient {
           ...(choice.apiKeySecretName ? { apiKey: `${KEYCHAIN_SECRET}${secretNameFor(choice.apiKeySecretName)}` } : {}),
         });
       }
-      // Re-read the stored settings and wait for the copy: another window may
-      // have saved a pick since this screen loaded, and writing the old list
-      // would drop it. `refresh()` returns before its settings read lands.
-      await host.refreshUserSettings();
-      const list = currentEntries(host);
+      // Read the stored settings now: another window may have saved a pick
+      // since this screen loaded, and writing the old list would drop it. If
+      // the read fails, do not write at all — the old list could be stale.
+      let stored: Record<string, any>;
+      try {
+        stored = await host.readUserSettings();
+      } catch {
+        throw new Error("Could not read your saved models. Nothing was saved. Try again.");
+      }
+      const list = Array.isArray(stored.customModels) ? stored.customModels : [];
       const index = list.findIndex((item) => entryKey(item) === entryKey(entry));
       let status: SaveChoiceResult["status"] = "saved";
       let next = list;

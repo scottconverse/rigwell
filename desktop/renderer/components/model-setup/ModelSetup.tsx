@@ -1,6 +1,7 @@
 // Settings > Model setup: the model-setup-kit screens, wired to Rigwell's daemon methods
 // and to customModels storage. The kit files under ./kit are copies; change the kit, not them.
 import { app } from "../../lib/app-model.ts";
+import { bridge } from "../../lib/rpc.ts";
 import { ModelSetupScreen } from "./kit/ModelSetupScreen.tsx";
 import { createModelSetupClient } from "./rigwell-client.ts";
 import "./kit/styles.css";
@@ -9,7 +10,7 @@ const client = createModelSetupClient({
   request: (method, params) => app.request(method, params),
   settings: () => app.getSnapshot().userSettings,
   updateSettings: (patch) => app.updateUserSettings(patch),
-  refreshUserSettings: () => app.refreshUserSettings(),
+  readUserSettings: () => bridge().userSettings.get(),
   refresh: () => app.refresh(),
 });
 

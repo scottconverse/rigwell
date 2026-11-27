@@ -19,7 +19,7 @@ function fakeHost(initial: Record<string, any>[] = []) {
     },
     settings: () => state.userSettings,
     updateSettings: async (patch) => { writes.push(patch); state.userSettings = { ...state.userSettings, ...patch }; return state.userSettings; },
-    refreshUserSettings: async () => {},
+    readUserSettings: async () => state.userSettings,
     refresh: async () => { refreshes += 1; },
   };
   return { host, state, writes, refreshes: () => refreshes };
@@ -123,14 +123,16 @@ describe("saveChoice writes Rigwell custom models", () => {
       { provider: "anthropic", executionBackend: "claude-cli", model: "opus" },
     ]);
     let reads = 0;
-    host.refreshUserSettings = async () => {
-      if (reads++ > 0) return;
-      state.userSettings = {
-        customModels: [
-          ...(state.userSettings.customModels as Record<string, any>[]),
-          { provider: "openai", executionBackend: "codex-cli", model: "gpt-5-codex" },
-        ],
-      };
+    host.readUserSettings = async () => {
+      if (reads++ === 0) {
+        state.userSettings = {
+          customModels: [
+            ...(state.userSettings.customModels as Record<string, any>[]),
+            { provider: "openai", executionBackend: "codex-cli", model: "gpt-5-codex" },
+          ],
+        };
+      }
+      return state.userSettings;
     };
 
     const outcome = await createModelSetupClient(host).saveChoice({
@@ -142,6 +144,18 @@ describe("saveChoice writes Rigwell custom models", () => {
     const models = saved(state).map((entry) => entry.model);
     expect(models).toEqual(expect.arrayContaining(["opus", "gpt-5-codex", "qwen3-8b"]));
     expect(models).toHaveLength(3);
+  });
+
+  test("a failed settings read refuses the save and writes nothing", async () => {
+    const { host, writes } = fakeHost([{ provider: "anthropic", executionBackend: "claude-cli", model: "opus" }]);
+    host.readUserSettings = async () => {
+      throw new Error("settings unavailable");
+    };
+    const client = createModelSetupClient(host);
+    await expect(
+      client.saveChoice({ kind: "local", baseUrl: "http://127.0.0.1:1234/v1", model: "qwen3-8b" }),
+    ).rejects.toThrow("Could not read your saved models. Nothing was saved. Try again.");
+    expect(writes).toHaveLength(0);
   });
 
   test("the same provider, base URL and model is kept once", async () => {
