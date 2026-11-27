@@ -1,4 +1,4 @@
-// Copied from model-setup-kit 86139b5. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 17b7660. Do not edit here; change the kit and copy again.
 /*
   Ollama: is it running, and the optional "ollama signin" flow.
 
@@ -319,7 +319,7 @@ export class OllamaSignIn {
       (stop as { unref?: () => void }).unref?.();
     });
 
-    if (!row.url && !row.exited) {
+    if (!row.final && !row.url && !row.exited) {
       // Nothing was printed in time: stop the child rather than leave it running.
       this.settle(row, "failed", OLLAMA_SIGNIN_NO_LINK);
       this.killTree(row.child.pid, row.child);

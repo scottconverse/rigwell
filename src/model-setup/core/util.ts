@@ -1,4 +1,4 @@
-// Copied from model-setup-kit 86139b5. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 17b7660. Do not edit here; change the kit and copy again.
 /** Shared helpers for the core. Node built-ins only; no runtime dependencies. */
 
 /** The streaming part of a `fetch` response body. */
@@ -50,8 +50,14 @@ export async function withTimeout<T>(promise: Promise<T>, ms: number, label = "t
   }
 }
 
-/** No response body read here may exceed this many bytes. */
+/** An error body is only a message; never read more than this. */
 export const MAX_BODY_BYTES = 64 * 1024;
+
+/**
+ * A successful body may legitimately be large: a provider's public model list
+ * can approach a megabyte. This is still a ceiling, not a target.
+ */
+export const MAX_SUCCESS_BODY_BYTES = 8 * 1024 * 1024;
 
 export type BodyReadResult = {
   text: string;
@@ -139,6 +145,9 @@ export async function fetchBodyWithTimeout(
   const work = (async () => {
     const response = await fetchFn(url, { ...init, signal: controller.signal });
     const read = await readBodyCapped(response, {
+      // An error body only carries a message; a success body may be a whole
+      // model list, so it gets the larger cap. The deadline is unchanged.
+      maxBytes: response.ok ? MAX_SUCCESS_BODY_BYTES : MAX_BODY_BYTES,
       onReader: (reader) => {
         activeReader = reader;
       },
