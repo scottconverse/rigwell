@@ -2,7 +2,7 @@
 
 Rigwell is a local workbench for coding agents. Use a desktop app or terminal to work with your models, coordinate persistent Workstreams, run staged Missions, inspect changes and create pull requests with explicit confirmation. Repositories stay ordinary files and Git branches. Cloud connections send context to the providers you configure.
 
-[Website](https://scottconverse.github.io/rigwell/) · [Windows 0.5.1 download](https://github.com/scottconverse/rigwell/releases/download/v0.5.1/rigwell-setup-0.5.1-x64.exe) · [User manual](docs/user-manual.md) · [Contributing](docs/contributing.md)
+[Website](https://scottconverse.github.io/rigwell/) · [Windows 0.5.2 download](https://github.com/scottconverse/rigwell/releases/download/v0.5.2/rigwell-setup-0.5.2-x64.exe) · [User manual](docs/user-manual.md) · [Contributing](docs/contributing.md)
 
 ## What it does
 
@@ -14,7 +14,7 @@ Rigwell is a local workbench for coding agents. Use a desktop app or terminal to
 
 ## Quick start
 
-For the desktop app, download the [signed Windows 0.5.1 installer](https://github.com/scottconverse/rigwell/releases/download/v0.5.1/rigwell-setup-0.5.1-x64.exe). Linux and macOS packages remain available in [0.4.0](https://github.com/scottconverse/rigwell/releases/tag/v0.4.0). Then follow the [installation guide](docs/install.md) and [first-task walkthrough](docs/user-manual.md#new-user-guide). Configure a model connection before starting a task. Do not paste credentials into a conversation.
+For the desktop app, download the [signed Windows 0.5.2 installer](https://github.com/scottconverse/rigwell/releases/download/v0.5.2/rigwell-setup-0.5.2-x64.exe). Linux and macOS packages remain available in [0.4.0](https://github.com/scottconverse/rigwell/releases/tag/v0.4.0). Then follow the [installation guide](docs/install.md) and [first-task walkthrough](docs/user-manual.md#new-user-guide). Configure a model connection before starting a task. Do not paste credentials into a conversation.
 
 For a source checkout, install Bun 1.4.4, Git and ripgrep:
 
@@ -48,7 +48,7 @@ To build the public site, run `bun run site:build` and `bun run site:preview`, t
 
 ## Project status
 
-The current Windows release is **0.5.1**. Workstream members with approved write files now use a direct model, and a failed member shows its error. See [0.5.1 release notes](docs/release-0.5.1.md). Version 0.5.0 brought a new desktop look with a sidebar, Home and Session screens, and updated Settings, cards, menus, dialogs and the command palette. Workstreams can start from a template with a role picker and keep a version history for the shared folder. Automations gain a CI workflows tab and 16 templates, including gh templates that read gh output directly. Stats gains badges, and the sidebar has a Finish setup card. See [0.5.0 release notes](docs/release-0.5.0.md). Linux and macOS distributions remain at **0.4.0**. The Windows setup installer is signed by Scott Converse. Linux has packaged-install and signed AppImage update/rollback evidence. macOS arm64 packages are unsigned and have runner installation evidence. Full model-family and long-session qualification remains incomplete. Account access, connector registrations and remote infrastructure require your own configuration.
+The current Windows release is **0.5.2**. It adds a Set up models page that finds local model servers, shows Claude Code, Codex and Ollama sign-in, and adds an API connection. Every program file in the Windows installer is now signed. See [0.5.2 release notes](docs/release-0.5.2.md). Version 0.5.1 made Workstream members with approved write files use a direct model. Version 0.5.0 brought a new desktop look with a sidebar, Home and Session screens, and updated Settings, cards, menus, dialogs and the command palette. Workstreams can start from a template with a role picker and keep a version history for the shared folder. Automations gain a CI workflows tab and 16 templates, including gh templates that read gh output directly. Stats gains badges, and the sidebar has a Finish setup card. See [0.5.0 release notes](docs/release-0.5.0.md). Linux and macOS distributions remain at **0.4.0**. The Windows setup installer is signed by Scott Converse. Linux has packaged-install and signed AppImage update/rollback evidence. macOS arm64 packages are unsigned and have runner installation evidence. Full model-family and long-session qualification remains incomplete. Account access, connector registrations and remote infrastructure require your own configuration.
 
 
 

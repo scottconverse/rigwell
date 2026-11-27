@@ -12,7 +12,7 @@ a backup of your Rigwell profile when upgrading.
 
 ## Windows
 
-Current release: [signed Windows 0.5.1 installer](https://github.com/scottconverse/rigwell/releases/download/v0.5.1/rigwell-setup-0.5.1-x64.exe). See [0.5.1 release notes](release-0.5.1.md). Linux and macOS downloads remain at [0.4.0](https://github.com/scottconverse/rigwell/releases/tag/v0.4.0).
+Current release: [signed Windows 0.5.2 installer](https://github.com/scottconverse/rigwell/releases/download/v0.5.2/rigwell-setup-0.5.2-x64.exe). See [0.5.2 release notes](release-0.5.2.md). Linux and macOS downloads remain at [0.4.0](https://github.com/scottconverse/rigwell/releases/tag/v0.4.0).
 
 Run `rigwell-setup-<version>-x64.exe`. The NSIS installer installs for the current
 user and lets you choose its destination. Verify the installer signature in
@@ -81,9 +81,9 @@ daemon, and checks the first-run model setup page. No model is called and no
 personal settings or credentials are imported. Packages and JSON receipts are
 retained as workflow artifacts for seven days.
 
-### Windows 0.5.1 release
+### Windows 0.5.2 release
 
-See the [0.5.1 release notes](release-0.5.1.md) for the current signed installer. The release assets include the signing receipt and the clean-install acceptance record.
+See the [0.5.2 release notes](release-0.5.2.md) for the current signed installer. The release assets include the signing receipt and the clean-install acceptance record.
 
 ### Windows 0.4.1 patch history
 
