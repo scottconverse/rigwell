@@ -151,7 +151,7 @@ export function Sidebar({ hidden, sessions, current, daemon, route, go, openPale
       </div>
       {setup && setup.next && <div className="setup" aria-label="Finish setup">
         <div className="h"><span>Finish setup</span><span className="muted">{setup.done}/{setup.total}</span></div>
-        <button data-setup={setup.next} onClick={() => setup.next === "model" ? go("/settings/custom-models") : setup.next === "session" ? void adder.pick() : go("/settings/connectors")}>{SETUP_LABELS[setup.next]}</button>
+        <button data-setup={setup.next} onClick={() => setup.next === "model" ? go("/settings/model-setup") : setup.next === "session" ? void adder.pick() : go("/settings/connectors")}>{SETUP_LABELS[setup.next]}</button>
       </div>}
       <div className="side-foot">
         <span className={`dot ${daemon}`} title={`Background service: ${daemon}`} />

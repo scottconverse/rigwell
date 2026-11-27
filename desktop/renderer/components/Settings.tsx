@@ -12,6 +12,7 @@ import { PhoneAccessPage } from "./PhoneAccess.tsx";
 import { DelegationPage } from "./Delegation.tsx";
 import { EmailAlerts } from "./Inbox.tsx";
 import { ConnectorSettings, CustomModels, MissionSettings, SessionDefaults, SessionManagement, UsagePage, WorktreeSettings } from "./SettingsAgent.tsx";
+import { ModelSetup } from "./model-setup/ModelSetup.tsx";
 import { NavIcon } from "./NavIcon.tsx";
 import { SETTINGS_PAGES, matchesSettings } from "../lib/nav-pages.ts";
 
@@ -25,6 +26,7 @@ const AGENT_PAGES: Record<string, () => React.ReactElement | null> = {
   "email-alerts": EmailAlerts,
   connectors: ConnectorSettings, "session-management": SessionManagement, usage: UsagePage,
   "api-keys": ApiKeys, environments: Environments, accounts: Accounts, "code-providers": CodeProviders, voice: VoiceSettings,
+  "model-setup": ModelSetup,
 };
 
 export function Settings({ page, go }: { page: string; go(r: string): void }) {
