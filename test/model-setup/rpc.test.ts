@@ -60,6 +60,9 @@ function methods(options: { signedIn?: () => boolean } = {}) {
     test: async () => ({ ok: true, message: "ok", capabilities: { chatCompletions: true, responses: null, modelDiscovery: null }, latencyMs: 1 }),
     cliModels: (provider) => (provider === "claude" ? ["sonnet", "opus", "haiku"] : ["gpt-5-codex"]),
     secret: (name) => (name === "saved-key" ? "sk-stored" : undefined),
+    savedCustomModels: () => [
+      { provider: "generic-chat-completion-api", baseUrl: "https://models.example.com/v1", model: "big", apiKey: "keychain:secret:saved-key" },
+    ],
   });
   return { handle, child, spawns, discovered, discoveredOptions, advance: (ms: number) => { clock += ms; } };
 }
@@ -118,6 +121,23 @@ describe("model_setup_* daemon methods", () => {
     expect((missing as any).code).toBe(ErrorCodes.INVALID_PARAMS);
   });
 
+  test("a stored secret is never sent to a URL it was not saved with", async () => {
+    const { handle, discoveredOptions } = methods();
+    const elsewhere = await handle("model_setup_discover", { baseUrl: "https://evil.example.com/v1", apiKeySecretName: "saved-key" }).catch((e) => e);
+    expect((elsewhere as any).code).toBe(ErrorCodes.INVALID_PARAMS);
+    expect(String((elsewhere as any).message)).toContain("different address");
+    // A trailing slash is the same address after normalization.
+    const same = await handle("model_setup_discover", { baseUrl: "https://models.example.com/v1/", apiKeySecretName: "saved-key" });
+    expect(same).toEqual({ handled: true, result: { models: ["from-server"] } });
+    expect(discoveredOptions).toEqual(["https://models.example.com/v1"]);
+  });
+
+  test("a typed key is still accepted for an unsaved connection", async () => {
+    const { handle } = methods();
+    const r = await handle("model_setup_discover", { baseUrl: "https://new.example.com/v1", apiKey: "sk-typed" });
+    expect(r).toEqual({ handled: true, result: { models: ["from-server"] } });
+  });
+
   test("cli models: Claude aliases, Codex's configured model, and a refused provider", async () => {
     const { handle } = methods();
     const claude = await handle("model_setup_cli_models", { provider: "claude" });
@@ -136,10 +156,27 @@ describe("model_setup_* daemon methods", () => {
       expect(readCodexModel({ CODEX_HOME: dir })).toEqual(["gpt-5-codex"]);
       writeFileSync(join(dir, "config.toml"), "# no model here\n");
       expect(readCodexModel({ CODEX_HOME: dir })).toEqual([]);
+      writeFileSync(join(dir, "config.toml"), ["approval_policy = \"never\"", "[profiles.x]", "model = \"other\"", ""].join("\n"));
+      expect(readCodexModel({ CODEX_HOME: dir })).toEqual([]);
       expect(readCodexModel({ CODEX_HOME: join(dir, "missing") })).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  test("the sign-in spawns the same executable its finder names", async () => {
+    const child = fakeChild();
+    const spawned: string[] = [];
+    const cli = new CliSignIn({
+      probe: async () => ({ signedIn: false }),
+      findBinary: () => ({ ok: true, bin: "/native/claude.exe" }),
+      spawnFn: (command) => { spawned.push(command); return child; },
+      platform: "linux",
+      env: {},
+    });
+    const started = await cli.start("claude");
+    expect(started.status).toBe("starting");
+    expect(spawned).toEqual(["/native/claude.exe"]);
   });
 
   test("unknown methods are not handled", async () => {

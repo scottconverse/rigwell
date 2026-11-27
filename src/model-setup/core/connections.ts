@@ -1,11 +1,19 @@
-// Copied from model-setup-kit d40de0a. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 204ad42. Do not edit here; change the kit and copy again.
 /*
   Custom OpenAI-compatible connections: input rules, model discovery and the
   explicit Test call. Timeouts, prompt and response excerpt copy the product
   this kit was extracted from. The API key never appears in a result.
 */
 
-import { defaultFetch, joinEndpoint, withTimeout, type FetchLike } from "./util.ts";
+import { defaultFetch, fetchWithTimeout, joinEndpoint, type FetchLike } from "./util.ts";
+
+/** Shown instead of following a redirect: the URL the caller saved must be final. */
+export const CONNECTION_REDIRECT_MESSAGE =
+  "The service answered with a redirect; use its final address.";
+
+const MAX_ERROR_BODY_BYTES = 64 * 1024;
+
+const isRedirect = (status: number): boolean => status >= 300 && status < 400;
 
 export type ConnectionInput = {
   name: string;
@@ -49,10 +57,13 @@ export async function discoverModels(
   const fetchFn = options.fetchFn ?? defaultFetch;
   const headers: Record<string, string> = { Accept: "application/json" };
   if (connection.apiKey) headers.Authorization = `Bearer ${connection.apiKey}`;
-  const response = await withTimeout(
-    fetchFn(joinEndpoint(connection.baseUrl, "models"), { headers }),
+  const response = await fetchWithTimeout(
+    fetchFn,
+    joinEndpoint(connection.baseUrl, "models"),
+    { headers, redirect: "manual" },
     10_000,
   );
+  if (isRedirect(response.status)) throw new Error(CONNECTION_REDIRECT_MESSAGE);
   if (!response.ok) {
     const detail = await providerResponseDetail(response, connection.apiKey);
     throw new Error(`${safeError(response.status)}${detail ? `\n\n${detail}` : ""}`);
@@ -94,10 +105,13 @@ export async function testConnection(
   };
   if (connection.apiKey) headers.Authorization = `Bearer ${connection.apiKey}`;
   try {
-    const response = await withTimeout(
-      fetchFn(joinEndpoint(connection.baseUrl, "chat/completions"), {
+    const response = await fetchWithTimeout(
+      fetchFn,
+      joinEndpoint(connection.baseUrl, "chat/completions"),
+      {
         method: "POST",
         headers,
+        redirect: "manual",
         body: JSON.stringify({
           model: connection.modelId,
           messages: [
@@ -105,9 +119,17 @@ export async function testConnection(
           ],
           max_tokens: 128,
         }),
-      }),
+      },
       20_000,
     );
+    if (isRedirect(response.status)) {
+      return {
+        ok: false,
+        message: CONNECTION_REDIRECT_MESSAGE,
+        capabilities: inferCapabilities(null),
+        latencyMs: Date.now() - started,
+      };
+    }
     if (!response.ok) {
       const detail = await providerResponseDetail(response, connection.apiKey);
       return {
@@ -221,17 +243,22 @@ export function providerErrorDetail(body: unknown, apiKey?: string | null): stri
   if (typeof message !== "string") return "";
   const redacted =
     apiKey && apiKey !== "not-needed" ? message.replaceAll(apiKey, "[redacted]") : message;
-  return redacted.trim().slice(0, 4000);
+  return redacted.trim().slice(0, 300);
 }
 
+/**
+ * A provider's error message when the body is JSON, otherwise only the status
+ * line: an HTML error page or a stack trace is never shown back to the screen.
+ */
 export async function providerResponseDetail(
-  response: { text(): Promise<string> },
+  response: { status: number; statusText?: string; text(): Promise<string> },
   apiKey?: string | null,
 ): Promise<string> {
-  const text = await response.text().catch(() => "");
+  const statusLine = `${`HTTP ${response.status}`.trim()}${response.statusText ? ` ${response.statusText}` : ""}`;
+  const text = (await response.text().catch(() => "")).slice(0, MAX_ERROR_BODY_BYTES);
   try {
-    return providerErrorDetail(JSON.parse(text), apiKey);
+    return providerErrorDetail(JSON.parse(text), apiKey) || statusLine;
   } catch {
-    return providerErrorDetail(text, apiKey);
+    return statusLine;
   }
 }

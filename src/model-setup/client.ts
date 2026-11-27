@@ -1,4 +1,4 @@
-// Copied from model-setup-kit d40de0a. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 204ad42. Do not edit here; change the kit and copy again.
 /*
   The contract screens call. A host implements it over its own wire and adds
   its own storage (`saveChoice`, `listSaved`, `saveSecret`). The core never
@@ -29,6 +29,9 @@ export type TestRequest = Pick<NormalizedConnection, "baseUrl" | "apiKey" | "mod
 
 export type CliTestResult = { ok: boolean; detail: string };
 
+/** Whether a pick was written, or an identical entry was already saved. */
+export type SaveChoiceResult = { status: "saved" | "exists" };
+
 export interface ModelSetupClient {
   /** The local catalog. `force` re-probes now. */
   catalog(force?: boolean): Promise<LocalCatalog>;
@@ -51,8 +54,8 @@ export interface ModelSetupClient {
   /** Model ids a signed-in CLI offers. The kit hard-codes none. */
   listCliModels(provider: CliProvider): Promise<string[]>;
 
-  /** Host storage: the picked model. */
-  saveChoice(choice: ModelChoice): Promise<void>;
+  /** Host storage: the picked model. `exists` means an identical entry was already there. */
+  saveChoice(choice: ModelChoice): Promise<SaveChoiceResult>;
   /** Host storage: what is saved, to mark "This app uses this". */
   listSaved(): Promise<ModelChoice[]>;
   /** Host storage for a connection's key; the kit never reads it back. */

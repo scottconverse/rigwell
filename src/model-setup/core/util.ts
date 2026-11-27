@@ -1,10 +1,11 @@
-// Copied from model-setup-kit d40de0a. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 204ad42. Do not edit here; change the kit and copy again.
 /** Shared helpers for the core. Node built-ins only; no runtime dependencies. */
 
 /** The small part of `fetch`'s response this kit reads. */
 export type FetchResponseLike = {
   ok: boolean;
   status: number;
+  statusText?: string;
   headers: { get(name: string): string | null };
   json(): Promise<unknown>;
   text(): Promise<string>;
@@ -15,6 +16,7 @@ export type FetchInit = {
   headers?: Record<string, string>;
   body?: string;
   signal?: unknown;
+  redirect?: "follow" | "error" | "manual";
 };
 
 export type FetchLike = (url: string, init?: FetchInit) => Promise<FetchResponseLike>;
@@ -36,6 +38,27 @@ export async function withTimeout<T>(promise: Promise<T>, ms: number, label = "t
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Like `withTimeout`, but also aborts the request at the deadline so a hung
+ * connection cannot keep reading after the screen gave up.
+ */
+export async function fetchWithTimeout(
+  fetchFn: FetchLike,
+  url: string,
+  init: FetchInit,
+  ms: number,
+  label = "timed out",
+): Promise<FetchResponseLike> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  (timer as { unref?: () => void }).unref?.();
+  try {
+    return await withTimeout(fetchFn(url, { ...init, signal: controller.signal }), ms, label);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

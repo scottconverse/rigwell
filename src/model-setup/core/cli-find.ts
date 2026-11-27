@@ -1,4 +1,4 @@
-// Copied from model-setup-kit d40de0a. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 204ad42. Do not edit here; change the kit and copy again.
 /*
   Where the Claude Code and Codex CLIs are, in the same search order the
   product this kit was extracted from uses. Nothing is executed here.
@@ -157,11 +157,14 @@ export function findClaudeCli(options: FindCliOptions = {}): string | null {
   const exists = options.exists ?? existsSync;
   const env = options.env ?? process.env;
   const home = env.HOME || env.USERPROFILE || options.homedir;
-  const candidates = env.CLAUDE_CLI_PATH?.trim()
+  const explicit = Boolean(env.CLAUDE_CLI_PATH?.trim());
+  const candidates = explicit
     ? claudeCliCandidates(options)
     : [...claudeCliCandidates(options), ...scoopNodeCliCandidates(env, home)];
   for (const candidate of candidates) {
-    if (exists(candidate)) return resolveCliPath(candidate);
+    // Only a path the caller wrote by hand is resolved; a PATH candidate is
+    // already the exact file that was found.
+    if (exists(candidate)) return explicit ? resolveCliPath(candidate) : candidate;
   }
   return null;
 }

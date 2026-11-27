@@ -8,6 +8,8 @@ import { join } from "node:path";
 import { ErrorCodes, RpcError } from "../protocol/rpc.ts";
 import { findNativeExecutable, nativeEnvironment } from "../adapters/native-cli.ts";
 import { secretValue } from "../secrets/store.ts";
+import { loadSettings } from "../storage/settings.ts";
+import { rigwellHome } from "../storage/paths.ts";
 import {
   refreshCatalog,
   type LocalCatalog,
@@ -43,6 +45,8 @@ export type ModelSetupMethodsDeps = {
   /** Model ids a signed-in CLI offers. Read-only; no CLI is run for this. */
   cliModels(provider: CliProvider): string[];
   secret(name: string): string | undefined;
+  /** Saved `customModels` entries, to scope a stored key to its own connection. */
+  savedCustomModels?(): Record<string, unknown>[];
 };
 
 /**
@@ -58,7 +62,10 @@ export function readCodexModel(env: NodeJS.ProcessEnv = process.env, home = home
   } catch {
     return [];
   }
-  const found = /^\s*model\s*=\s*["']([^"']+)["']/m.exec(text)?.[1]?.trim();
+  // Only top-level keys count. `[profiles.x]` may set its own `model`, and that
+  // is not the default Codex would use here.
+  const topLevel = text.split(/^\s*\[/m)[0] ?? "";
+  const found = /^\s*model\s*=\s*["']([^"']+)["']/m.exec(topLevel)?.[1]?.trim();
   return found ? [found] : [];
 }
 
@@ -128,10 +135,39 @@ const requireProvider = (v: unknown): CliProvider => {
   return v;
 };
 
-/** The key for discover/test: a stored secret by name, else one typed just now. Never logged. */
+/** The same URL shape the connection form saves, or null when it is not a URL. */
+function normalizeBaseUrl(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    return new URL(value.trim()).toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+const KEYCHAIN_SECRET = "keychain:secret:";
+
+/**
+ * The key for discover/test: a stored secret by name, else one typed just now.
+ * A stored secret is only sent back to the address saved with that same entry,
+ * so this method cannot be used to post a key to a URL the operator never saved.
+ * Never logged.
+ */
 function apiKeyFrom(p: Record<string, unknown>, deps: ModelSetupMethodsDeps): string | undefined {
   const name = typeof p.apiKeySecretName === "string" && p.apiKeySecretName.trim() ? p.apiKeySecretName.trim() : undefined;
   if (name) {
+    const wanted = normalizeBaseUrl(p.baseUrl);
+    const reference = `${KEYCHAIN_SECRET}${name}`;
+    const saved = deps.savedCustomModels?.() ?? [];
+    const allowed = wanted !== null && saved.some(
+      (entry) => normalizeBaseUrl(entry.baseUrl) === wanted && entry.apiKey === reference,
+    );
+    if (!allowed) {
+      throw new RpcError(
+        ErrorCodes.INVALID_PARAMS,
+        "That stored key belongs to a saved connection with a different address. Save the connection, or type the key.",
+      );
+    }
     const stored = deps.secret(name);
     if (stored === undefined) throw new RpcError(ErrorCodes.INVALID_PARAMS, `No stored secret named ${JSON.stringify(name)}`);
     return stored;
@@ -192,7 +228,16 @@ export function createModelSetupMethods(deps: ModelSetupMethodsDeps) {
 }
 
 /* ── One sign-in runner per daemon process ─────────────────────────────── */
-const cliSignIn = new CliSignIn({ probe: rigwellCliProbe, appName: "Rigwell" });
+const cliSignIn = new CliSignIn({
+  probe: rigwellCliProbe,
+  appName: "Rigwell",
+  // The probe and the sign-in must run the same program, or a probe can say
+  // "signed in" about a CLI the sign-in never touched.
+  findBinary: (provider) => {
+    const bin = findNativeExecutable(provider === "claude" ? "claude-cli" : "codex-cli");
+    return bin ? { ok: true, bin } : { ok: false, error: null };
+  },
+});
 const ollamaSignIn = new OllamaSignIn();
 
 export const handleModelSetupMethod = createModelSetupMethods({
@@ -204,6 +249,9 @@ export const handleModelSetupMethod = createModelSetupMethods({
   test: (connection) => testConnection(connection),
   cliModels: (provider) => (provider === "claude" ? ["sonnet", "opus", "haiku"] : readCodexModel()),
   secret: (name) => secretValue(name),
+  // User-level settings are what the Model setup page writes; project and folder
+  // levels stay out of this check.
+  savedCustomModels: () => loadSettings({ cwd: rigwellHome(), trusted: false }).settings.customModels ?? [],
 });
 
 export type { CliAttempt, CliProvider, CliStatusEntry, OllamaSignInState, OllamaStatusResult };

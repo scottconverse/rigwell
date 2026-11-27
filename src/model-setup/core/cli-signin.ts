@@ -1,4 +1,4 @@
-// Copied from model-setup-kit d40de0a. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 204ad42. Do not edit here; change the kit and copy again.
 /*
   Sign in to the Claude Code and Codex CLIs from inside a host app.
 
@@ -16,7 +16,7 @@
 
 import { spawn } from "node:child_process";
 
-import { childEnv, spawnPlan, type CliProvider } from "./cli-spawn.ts";
+import { childEnv, loginChildEnv, spawnPlan, type CliProvider } from "./cli-spawn.ts";
 import { findCli, type CliLookup } from "./cli-find.ts";
 
 export type { CliProvider };
@@ -65,6 +65,12 @@ export const DEFAULT_LOGIN_LIMIT_MS: Record<CliProvider, number> = {
 };
 
 const OPEN: CliAttemptStatus[] = ["starting", "awaiting_user"];
+
+/** Keep only the tail of a stream: enough for the last line, never unbounded. */
+const MAX_OUTPUT_BYTES = 64 * 1024;
+
+const appendTail = (current: string, chunk: unknown): string =>
+  (current + String(chunk)).slice(-MAX_OUTPUT_BYTES);
 
 /* ── Spawned children ──────────────────────────────────────────────────── */
 
@@ -169,6 +175,11 @@ export type CliSignInOptions = {
   pollIntervalMs?: number;
   /** Ceiling for a probe command. Default 10 s. */
   probeTimeoutMs?: number;
+  /**
+   * How to find the binary a sign-in spawns. A host whose probe uses its own
+   * finder passes it here so the probe and the spawn agree on one program.
+   */
+  findBinary?: (provider: CliProvider) => CliLookup;
 };
 
 type Live = { child: SpawnedChild; timer: ReturnType<typeof setTimeout> };
@@ -187,6 +198,7 @@ export class CliSignIn {
   private readonly exists: ((candidate: string) => boolean) | undefined;
   private readonly pollIntervalMs: number;
   private readonly probeTimeoutMs: number;
+  private readonly findBinaryOverride: ((provider: CliProvider) => CliLookup) | undefined;
 
   private nextId = 1;
   private readonly attempts = new Map<number, AttemptRecord>();
@@ -205,6 +217,7 @@ export class CliSignIn {
     this.exists = options.exists;
     this.pollIntervalMs = options.pollIntervalMs ?? 3_000;
     this.probeTimeoutMs = options.probeTimeoutMs ?? 10_000;
+    this.findBinaryOverride = options.findBinary;
   }
 
   private lookup(provider: CliProvider): CliLookup {
@@ -218,7 +231,7 @@ export class CliSignIn {
 
   /** The binary a sign-in may spawn, or why there is nothing to spawn. */
   private findBinary(provider: CliProvider): { ok: true; bin: string } | { ok: false; error: string | null } {
-    const found = this.lookup(provider);
+    const found = this.findBinaryOverride ? this.findBinaryOverride(provider) : this.lookup(provider);
     if (!found.ok) return { ok: false, error: found.error };
     if (provider === "codex" && found.bin === "codex") {
       // A bare PATH name is probed for status, but is not a path to spawn.
@@ -331,7 +344,7 @@ export class CliSignIn {
         detached: true,
         windowsHide: true,
         stdio: ["ignore", "pipe", "pipe"],
-        env: childEnv(provider, this.env),
+        env: loginChildEnv(provider, this.env),
       });
     } catch {
       record.status = "failed";
@@ -355,11 +368,11 @@ export class CliSignIn {
     };
 
     child.stdout?.on("data", (chunk) => {
-      stdout += String(chunk);
+      stdout = appendTail(stdout, chunk);
       consider();
     });
     child.stderr?.on("data", (chunk) => {
-      stderr += String(chunk);
+      stderr = appendTail(stderr, chunk);
       consider();
     });
 
@@ -372,7 +385,19 @@ export class CliSignIn {
     child.on("close", (code) => {
       this.forget(record.id);
       void (async () => {
-        const probed = await this.probeFn(provider);
+        let probed: CliProbeResult;
+        try {
+          probed = await this.probeFn(provider);
+        } catch (error) {
+          if (record.status !== "starting" && record.status !== "awaiting_user") return;
+          record.status = "failed";
+          record.detail = redactSecrets(
+            error instanceof Error && error.message
+              ? error.message
+              : "The sign-in check could not run.",
+          );
+          return;
+        }
         if (probed.signedIn) {
           if (record.status === "starting" || record.status === "awaiting_user") {
             record.status = "done";
@@ -543,8 +568,8 @@ export class CliSignIn {
         finish(null);
       }, this.probeTimeoutMs);
       (timer as { unref?: () => void }).unref?.();
-      child.stdout?.on("data", (chunk) => (stdout += String(chunk)));
-      child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
+      child.stdout?.on("data", (chunk) => (stdout = appendTail(stdout, chunk)));
+      child.stderr?.on("data", (chunk) => (stderr = appendTail(stderr, chunk)));
       child.on("error", () => finish(null));
       child.on("close", (code) => finish(typeof code === "number" ? code : null));
     });

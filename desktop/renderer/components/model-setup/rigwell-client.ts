@@ -9,7 +9,7 @@ import type {
 import { inferKind, type LocalCatalog } from "../../../../src/model-setup/core/local-discovery.ts";
 import type { OllamaSignInState, OllamaStatusResult } from "../../../../src/model-setup/core/ollama.ts";
 import type { ConnectionTestResult } from "../../../../src/model-setup/core/connections.ts";
-import type { ConnectionRequest, ModelChoice, ModelSetupClient, TestRequest } from "../../../../src/model-setup/client.ts";
+import type { ConnectionRequest, ModelChoice, ModelSetupClient, SaveChoiceResult, TestRequest } from "../../../../src/model-setup/client.ts";
 import { emptyForm, toEntry, validate, type ModelForm } from "../../lib/custom-models.ts";
 import { secretNameFor } from "../../../../src/model-setup/secret-name.ts";
 import { SERVER_KIND_LABEL, isLoopbackUrl } from "./kit/helpers.ts";
@@ -32,7 +32,19 @@ function entryFor(form: ModelForm): Record<string, unknown> {
 }
 
 const entryKey = (entry: Record<string, any>) =>
-  `${String(entry.provider ?? "")}|${String(entry.baseUrl ?? "")}|${String(entry.model ?? "")}`;
+  [
+    entry.provider ?? "",
+    entry.baseUrl ?? "",
+    entry.model ?? "",
+    entry.executionBackend ?? "",
+    entry.credentialSource ?? "",
+  ]
+    .map(String)
+    .join("|");
+
+function currentEntries(host: ModelSetupHost): Record<string, any>[] {
+  return Array.isArray(host.settings().customModels) ? host.settings().customModels : [];
+}
 
 function choiceForEntry(entry: Record<string, any>): ModelChoice | null {
   const model = typeof entry.model === "string" ? entry.model : "";
@@ -131,7 +143,7 @@ export function createModelSetupClient(host: ModelSetupHost): ModelSetupClient {
       await host.request("set_secret", { name: secretNameFor(name), value });
     },
 
-    async saveChoice(choice: ModelChoice): Promise<void> {
+    async saveChoice(choice: ModelChoice): Promise<SaveChoiceResult> {
       let entry: Record<string, unknown>;
       if (choice.kind === "local") {
         const kind = inferKind(choice.baseUrl);
@@ -161,15 +173,32 @@ export function createModelSetupClient(host: ModelSetupHost): ModelSetupClient {
           ...(choice.apiKeySecretName ? { apiKey: `${KEYCHAIN_SECRET}${secretNameFor(choice.apiKeySecretName)}` } : {}),
         });
       }
-      const list: Record<string, any>[] = Array.isArray(host.settings().customModels) ? host.settings().customModels : [];
-      // The same provider, base URL and model already saved: keep the old entry.
-      const next = list.some((item) => entryKey(item) === entryKey(entry)) ? list.slice() : [...list, entry];
-      if (next.length !== list.length) await host.updateSettings({ customModels: next });
+      // Read the settings again right before writing: another pick may have
+      // landed since this screen loaded.
       await host.refresh();
+      const list = currentEntries(host);
+      const index = list.findIndex((item) => entryKey(item) === entryKey(entry));
+      let status: SaveChoiceResult["status"] = "saved";
+      let next = list;
+      if (index >= 0) {
+        const existing = list[index]!;
+        // Same connection, new key: point the saved entry at the new secret
+        // instead of silently keeping the old one.
+        if (typeof entry.apiKey === "string" && entry.apiKey !== existing.apiKey) {
+          next = list.slice();
+          next[index] = { ...existing, apiKey: entry.apiKey };
+        } else {
+          status = "exists";
+        }
+      } else {
+        next = [...list, entry];
+      }
+      if (status === "saved") await host.updateSettings({ customModels: next });
+      return { status };
     },
 
     async listSaved(): Promise<ModelChoice[]> {
-      const list: Record<string, any>[] = Array.isArray(host.settings().customModels) ? host.settings().customModels : [];
+      const list = currentEntries(host);
       return list.flatMap((entry) => {
         const choice = choiceForEntry(entry);
         return choice ? [choice] : [];

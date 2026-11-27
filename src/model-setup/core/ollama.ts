@@ -1,4 +1,4 @@
-// Copied from model-setup-kit d40de0a. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 204ad42. Do not edit here; change the kit and copy again.
 /*
   Ollama: is it running, and the optional "ollama signin" flow.
 
@@ -76,7 +76,9 @@ export function resolveOllamaExecutable(options: OllamaExecutableOptions = {}): 
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
   const exists = options.exists ?? existsSync;
-  const names = platform === "win32" ? ["ollama.exe", "ollama.cmd", "ollama"] : ["ollama"];
+  // A `.cmd` shim is not a program that can be spawned without a shell; look
+  // for the real executable instead.
+  const names = platform === "win32" ? ["ollama.exe", "ollama"] : ["ollama"];
   const dirs = (env.PATH ?? "").split(platform === "win32" ? ";" : ":").filter(Boolean);
   const localAppData = env.LOCALAPPDATA?.trim();
   if (platform === "win32" && localAppData) {
@@ -98,6 +100,7 @@ export type OllamaSignInStatus =
   | "failed"
   | "no-signin"
   | "not-installed"
+  | "expired"
   | "cancelled";
 
 export type OllamaSignInState = {
@@ -111,12 +114,15 @@ export const OLLAMA_SIGNIN_START_FAILED = "Ollama did not start the sign-in. You
 export const OLLAMA_SIGNIN_NO_LINK = "Ollama did not print a sign-in link. You can skip this step.";
 export const OLLAMA_SIGNIN_NOT_INSTALLED = "Ollama is not installed on this machine. You can skip this step.";
 export const OLLAMA_SIGNIN_NOT_SIGNED_IN = "Ollama did not finish the sign-in. You can skip this step.";
+export const OLLAMA_SIGNIN_EXPIRED = "The Ollama sign-in ran out of time. You can skip this step.";
+export const OLLAMA_SIGNIN_DONE = "Ollama reported the sign-in finished.";
 export const OLLAMA_NO_SIGNIN_WORDS = "This Ollama version has no sign-in. You can skip this step.";
 export const OLLAMA_SIGNED_IN_WORDS = "Signed in";
 export const OLLAMA_SIGN_IN_LINK_LINE = "Open this link to sign in to ollama.com. You can skip this step.";
 
 const URL_RE = /https?:\/\/[^\s"'<>]+/;
 const DEFAULT_LINK_WAIT_MS = 15_000;
+const DEFAULT_LIMIT_MS = 15 * 60_000;
 const NO_SIGNIN_RE = /unknown\s+(?:command|flag|subcommand)|unrecognized|not a valid command|no such command/i;
 
 const defaultSpawn: SpawnFn = (command, args, options) =>
@@ -128,24 +134,68 @@ type Active = {
   url: string | null;
   detail: string;
   exited: boolean;
+  /** Once set, no later child event may change the verdict. */
+  final: boolean;
   output: string;
+  limitTimer?: ReturnType<typeof setTimeout>;
 };
 
 export type OllamaSignInOptions = OllamaExecutableOptions & {
   spawnFn?: SpawnFn;
   linkWaitMs?: number;
+  /** Overall ceiling for the whole attempt. Default 15 minutes. */
+  limitMs?: number;
 };
 
 export class OllamaSignIn {
   private readonly spawnFn: SpawnFn;
   private readonly linkWaitMs: number;
+  private readonly limitMs: number;
+  private readonly platform: NodeJS.Platform;
   private readonly executableOptions: OllamaExecutableOptions;
   private active: Active | null = null;
 
   constructor(options: OllamaSignInOptions = {}) {
     this.spawnFn = options.spawnFn ?? defaultSpawn;
     this.linkWaitMs = options.linkWaitMs ?? DEFAULT_LINK_WAIT_MS;
+    this.limitMs = options.limitMs ?? DEFAULT_LIMIT_MS;
+    this.platform = options.platform ?? process.platform;
     this.executableOptions = { env: options.env, platform: options.platform, exists: options.exists };
+  }
+
+  /** End the child and anything it started. Windows needs taskkill for the tree. */
+  private killTree(pid: number | undefined, child: SpawnedChild): void {
+    if (pid && this.platform === "win32") {
+      try {
+        const killer = this.spawnFn("taskkill", ["/PID", String(pid), "/T", "/F"], {
+          windowsHide: true,
+          stdio: "ignore",
+        });
+        killer.on("error", () => {
+          try {
+            child.kill();
+          } catch {
+            /* already gone */
+          }
+        });
+        return;
+      } catch {
+        /* fall through */
+      }
+    }
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      /* already gone */
+    }
+  }
+
+  private settle(row: Active, status: OllamaSignInStatus, detail: string): void {
+    row.final = true;
+    row.exited = true;
+    row.status = status;
+    row.detail = detail;
+    if (row.limitTimer) clearTimeout(row.limitTimer);
   }
 
   private snapshot(row: Active): OllamaSignInState {
@@ -182,6 +232,7 @@ export class OllamaSignIn {
       url: null,
       detail: "Waiting for Ollama to print its link…",
       exited: false,
+      final: false,
       output: "",
     };
     this.active = row;
@@ -191,6 +242,7 @@ export class OllamaSignIn {
     const notify = () => wait.done?.();
 
     const read = (chunk: unknown) => {
+      if (row.final) return;
       row.output = (row.output + String(chunk)).slice(-8_000);
       if (!row.url) {
         const match = URL_RE.exec(row.output);
@@ -205,28 +257,32 @@ export class OllamaSignIn {
     child.stdout?.on("data", read);
     child.stderr?.on("data", read);
     child.on("error", () => {
-      row.exited = true;
-      row.status = "failed";
-      row.detail = OLLAMA_SIGNIN_START_FAILED;
+      if (row.final) return;
+      this.settle(row, "failed", OLLAMA_SIGNIN_START_FAILED);
       notify();
     });
     child.on("exit", (code) => {
-      row.exited = true;
+      // A cancel, a link-wait timeout or the overall limit already decided.
+      if (row.final) return;
       if (code === 0) {
-        row.status = "done";
-        row.detail = "";
+        this.settle(row, "done", OLLAMA_SIGNIN_DONE);
       } else if (NO_SIGNIN_RE.test(row.output)) {
-        row.status = "no-signin";
-        row.detail = OLLAMA_NO_SIGNIN_WORDS;
+        this.settle(row, "no-signin", OLLAMA_NO_SIGNIN_WORDS);
       } else if (row.url) {
-        row.status = "failed";
-        row.detail = OLLAMA_SIGNIN_NOT_SIGNED_IN;
+        this.settle(row, "failed", OLLAMA_SIGNIN_NOT_SIGNED_IN);
       } else {
-        row.status = "failed";
-        row.detail = OLLAMA_SIGNIN_NO_LINK;
+        this.settle(row, "failed", OLLAMA_SIGNIN_NO_LINK);
       }
       notify();
     });
+
+    row.limitTimer = setTimeout(() => {
+      if (row.final) return;
+      this.settle(row, "expired", OLLAMA_SIGNIN_EXPIRED);
+      this.killTree(row.child.pid, row.child);
+      notify();
+    }, this.limitMs);
+    (row.limitTimer as { unref?: () => void }).unref?.();
 
     // Wait for the link, the process exit, or the ceiling -- whichever is first.
     await new Promise<void>((resolve) => {
@@ -251,8 +307,9 @@ export class OllamaSignIn {
     });
 
     if (!row.url && !row.exited) {
-      row.status = "failed";
-      row.detail = OLLAMA_SIGNIN_NO_LINK;
+      // Nothing was printed in time: stop the child rather than leave it running.
+      this.settle(row, "failed", OLLAMA_SIGNIN_NO_LINK);
+      this.killTree(row.child.pid, row.child);
     }
     return this.snapshot(row);
   }
@@ -264,14 +321,11 @@ export class OllamaSignIn {
   /** Stop the sign-in attempt this instance started. */
   cancel(): OllamaSignInState | null {
     if (!this.active) return null;
-    try {
-      this.active.child.kill("SIGTERM");
-    } catch {
-      /* already gone */
-    }
-    this.active.exited = true;
-    this.active.status = "cancelled";
-    this.active.detail = "";
-    return this.snapshot(this.active);
+    const row = this.active;
+    // A timeout or expiry already ended it; a late cancel must not kill again.
+    if (row.final) return this.snapshot(row);
+    this.settle(row, "cancelled", "");
+    this.killTree(row.child.pid, row.child);
+    return this.snapshot(row);
   }
 }

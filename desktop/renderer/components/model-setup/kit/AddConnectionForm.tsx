@@ -1,4 +1,4 @@
-// Copied from model-setup-kit d40de0a. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 204ad42. Do not edit here; change the kit and copy again.
 import * as React from "react";
 /*
   Add an OpenAI-compatible connection. Copies the product's
@@ -16,6 +16,26 @@ import type { ConnectionTestResult } from "../../../../../src/model-setup/core/c
 import type { ModelChoice, ModelSetupClient } from "../../../../../src/model-setup/client.ts";
 import { formatCopy, type ModelSetupCopy } from "./copy.ts";
 import { errorText } from "./helpers.ts";
+
+/**
+ * A secret name that cannot overwrite another connection's secret: a readable
+ * slug from the name plus six random hex characters.
+ */
+export function connectionSecretName(name: string): string {
+  const slug =
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/[^A-Za-z0-9_.-]+/g, "-")
+      .replace(/^[^A-Za-z0-9]+/, "")
+      .slice(0, 40) || "connection";
+  const bytes = new Uint8Array(3);
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi && typeof cryptoApi.getRandomValues === "function") cryptoApi.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `model-setup-${slug}-${hex}`;
+}
 
 export type AddConnectionFormProps = {
   client: ModelSetupClient;
@@ -55,20 +75,20 @@ export function AddConnectionForm({ client, copy, onSaved }: AddConnectionFormPr
       return;
     }
     setSaving(true);
-    const secretName = name.trim();
+    const secretName = apiKey ? connectionSecretName(name) : name.trim();
     try {
       if (apiKey) await client.saveSecret(secretName, apiKey);
       const choice: ModelChoice = {
         kind: "connection",
-        name: secretName,
+        name: name.trim(),
         baseUrl: baseUrl.trim(),
         model: modelId.trim(),
         ...(apiKey ? { apiKeySecretName: secretName } : {}),
       };
-      await client.saveChoice(choice);
+      const outcome = await client.saveChoice(choice);
       /* The key is gone from the form the moment the host has it. */
       setApiKey("");
-      setResult(copy.connectionSaved);
+      setResult(outcome.status === "exists" ? copy.connectionAlreadySaved : copy.connectionSaved);
       onSaved?.(choice);
     } catch (e) {
       setError(errorText(e, copy.connectionSaveFailed));

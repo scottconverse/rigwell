@@ -1,4 +1,4 @@
-// Copied from model-setup-kit 869cdf5. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 204ad42. Do not edit here; change the kit and copy again.
 /*
   The extra sentences the screens need on top of `COPY` in core. Core keeps
   every sentence the library owns; this file adds the screen-only ones (group
@@ -90,6 +90,7 @@ export const UI_COPY = {
   testingConnection: "Testing…",
   keyStoredHint: "Stored on your side. It is never shown again after saving.",
   connectionSaved: "Connection saved.",
+  connectionAlreadySaved: "Already saved.",
   connectionSaveFailed: "Connection could not be saved.",
   connectionNameRequired: "Enter a name for this connection.",
   connectionBaseUrlRequired: "Enter the service's web address.",

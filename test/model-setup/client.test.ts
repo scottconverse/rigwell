@@ -71,6 +71,51 @@ describe("saveChoice writes Rigwell custom models", () => {
     expect(validate(toForm(saved(state)[0]!))).toBeNull();
   });
 
+  test("a new key on the same connection replaces the saved reference", async () => {
+    const { host, state } = fakeHost();
+    const client = createModelSetupClient(host);
+    const base = { kind: "connection" as const, name: "My server", baseUrl: "https://models.example.com/v1", model: "big-model" };
+    await client.saveChoice({ ...base, apiKeySecretName: "model-setup-my-server-aaaaaa" });
+    expect(saved(state)[0]?.apiKey).toBe("keychain:secret:model-setup-my-server-aaaaaa");
+    const outcome = await client.saveChoice({ ...base, apiKeySecretName: "model-setup-my-server-bbbbbb" });
+    expect(outcome).toEqual({ status: "saved" });
+    expect(saved(state)).toHaveLength(1);
+    expect(saved(state)[0]?.apiKey).toBe("keychain:secret:model-setup-my-server-bbbbbb");
+  });
+
+  test("an identical entry is reported as exists and not rewritten", async () => {
+    const { host, state, writes } = fakeHost();
+    const client = createModelSetupClient(host);
+    const choice = { kind: "connection" as const, name: "My server", baseUrl: "https://models.example.com/v1", model: "big-model", apiKeySecretName: "model-setup-my-server-aaaaaa" };
+    expect(await client.saveChoice(choice)).toEqual({ status: "saved" });
+    expect(await client.saveChoice(choice)).toEqual({ status: "exists" });
+    expect(saved(state)).toHaveLength(1);
+    expect(writes).toHaveLength(1);
+  });
+
+  test("entries that differ only by execution backend are both kept", async () => {
+    const { host, state } = fakeHost([{ provider: "anthropic", model: "sonnet", baseUrl: "" }]);
+    const outcome = await createModelSetupClient(host).saveChoice({ kind: "cli", provider: "claude", model: "sonnet" });
+    expect(outcome).toEqual({ status: "saved" });
+    expect(saved(state)).toHaveLength(2);
+  });
+
+  test("entries that differ only by credential source are both kept", async () => {
+    const { host, state } = fakeHost([
+      {
+        provider: "generic-chat-completion-api",
+        model: "gpt",
+        baseUrl: "https://api.openai.com/v1",
+        credentialSource: "openai-oauth",
+      },
+    ]);
+    // A connection entry has no credentialSource, so it must not overwrite the OAuth one.
+    await createModelSetupClient(host).saveChoice({
+      kind: "connection", name: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt",
+    });
+    expect(saved(state)).toHaveLength(2);
+  });
+
   test("the same provider, base URL and model is kept once", async () => {
     const { host, state, writes, refreshes } = fakeHost();
     const client = createModelSetupClient(host);

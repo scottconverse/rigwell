@@ -1,4 +1,4 @@
-// Copied from model-setup-kit d40de0a. Do not edit here; change the kit and copy again.
+// Copied from model-setup-kit 204ad42. Do not edit here; change the kit and copy again.
 /*
   How to start a provider CLI, and what environment it may see.
 
@@ -9,6 +9,7 @@
   the finders look for the real binary beside the npm shim instead.
 */
 
+import { existsSync } from "node:fs";
 import path from "node:path";
 
 export type CliProvider = "claude" | "codex";
@@ -28,9 +29,37 @@ export function resolveCliPath(bin: string): string {
 
 export type SpawnPlan = { command: string; args: string[] };
 
+export type NodeCommandOptions = {
+  env?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  exists?: (candidate: string) => boolean;
+};
+
+/**
+ * The program that runs a Node script. Prefer a real `node` on PATH: under Bun
+ * `process.execPath` is Bun, which is not the CLI's runtime. Fall back to the
+ * current process only when this process really is Node.
+ */
+export function resolveNodeCommand(options: NodeCommandOptions = {}): string {
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const exists = options.exists ?? existsSync;
+  const names = platform === "win32" ? ["node.exe", "node"] : ["node"];
+  const dirs = (env.PATH ?? "").split(platform === "win32" ? ";" : ":").filter(Boolean);
+  for (const dir of dirs) {
+    for (const name of names) {
+      const candidate = path.join(dir, name);
+      if (exists(candidate)) return candidate;
+    }
+  }
+  return process.versions.bun ? "node" : process.execPath;
+}
+
 /** What to spawn, and with which arguments, for a resolved CLI path. */
-export function spawnPlan(bin: string, args: string[]): SpawnPlan {
-  return isNodeScript(bin) ? { command: process.execPath, args: [bin, ...args] } : { command: bin, args };
+export function spawnPlan(bin: string, args: string[], nodeOptions?: NodeCommandOptions): SpawnPlan {
+  return isNodeScript(bin)
+    ? { command: resolveNodeCommand(nodeOptions), args: [bin, ...args] }
+    : { command: bin, args };
 }
 
 /** Names a provider CLI genuinely needs. Windows variable names are case-insensitive. */
@@ -117,5 +146,17 @@ export function withCodexHome(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 export function childEnv(provider: CliProvider, env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   return provider === "claude"
     ? filtered(env, CLAUDE_CREDENTIAL_ENV)
+    : withCodexHome(filtered(env, []));
+}
+
+/**
+ * The environment for the sign-in child. Unlike a status probe, a login must
+ * not inherit an API key, an auth token or a base URL: the CLI would treat that
+ * as the account and skip the sign-in the human was asked to finish.
+ */
+export function loginChildEnv(provider: CliProvider, env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  // ANTHROPIC_MODEL is harmless; the three credential names are not.
+  return provider === "claude"
+    ? filtered(env, ["ANTHROPIC_MODEL"])
     : withCodexHome(filtered(env, []));
 }
