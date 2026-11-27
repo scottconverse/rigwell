@@ -100,6 +100,7 @@ export function Home({ go, initialFolder, initialDraft, initialMission }: { go(r
           <h3>API key or local model</h3>
           <p className="muted small">After connecting an account, configure a model to use it. You can also use a provider API key or a local server.</p>
           <div className="connect-actions">
+            <button onClick={() => go("/settings/model-setup")}>Set up models</button>
             <button onClick={() => go("/settings/custom-models")}>Configure a model</button>
             <button onClick={() => go("/settings/api-keys")}>Store an API key</button>
           </div>

@@ -112,8 +112,8 @@ maybe("navigation", () => {
     const box = page.getByLabel("Find a setting");
     const nav = page.getByRole("navigation", { name: "Settings" });
     await box.waitFor();
-    expect(await nav.getByRole("button").count()).toBe(22);
-    expect(await nav.locator("svg.nav-icon").count()).toBe(22);
+    expect(await nav.getByRole("button").count()).toBe(23);
+    expect(await nav.locator("svg.nav-icon").count()).toBe(23);
     await box.fill("dark theme");
     await nav.getByRole("button", { name: "Appearance" }).waitFor();
     expect(await nav.getByRole("button").count()).toBe(1);
@@ -122,7 +122,7 @@ maybe("navigation", () => {
     await box.fill("nothing-like-this");
     await nav.getByRole("status").getByText('No settings match "nothing-like-this".').waitFor();
     await box.press("Escape");
-    expect(await nav.getByRole("button").count()).toBe(22);
+    expect(await nav.getByRole("button").count()).toBe(23);
   });
 
   test("the sidebar choice survives a restart", async () => {

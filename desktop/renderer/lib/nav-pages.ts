@@ -36,6 +36,7 @@ export const SETTINGS_PAGES: SettingsPage[] = [
   { id: "missions", label: "Missions", icon: "M4 14V2M4 3h8l-2 3 2 3H4", words: "orchestrator worker validator scrutiny user testing machine remote repository model reasoning" },
   { id: "delegation", label: "Slack and Teams", icon: "M2 3h12v8H7l-3 3v-3H2z", words: "delegation chat bot messages" },
   { id: "custom-models", label: "Custom Models", icon: "M8 2l5 3v6l-5 3-5-3V5zM3 5l5 3 5-3M8 8v6", words: "provider endpoint base url context window model" },
+  { id: "model-setup", label: "Model setup", icon: "M8 2l5 3v6l-5 3-5-3V5zM3 5l5 3 5-3M8 8v6M8 2v6", words: "set up models sign in claude code codex ollama local server api connection discover test" },
   { id: "machines", label: "Remote machines", icon: "M2 3h12v8H2zM6 14h4M8 11v3", words: "ssh host server computer" },
   { id: "worktrees", label: "Worktrees", icon: "M5 2v12M11 4v2a3 3 0 0 1-3 3H5", words: "git branch folder keep at most new sessions cleanup" },
   { id: "connectors", label: "Connectors", icon: "M6 2v4M10 2v4M4 6h8v2a4 4 0 0 1-8 0zM8 12v2", words: "mcp server tools catalog integrations" },

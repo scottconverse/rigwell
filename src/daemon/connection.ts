@@ -33,6 +33,7 @@ import { forkSession } from "../storage/fork.ts";
 import { handleAuthMethod } from "../auth/methods.ts";
 import { handleCodeProviderMethod, type CodeProviderDeps } from "../auth/code-providers.ts";
 import { handleSecretsMethod } from "../secrets/methods.ts";
+import { handleModelSetupMethod } from "../model-setup/rpc.ts";
 import { SecretsError, redactSecrets, resolveEnvironment, type ResolvedEnvironment } from "../secrets/store.ts";
 import { RewindError, rewindSession } from "../snapshots/index.ts";
 import { automationSetupParams } from "../automations/setup.ts";
@@ -908,6 +909,8 @@ export function createConnection(write: (line: string) => void, opts: Connection
         if (cp.handled) return cp.result;
         const sx = handleSecretsMethod(method, p);
         if (sx.handled) return sx.result;
+        const ms = await handleModelSetupMethod(method, p);
+        if (ms.handled) return ms.result;
         throw new RpcError(ErrorCodes.METHOD_NOT_FOUND, `Method not found or not in this build: ${METHOD_PREFIX}${method}`);
       }
     }

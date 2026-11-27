@@ -63,9 +63,9 @@ describe("page lists", () => {
     for (const p of MORE_PAGES) expect(PALETTE_PAGES).toContain(p);
   });
 
-  test("all 22 Settings pages have a unique id, an icon and search words", () => {
-    expect(SETTINGS_PAGES.length).toBe(22);
-    expect(new Set(SETTINGS_PAGES.map((p) => p.id)).size).toBe(22);
+  test("all 23 Settings pages have a unique id, an icon and search words", () => {
+    expect(SETTINGS_PAGES.length).toBe(23);
+    expect(new Set(SETTINGS_PAGES.map((p) => p.id)).size).toBe(23);
     for (const p of SETTINGS_PAGES) { expect(p.icon).toMatch(/^M/); expect(p.words.length).toBeGreaterThan(0); }
     for (const id of ["session-defaults", "missions", "custom-models", "worktrees", "machines", "profiles", "labs", "phone-access", "delegation", "email-alerts", "connectors", "session-management", "usage", "api-keys", "environments", "accounts", "code-providers", "voice"]) {
       expect(settings).toContain(id);
@@ -79,7 +79,7 @@ describe("page lists", () => {
     expect(find("THEME")).toContain("appearance");
     expect(find("dark theme")).toEqual(["appearance"]);
     expect(find("nothing-like-this")).toEqual([]);
-    expect(find("  ").length).toBe(22);
+    expect(find("  ").length).toBe(23);
   });
 });
 
