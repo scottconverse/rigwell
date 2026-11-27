@@ -197,7 +197,9 @@ button.side-icon-btn:hover:not(:disabled) { background: var(--bg-hover); }
 .prompt-actions { display: flex; gap: 6px; flex-wrap: wrap; } .check { display: flex; align-items: center; gap: 6px; }
 .picker { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
 .toast { position: absolute; bottom: 90px; left: 50%; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 4px 12px; border-radius: 999px; font-size: 12px; }
-.banner { padding: 8px 12px; border-radius: 8px; display: flex; gap: 10px; align-items: center; } .banner.warn { background: var(--warn-bg); } .banner.error { background: var(--warn-bg); color: var(--danger); }
+.banner { padding: 8px 12px; border-radius: 8px; display: flex; gap: 10px; align-items: center; }
+/* The first-run "Connect a model" box holds headings, text and a table: stack them, do not put them side by side. */
+.banner.connect { flex-direction: column; align-items: stretch; } .banner.connect h2, .banner.connect h3, .banner.connect p { margin: 0; } .connect-actions { display: flex; gap: 8px; flex-wrap: wrap; } .banner.warn { background: var(--warn-bg); } .banner.error { background: var(--warn-bg); color: var(--danger); }
 
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); padding: 16px; display: flex; align-items: center; justify-content: center; z-index: 50; }
 .overlay.top { align-items: flex-start; padding-top: 12vh; }

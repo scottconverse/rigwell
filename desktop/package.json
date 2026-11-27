@@ -12,6 +12,7 @@
     "package:linux": "bun run build.ts && bun run packaging/stage.ts && electron-builder --config electron-builder.yml --linux",
     "package:mac": "bun run build.ts && bun run packaging/stage.ts && electron-builder --config electron-builder.yml --mac",
     "package:win": "RIGWELL_TARGET_PLATFORM=win32 bun run build.ts && bun run packaging/stage.ts && electron-builder --config electron-builder.yml --win",
+    "package:win:signed": "bun run packaging/package-win-signed.ts",
     "desktop": "bun run build.ts && bun run packaging/stage.ts && electron-builder --config electron-builder.yml"
   },
   "dependencies": {
