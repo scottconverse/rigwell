@@ -49,12 +49,40 @@ For Windows, use Properties > Digital Signatures to check the publisher. For Lin
 ### Connect your model
 
 1. Open Rigwell. An empty profile displays **Connect a model**.
-2. Choose **Configure a model**. In Settings, add a custom model using the connection you intend to use.
+2. Choose **Set up models** for the guided page described in [Set up models](#set-up-models), or choose **Configure a model** to add a custom model by hand in Settings.
 3. For a supported subscription-client profile, select **Signed-in official client** and choose the matching provider. The client must already be installed and signed in. A custom executable path is available when automatic discovery does not find it.
 4. For an API or local server, enter the provider, model identifier and endpoint where required. Keep credentials in the credential store or an environment reference.
 5. Save the profile, return to the workspace and select it for your session.
 
 Model identifiers are supplied by your provider or local server. Rigwell does not grant access to a model merely because a profile can be saved. A sign-in option without a registered client is shown as unavailable; use an existing official-client profile or a supported direct connection rather than guessing another application's client ID.
+
+### Set up models
+
+The Set up models page finds and connects models for you. Open it with the **Set up models** button on Home, with **Connect a model** on the sidebar Finish setup card, or with **Model setup** in the Settings list. Each pick you save becomes an ordinary custom model, so you can edit or remove it later in Settings > Custom Models.
+
+The page has three groups.
+
+**Subscription sign-ins.** Rigwell shows whether Claude Code and Codex are installed and signed in.
+
+1. To sign in, choose **Sign in to Claude Code** or **Sign in to Codex**. The card shows a link and, for Codex, a one-time code with **Copy code**. Open the link, finish the sign-in in your browser and return to Rigwell. The link runs out after a time limit that the card shows. **Cancel** stops the sign-in.
+2. When the card shows **Ready**, pick a model in **Models this sign-in brings**, or choose **Other model** and type the exact model name. Then choose **Use this model**.
+3. **Test** sends one short request with that client.
+
+The Ollama card shows whether Ollama is running and signed in. Its sign-in is optional; you need it only for Ollama Cloud models. Ollama prints a link; open it to finish.
+
+**Local & self-hosted.** Rigwell looks for LM Studio (port 1234), Ollama (ports 11434 and 11435) and llama.cpp (port 8080) on this computer and lists their chat models. Choose **Use this one** beside a model to save it. The first request can load the model and take a minute. **Refresh** looks again. A server that does not answer shows **Could not reach**.
+
+**API connection.** Use this for any service with an OpenAI-compatible API.
+
+1. Enter a **Connection name** and the **Base URL**. Add the **API key** if the service needs one.
+2. Choose **Discover models** to list the service's models, then choose one in **Discovered models**. If the service lists none, type the **Model id**.
+3. **Test connection** sends one short request. **Save connection** saves it.
+
+The key is kept in the credential store, not in the settings file, and is not shown again after you save. A saved key is sent only to the base URL it was saved with. Discover and Test do not follow redirects; if the service moved, enter its final address. Each call stops after a time limit.
+
+A model that is already saved shows **Already saved.** Models that Rigwell uses now are marked **This app uses this**. **Test all connections** checks every sign-in again and looks for local servers again.
+
+Limits: "Use whatever model is loaded" is not offered, so pick a model by name. A saved local model shows only its model id as its name. When a connection gets a new key, the old key stays in the credential store. See the [0.5.2 release notes](release-0.5.2.md).
 
 ### Check your session profile and effort
 

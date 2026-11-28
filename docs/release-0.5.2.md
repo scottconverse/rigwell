@@ -8,7 +8,7 @@ Windows x64 moves to **0.5.2**. Linux and macOS distributions remain at **0.4.0*
 
 ## Set up models
 
-A new page, Settings > Set up models, helps you connect a model. Home and Settings > Custom Models have a Set up models button.
+A new page, Set up models, helps you connect a model. Open it with the Set up models button on Home, the Connect a model step on the Finish setup card, or Model setup in the Settings list.
 
 - **Local servers.** Rigwell looks for LM Studio, Ollama and llama.cpp on this computer and lists their models. Use this one saves the model as a custom model.
 - **Sign-ins.** The page shows whether Claude Code and Codex are signed in. A sign-in shows its link and one-time code, with Copy and Cancel. A signed-in client model can be saved with one click.
